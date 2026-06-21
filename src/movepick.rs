@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use shakmaty::{Board, Move, MoveList};
+use shakmaty::{Board, Chess, Move, MoveList};
 
 use crate::ext::ScoredMove;
 
@@ -16,7 +16,7 @@ enum Stage {
 type ScoredMoveList = ArrayVec<ScoredMove, 270>;
 
 pub struct Movepick<'a> {
-    pos: &'a Board,
+    pos: &'a Chess,
     moves: ScoredMoveList,
     ptr: usize,
     pv: Option<Move>,
@@ -24,7 +24,7 @@ pub struct Movepick<'a> {
 }
 
 impl<'a> Movepick<'a> {
-    pub fn new_negamax(pos: &'a Board, pv: Option<Move>) -> Self {
+    pub fn new_negamax(pos: &'a Chess, pv: Option<Move>) -> Self {
         Self {
             pos,
             moves: ScoredMoveList::new(),
@@ -34,15 +34,22 @@ impl<'a> Movepick<'a> {
         }
     }
 
+    // [..20]
+    // pv  | capture | quiet |
+    // 1.    2.        3.
+
     pub fn next_move(&mut self) -> Option<Move> {
         loop {
             match self.stage {
                 Stage::Pv => {
-                    // return pv move, stage++
+                    self.stage = Stage::CaptureInit;
+                    if self.pv.is_some() {
+                        return self.pv;
+                    }
                 }
                 Stage::CaptureInit => {}
-                Stage::QuietInit => {}
                 Stage::GoodCapture => {}
+                Stage::QuietInit => {}
                 Stage::GoodQuiet => {}
                 Stage::BadCapture => {}
                 Stage::BadQuiet => {}
