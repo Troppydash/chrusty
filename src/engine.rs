@@ -9,7 +9,6 @@ struct SearchStack {
 }
 
 pub struct Engine {
-    pos: Chess,
     stack: Vec<SearchStack>,
 }
 
@@ -18,10 +17,11 @@ impl Engine {
 
     fn evaluate(&mut self) -> i16 {}
 
-    fn qsearch(&mut self, alpha: i16, beta: i16, depth: i8) -> i16 {}
+    fn qsearch(&mut self, pos: Chess, alpha: i16, beta: i16, depth: i8) -> i16 {}
 
     fn negamax(
         &mut self,
+        pos: Chess,
         alpha: i16,
         beta: i16,
         depth: i8,
