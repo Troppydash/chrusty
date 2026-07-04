@@ -5,6 +5,7 @@ pub const VALUE_INF: i16 = 32700;
 pub const VALUE_NONE: i16 = 32701;
 pub const VALUE_CHECKMATE: i16 = VALUE_INF - MAX_DEPTH - 1;
 pub const VALUE_EVAL: i16 = VALUE_CHECKMATE - 1;
+pub const VALUE_DRAW: i16 = 0;
 
 pub fn is_decisive(value: i16) -> bool {
     value.abs() > VALUE_CHECKMATE
@@ -35,4 +36,7 @@ pub const BAD_QUIET_SCORE: i16 = -15000;
 pub const LMR_MOVE_COUNT: usize = 96;
 pub const LMR_DEPTH: usize = MAX_DEPTH as usize;
 
+pub const MAX_MOVES: usize = 250;
 pub const SS_SIZE: usize = MAX_DEPTH as usize + 10;
+
+pub const ASP_WINDOW: i16 = 25;
