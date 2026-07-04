@@ -3,12 +3,14 @@ use shakmaty::{Board, Chess, Position};
 use crate::engine::Engine;
 mod engine;
 mod ext;
-mod param;
+mod heuristic;
 mod movepick;
-
+mod param;
+mod timer;
+mod tt;
+mod uci;
 
 fn main() {
-
     // TODO: uci
 
     let mut engine = Engine::new();

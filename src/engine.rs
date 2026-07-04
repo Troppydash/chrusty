@@ -266,7 +266,7 @@ impl Engine {
             move_count += 1;
 
             let mut new_pos = pos.clone();
-            new_pos = new_pos.play(m.m).unwrap();
+            new_pos.play_unchecked(m.m);
 
             let new_depth = depth - 1;
             let mut score = 0;
