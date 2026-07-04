@@ -5,11 +5,7 @@ use shakmaty::{Chess, Move, MoveList, Position};
 use crate::{
     ext::NULL_MOVE,
     movepick::Movepick,
-    param::{
-        ASP_WINDOW, ASP_WINDOW_MAX_SIZE, ASP_WINDOW_MIN_DEPTH, ASP_WINDOW_SCORE_SCALE, LMR_DEPTH,
-        LMR_MOVE_COUNT, MAX_DEPTH, MAX_MOVES, SS_SIZE, SS_SIZE_PRE, VALUE_DRAW, VALUE_INF,
-        VALUE_NONE, lose_in, win_in,
-    },
+    param::*,
 };
 
 #[derive(Clone, Copy)]
@@ -17,6 +13,7 @@ struct SearchStack {
     ply: i8,
     m: Move,
     pv_list: [Move; MAX_DEPTH as usize],
+    pv_size: usize,
     in_check: bool,
     adjusted_static: i16,
 }
@@ -27,6 +24,7 @@ impl SearchStack {
             ply: 0,
             m: NULL_MOVE,
             pv_list: [NULL_MOVE; MAX_DEPTH as usize],
+            pv_size: 0,
             in_check: false,
             adjusted_static: VALUE_NONE,
         }
@@ -37,6 +35,7 @@ impl SearchStack {
             ply,
             m: NULL_MOVE,
             pv_list: [NULL_MOVE; MAX_DEPTH as usize],
+            pv_size: 0,
             in_check: false,
             adjusted_static: VALUE_NONE,
         }
@@ -69,18 +68,20 @@ impl Heuristic {
 
 #[derive(Clone, Copy)]
 pub struct RootMove {
-    pub pv: [Move; MAX_DEPTH as usize],
+    pv_list: [Move; MAX_DEPTH as usize],
+    pv_size: usize,
     average_score: i16,
     score: i16,
 }
 
 impl RootMove {
     fn new(m: Move) -> Self {
-        let mut pv = [NULL_MOVE; MAX_DEPTH as usize];
-        pv[0] = m;
+        let mut pv_list = [NULL_MOVE; MAX_DEPTH as usize];
+        pv_list[0] = m;
         Self {
-            pv,
-            average_score: 0,
+            pv_list,
+            pv_size: 1,
+            average_score: VALUE_NONE,
             score: 0,
         }
     }
@@ -135,12 +136,16 @@ impl Timer {
     fn test(&self, duration: u128) -> bool {
         Self::now() >= self.start + duration
     }
+
+    fn delta(&self) -> u128 {
+        Self::now() - self.start
+    }
 }
 
 pub struct Engine {
     stack: [SearchStack; SS_SIZE],
     heuristic: Box<Heuristic>,
-    nodes: u64,
+    nodes: i64,
     root_moves: Vec<RootMove>, // only allocated once so Vec is ok
     timer: Timer,
 }
@@ -159,7 +164,7 @@ impl Engine {
     fn sort_root_moves(&mut self) {
         let mut best = 0;
         for i in 1..self.root_moves.len() {
-            if self.root_moves[i].score > self.root_moves[0].score {
+            if self.root_moves[i].score > self.root_moves[best].score {
                 best = i;
             }
         }
@@ -167,12 +172,24 @@ impl Engine {
         self.root_moves.swap(0, best);
     }
 
-    fn evaluate(&mut self) -> i16 {
-        0
+    fn evaluate(&mut self, pos: &mut Chess) -> i16 {
+        // simple piece eval
+        let mut us_score = 0;
+        let mut them_score = 0;
+
+        for i in pos.us() {
+            us_score += PIECE_VALUE[pos.board().role_at(i).unwrap() as usize - 1];
+        }
+
+        for i in pos.them() {
+            them_score += PIECE_VALUE[pos.board().role_at(i).unwrap() as usize - 1];
+        }
+
+        us_score - them_score + 20
     }
 
     fn qsearch(&mut self, pos: Chess, alpha: i16, beta: i16, depth: i8) -> i16 {
-        0
+        todo!()
     }
 
     fn negamax(
@@ -185,11 +202,13 @@ impl Engine {
         is_pv: bool,
         cut_node: bool,
     ) -> i16 {
+        self.stack[ss].pv_size = 0;
+
         let ply = self.stack[ss].ply;
         let is_root = ply == 0;
 
         if depth <= 0 {
-            return self.evaluate();
+            return self.evaluate(pos);
         }
 
         self.nodes += 1;
@@ -201,12 +220,15 @@ impl Engine {
             }
 
             if pos.halfmoves() >= 50 {
-                // TODO: fix
+                if pos.is_check() && pos.legal_moves().is_empty() {
+                    return lose_in(ply);
+                }
+
                 return VALUE_DRAW;
             }
 
-            alpha = alpha.max(win_in(ply));
-            beta = beta.min(lose_in(ply + 1));
+            alpha = alpha.max(lose_in(ply));
+            beta = beta.min(win_in(ply + 1));
             if alpha >= beta {
                 return alpha;
             }
@@ -222,7 +244,7 @@ impl Engine {
         if in_check {
             self.stack[ss].adjusted_static = VALUE_NONE;
         } else {
-            unadjusted_static = self.evaluate();
+            unadjusted_static = self.evaluate(pos);
             self.stack[ss].adjusted_static = unadjusted_static;
         }
 
@@ -241,11 +263,10 @@ impl Engine {
                 break;
             }
             let m = m.unwrap();
-
             move_count += 1;
 
             let mut new_pos = pos.clone();
-            new_pos.play_unchecked(m.m);
+            new_pos = new_pos.play(m.m).unwrap();
 
             let new_depth = depth - 1;
             let mut score = 0;
@@ -272,7 +293,7 @@ impl Engine {
                         new_depth,
                         ss + 1,
                         false,
-                        true,
+                        !cut_node,
                     );
                 }
             } else if !is_pv || move_count > 1 {
@@ -283,12 +304,39 @@ impl Engine {
                     new_depth,
                     ss + 1,
                     false,
-                    true,
+                    !cut_node,
                 );
             }
 
             if is_pv && (move_count == 1 || score > alpha) {
-                score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, false, true);
+                score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
+            }
+
+            if is_root {
+                let root_move = self
+                    .root_moves
+                    .iter_mut()
+                    .find(|rm| rm.pv_list[0] == m.m)
+                    .unwrap();
+                root_move.average_score = if is_valid(root_move.average_score) {
+                    (root_move.average_score + score) / 2
+                } else {
+                    score
+                };
+
+                if move_count == 1 || score > alpha {
+                    root_move.score = score;
+
+                    for i in 0..self.stack[ss + 1].pv_size {
+                        assert!(self.stack[ss + 1].pv_list[i] != NULL_MOVE);
+                        root_move.pv_list[1 + i] = self.stack[ss + 1].pv_list[i];
+                    }
+
+                    root_move.pv_size = self.stack[ss + 1].pv_size + 1;
+                } else {
+                    // fail-low cannot be ordered
+                    root_move.score = -VALUE_INF;
+                }
             }
 
             if score > best_score {
@@ -296,6 +344,16 @@ impl Engine {
 
                 if score > alpha {
                     best_move = m.m;
+
+                    if is_pv && !is_root {
+                        self.stack[ss].pv_list[0] = best_move;
+                        for i in 0..self.stack[ss + 1].pv_size {
+                            assert!(self.stack[ss + 1].pv_list[i] != NULL_MOVE);
+                            self.stack[ss].pv_list[1 + i] = self.stack[ss + 1].pv_list[i];
+                        }
+
+                        self.stack[ss].pv_size = self.stack[ss + 1].pv_size + 1;
+                    }
 
                     if score >= beta {
                         break;
@@ -355,9 +413,14 @@ impl Engine {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
-            let mut window = ASP_WINDOW
-                + self.root_moves[0].average_score * self.root_moves[0].average_score
-                    / ASP_WINDOW_SCORE_SCALE;
+            let average_score = self.root_moves[0].average_score;
+            let mut window = if is_valid(average_score) {
+                ASP_WINDOW
+                    + (average_score as i64 * average_score as i64 / ASP_WINDOW_SCORE_SCALE as i64)
+                        as i16
+            } else {
+                ASP_WINDOW
+            };
 
             if depth >= ASP_WINDOW_MIN_DEPTH {
                 alpha = (-VALUE_INF).max(self.root_moves[0].score - window);
@@ -384,7 +447,7 @@ impl Engine {
                 }
 
                 if window < ASP_WINDOW_MAX_SIZE {
-                    window += window / ASP_WINDOW_SCORE_SCALE;
+                    window += window / ASP_WINDOW_SCALE;
                 } else {
                     alpha = -VALUE_INF;
                     beta = VALUE_INF;
@@ -401,8 +464,29 @@ impl Engine {
                 break;
             }
 
-            // TODO: uci
-            println!("info depth {} nodes {}", depth, self.nodes);
+            let nps = self.nodes * 1000 / self.timer.delta().max(1) as i64;
+            let score = self.root_moves[0].score;
+            let score_str = if is_win(score) {
+                let ply = VALUE_INF - score;
+                format!("mate {}", ply / 2 + ply % 2)
+            } else if is_loss(score) {
+                let ply = -VALUE_INF - score;
+                format!("mate {}", ply / 2 + ply % 2)
+            } else {
+                format!("cp {}", score)
+            };
+            print!(
+                "info depth {} nodes {} time {} score {} nps {} pv",
+                depth,
+                self.nodes,
+                self.timer.delta(),
+                score_str,
+                nps,
+            );
+            for i in 0..self.root_moves[0].pv_size {
+                print!(" {}", self.root_moves[0].pv_list[i]);
+            }
+            println!("");
 
             depth += 1;
         }

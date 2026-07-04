@@ -27,6 +27,10 @@ pub fn lose_in(ply: i8) -> i16 {
     -VALUE_INF + ply as i16
 }
 
+pub fn is_valid(value: i16) -> bool {
+    value != VALUE_NONE
+}
+
 pub const PIECE_VALUE: [i16; Role::ALL.len() + 1] = [100, 300, 300, 500, 900, 0, 0];
 
 pub const NONE_PIECE_INDEX: usize = Role::ALL.len();
@@ -36,7 +40,6 @@ pub const BAD_QUIET_SCORE: i16 = -15000;
 pub const LMR_MOVE_COUNT: usize = 96;
 pub const LMR_DEPTH: usize = MAX_DEPTH as usize;
 
-pub const MAX_MOVES: usize = 250;
 pub const SS_SIZE_PRE: usize = 10 as usize;
 pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 

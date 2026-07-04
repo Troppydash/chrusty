@@ -72,6 +72,10 @@ impl<'a> Movepick<'a> {
             let mut j = i - 1;
             while j >= start && self.moves[j].score < temp.score {
                 self.moves[j + 1] = self.moves[j];
+
+                if j == 0 {
+                    break;
+                }
                 j -= 1;
             }
             self.moves[j + 1] = temp;
@@ -120,7 +124,7 @@ impl<'a> Movepick<'a> {
                         let mut scores_move = ScoredMove::from_move(m);
 
                         // mvv-lva
-                        scores_move.score = PIECE_VALUE[Self::get_captured(&m)]
+                        scores_move.score = PIECE_VALUE[Self::get_captured(&m) - 1]
                             - PIECE_VALUE[m.role() as usize - 1];
 
                         self.moves.push(scores_move);
@@ -161,11 +165,11 @@ impl<'a> Movepick<'a> {
 
                         // TODO: killer moves
 
-                        let mut scores_move = ScoredMove::from_move(m);
+                        let mut scored_move = ScoredMove::from_move(m);
 
                         // TODO: history heuristic
 
-                        self.moves.push(scores_move);
+                        self.moves.push(scored_move);
                     }
 
                     // [...captures; quiets]
