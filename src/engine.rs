@@ -1,17 +1,20 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use shakmaty::{Chess, Move, MoveList, Position};
 
 use crate::{
     ext::NULL_MOVE,
     movepick::Movepick,
     param::{
-        ASP_WINDOW, LMR_DEPTH, LMR_MOVE_COUNT, MAX_DEPTH, SS_SIZE, VALUE_DRAW, VALUE_INF,
+        ASP_WINDOW, ASP_WINDOW_MAX_SIZE, ASP_WINDOW_MIN_DEPTH, ASP_WINDOW_SCORE_SCALE, LMR_DEPTH,
+        LMR_MOVE_COUNT, MAX_DEPTH, MAX_MOVES, SS_SIZE, SS_SIZE_PRE, VALUE_DRAW, VALUE_INF,
         VALUE_NONE, lose_in, win_in,
     },
 };
 
 #[derive(Clone, Copy)]
 struct SearchStack {
-    ply: i16,
+    ply: i8,
     m: Move,
     pv_list: [Move; MAX_DEPTH as usize],
     in_check: bool,
@@ -28,16 +31,26 @@ impl SearchStack {
             adjusted_static: VALUE_NONE,
         }
     }
+
+    pub fn new_ply(ply: i8) -> Self {
+        Self {
+            ply,
+            m: NULL_MOVE,
+            pv_list: [NULL_MOVE; MAX_DEPTH as usize],
+            in_check: false,
+            adjusted_static: VALUE_NONE,
+        }
+    }
 }
 
 struct Heuristic {
     // lmr[move_count][depth]
-    lmr: [[i8; LMR_MOVE_COUNT]; LMR_DEPTH], // TODO: history
+    lmr: [[i8; LMR_DEPTH]; LMR_MOVE_COUNT], // TODO: history
 }
 
 impl Heuristic {
     pub fn new() -> Self {
-        let mut lmr = [[0; LMR_MOVE_COUNT]; LMR_DEPTH];
+        let mut lmr = [[0; LMR_DEPTH]; LMR_MOVE_COUNT];
         for move_count in 0..LMR_MOVE_COUNT {
             for depth in 0..LMR_DEPTH {
                 lmr[move_count][depth] =
@@ -54,10 +67,23 @@ impl Heuristic {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct RootMove {
     pub pv: [Move; MAX_DEPTH as usize],
     average_score: i16,
     score: i16,
+}
+
+impl RootMove {
+    fn new(m: Move) -> Self {
+        let mut pv = [NULL_MOVE; MAX_DEPTH as usize];
+        pv[0] = m;
+        Self {
+            pv,
+            average_score: 0,
+            score: 0,
+        }
+    }
 }
 
 pub struct SearchResult {
@@ -65,22 +91,58 @@ pub struct SearchResult {
     pub depth: i8,
 }
 
-impl SearchResult {
-    pub fn new(root: RootMove) -> Self {
-        Self { root, depth: 0 }
+pub struct Timer {
+    start: u128,
+    duration: u128,
+    stopped: bool,
+}
+
+impl Timer {
+    fn new() -> Self {
+        Self {
+            start: 0,
+            duration: 0,
+            stopped: false,
+        }
+    }
+
+    fn now() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    }
+
+    fn start(&mut self, duration: u128) {
+        self.start = Self::now();
+        self.duration = duration;
+    }
+
+    fn check(&mut self) {
+        if self.stopped {
+            return;
+        }
+
+        if Self::now() >= self.start + self.duration {
+            self.stopped = true;
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.stopped
+    }
+
+    fn test(&self, duration: u128) -> bool {
+        Self::now() >= self.start + duration
     }
 }
-
-pub struct Timer {
-    start: u64,
-}
-
-impl Timer {}
 
 pub struct Engine {
     stack: [SearchStack; SS_SIZE],
     heuristic: Box<Heuristic>,
     nodes: u64,
+    root_moves: Vec<RootMove>, // only allocated once so Vec is ok
+    timer: Timer,
 }
 
 impl Engine {
@@ -89,7 +151,20 @@ impl Engine {
             stack: [SearchStack::new(); SS_SIZE],
             heuristic: Box::new(Heuristic::new()),
             nodes: 0,
+            root_moves: vec![],
+            timer: Timer::new(),
         }
+    }
+
+    fn sort_root_moves(&mut self) {
+        let mut best = 0;
+        for i in 1..self.root_moves.len() {
+            if self.root_moves[i].score > self.root_moves[0].score {
+                best = i;
+            }
+        }
+
+        self.root_moves.swap(0, best);
     }
 
     fn evaluate(&mut self) -> i16 {
@@ -250,14 +325,29 @@ impl Engine {
         best_score
     }
 
-    pub fn search(&mut self, pos: &mut Chess, opt_time: u64, max_time: u64) -> SearchResult {
-        // setup a bunch of things
-
-        // TODO: root move list
-        let moves = pos.legal_moves();
-        let mut result = SearchResult::new(
-            
+    pub fn search(&mut self, pos: &mut Chess, opt_time: u128, max_time: u128) -> SearchResult {
+        assert!(
+            opt_time > 0 && max_time >= opt_time,
+            "time must be > 0 and max_time > opt_time"
         );
+
+        // timer
+        self.timer.start(max_time);
+
+        // root moves
+        self.root_moves.clear();
+        for m in pos.legal_moves() {
+            self.root_moves.push(RootMove::new(m));
+        }
+        assert!(!self.root_moves.is_empty(), "root moves is empty");
+
+        // search stack
+        for i in 0..SS_SIZE_PRE {
+            self.stack[i] = SearchStack::new();
+        }
+        for i in 0..(SS_SIZE - SS_SIZE_PRE) {
+            self.stack[SS_SIZE_PRE + i] = SearchStack::new_ply(i as i8);
+        }
 
         // iterative deepening
         let mut depth = 1;
@@ -265,18 +355,61 @@ impl Engine {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
-            let window = ASP_WINDOW;
+            let mut window = ASP_WINDOW
+                + self.root_moves[0].average_score * self.root_moves[0].average_score
+                    / ASP_WINDOW_SCORE_SCALE;
 
-            if depth >= 3 {}
+            if depth >= ASP_WINDOW_MIN_DEPTH {
+                alpha = (-VALUE_INF).max(self.root_moves[0].score - window);
+                beta = (VALUE_INF).min(self.root_moves[0].score + window);
+            }
 
             // asp window
             loop {
+                assert!(alpha < beta, "alpha beta invariance");
+                let score = self.negamax(pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
+                self.sort_root_moves();
+
+                if self.timer.stopped() {
+                    break;
+                }
+
+                if score <= alpha {
+                    beta = (alpha + beta) / 2;
+                    alpha = (-VALUE_INF).max(score - window);
+                } else if score >= beta {
+                    beta = (VALUE_INF).min(score + window);
+                } else {
+                    break;
+                }
+
+                if window < ASP_WINDOW_MAX_SIZE {
+                    window += window / ASP_WINDOW_SCORE_SCALE;
+                } else {
+                    alpha = -VALUE_INF;
+                    beta = VALUE_INF;
+                }
+            }
+
+            // force exit
+            if self.timer.stopped() {
                 break;
             }
+
+            // opt exit
+            if self.timer.test(opt_time) {
+                break;
+            }
+
+            // TODO: uci
+            println!("info depth {} nodes {}", depth, self.nodes);
 
             depth += 1;
         }
 
-        todo!()
+        SearchResult {
+            root: self.root_moves[0],
+            depth,
+        }
     }
 }
