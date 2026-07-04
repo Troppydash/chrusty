@@ -27,6 +27,7 @@ pub struct Movepick<'a> {
     captures_end: usize,
     bad_capture_len: usize,
     bad_quiet_len: usize,
+    raw_moves: MoveList,
 }
 
 // [bad_captures, good_captures, bad_quiets, good_quiets]
@@ -45,6 +46,7 @@ impl<'a> Movepick<'a> {
             captures_end: 0,
             bad_capture_len: 0,
             bad_quiet_len: 0,
+            raw_moves: MoveList::new(),
         }
     }
 
@@ -111,11 +113,13 @@ impl<'a> Movepick<'a> {
                 }
                 Stage::CaptureInit => {
                     // generate captures into [moves]
-                    let mut captures = self.pos.legal_moves();
-                    captures.retain(|m| !Self::is_quiet(m));
+                    self.raw_moves = self.pos.legal_moves();
 
-                    for i in 0..captures.len() {
-                        let m = captures[i];
+                    for i in 0..self.raw_moves.len() {
+                        let m = self.raw_moves[i];
+                        if Self::is_quiet(&m) {
+                            continue;
+                        }
 
                         if self.pv.map(|pv| pv == m).unwrap_or(false) {
                             continue;
@@ -152,12 +156,11 @@ impl<'a> Movepick<'a> {
                     }
                 }
                 Stage::QuietInit => {
-                    // generate quiets into [moves]
-                    let mut quiets = self.pos.legal_moves();
-                    quiets.retain(|m| Self::is_quiet(m));
-
-                    for i in 0..quiets.len() {
-                        let m = quiets[i];
+                    for i in 0..self.raw_moves.len() {
+                        let m = self.raw_moves[i];
+                        if !Self::is_quiet(&m) {
+                            continue;
+                        }
 
                         if self.pv.map(|pv| pv == m).unwrap_or(false) {
                             continue;

@@ -9,8 +9,10 @@ mod param;
 mod timer;
 mod tt;
 mod uci;
+mod pesto;
 
 fn main() {
+    pesto::init();
     // TODO: uci
 
     let mut engine = Engine::new();

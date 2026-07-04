@@ -2,11 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use shakmaty::{Chess, Move, MoveList, Position};
 
-use crate::{
-    ext::NULL_MOVE,
-    movepick::Movepick,
-    param::*,
-};
+use crate::{ext::NULL_MOVE, movepick::Movepick, param::*, pesto};
 
 #[derive(Clone, Copy)]
 struct SearchStack {
@@ -173,19 +169,7 @@ impl Engine {
     }
 
     fn evaluate(&mut self, pos: &mut Chess) -> i16 {
-        // simple piece eval
-        let mut us_score = 0;
-        let mut them_score = 0;
-
-        for i in pos.us() {
-            us_score += PIECE_VALUE[pos.board().role_at(i).unwrap() as usize - 1];
-        }
-
-        for i in pos.them() {
-            them_score += PIECE_VALUE[pos.board().role_at(i).unwrap() as usize - 1];
-        }
-
-        us_score - them_score + 20
+        return pesto::evaluate(pos) as i16 + 20;
     }
 
     fn qsearch(&mut self, pos: Chess, alpha: i16, beta: i16, depth: i8) -> i16 {
