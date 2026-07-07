@@ -48,8 +48,12 @@ impl Heuristic {
         let mut lmr = [[0; LMR_DEPTH]; LMR_MOVE_COUNT];
         for move_count in 0..LMR_MOVE_COUNT {
             for depth in 0..LMR_DEPTH {
-                lmr[move_count][depth] =
-                    (0.99 + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14) as i8;
+                if move_count <= 1 || depth <= 1 {
+                    lmr[move_count][depth] = 0;
+                } else {
+                    lmr[move_count][depth] =
+                        (0.99 + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14) as i8;
+                }
             }
         }
 
@@ -168,6 +172,18 @@ impl Engine {
         self.root_moves.swap(0, best);
     }
 
+    fn make_move(&mut self, pos: &Chess, m: &Move, ss: usize) -> Chess {
+        self.stack[ss].m = m.clone();
+
+        let mut new_pos = pos.clone();
+        if *m == NULL_MOVE {
+            new_pos.swap_turn().unwrap()
+        } else {
+            new_pos.play_unchecked(*m);
+            new_pos
+        }
+    }
+
     fn evaluate(&mut self, pos: &mut Chess) -> i16 {
         return pesto::evaluate(pos) as i16 + 20;
     }
@@ -186,16 +202,26 @@ impl Engine {
         is_pv: bool,
         cut_node: bool,
     ) -> i16 {
-        self.stack[ss].pv_size = 0;
-
         let ply = self.stack[ss].ply;
         let is_root = ply == 0;
 
-        if depth <= 0 {
-            return self.evaluate(pos);
+        assert!(alpha < beta);
+        assert!(!(is_root && cut_node));
+        assert!(!(is_pv && cut_node));
+
+        self.stack[ss].pv_size = 0;
+
+        if self.nodes % 4096 == 0 {
+            self.timer.check();
+            if self.timer.stopped() {
+                return 0;
+            }
         }
 
         self.nodes += 1;
+        if depth <= 0 {
+            return self.evaluate(pos);
+        }
 
         // draw checks
         if !is_root {
@@ -211,6 +237,7 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
+            // mate score pruning
             alpha = alpha.max(lose_in(ply));
             beta = beta.min(win_in(ply + 1));
             if alpha >= beta {
@@ -249,8 +276,7 @@ impl Engine {
             let m = m.unwrap();
             move_count += 1;
 
-            let mut new_pos = pos.clone();
-            new_pos.play_unchecked(m.m);
+            let mut new_pos = self.make_move(pos, &m.m, ss);
 
             let new_depth = depth - 1;
             let mut score = 0;
@@ -294,6 +320,10 @@ impl Engine {
 
             if is_pv && (move_count == 1 || score > alpha) {
                 score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
+            }
+
+            if self.timer.stopped() {
+                return 0;
             }
 
             if is_root {
@@ -468,7 +498,10 @@ impl Engine {
                 nps,
             );
             for i in 0..self.root_moves[0].pv_size {
-                print!(" {}", self.root_moves[0].pv_list[i]);
+                print!(
+                    " {}",
+                    shakmaty::uci::UciMove::from_standard(self.root_moves[0].pv_list[i])
+                );
             }
             println!("");
 

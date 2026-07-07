@@ -6,10 +6,10 @@ mod ext;
 mod heuristic;
 mod movepick;
 mod param;
+mod pesto;
 mod timer;
 mod tt;
 mod uci;
-mod pesto;
 
 fn main() {
     pesto::init();

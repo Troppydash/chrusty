@@ -1,8 +1,8 @@
 use shakmaty::{Chess, Role};
 
 pub const MAX_DEPTH: i8 = 64;
-pub const VALUE_INF: i16 = 32700;
-pub const VALUE_NONE: i16 = 32701;
+pub const VALUE_NONE: i16 = 32761;
+pub const VALUE_INF: i16 = 32760;
 pub const VALUE_CHECKMATE: i16 = VALUE_INF - (MAX_DEPTH as i16) - 1;
 pub const VALUE_EVAL: i16 = VALUE_CHECKMATE - 1;
 pub const VALUE_DRAW: i16 = 0;
@@ -31,6 +31,10 @@ pub fn is_valid(value: i16) -> bool {
     value != VALUE_NONE
 }
 
+pub const QDEPTH: i8 = 0;
+pub const UNSEARCH_DEPTH: i8 = -10;
+pub const UNINIT_DEPTH: i8 = -20;
+
 pub const PIECE_VALUE: [i16; Role::ALL.len() + 1] = [100, 300, 300, 500, 900, 0, 0];
 
 pub const NONE_PIECE_INDEX: usize = Role::ALL.len();
@@ -45,7 +49,7 @@ pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 
 // constants
 
-pub const ASP_WINDOW: i16 = 25;
+pub const ASP_WINDOW: i16 = 2;
 pub const ASP_WINDOW_SCORE_SCALE: i16 = 13000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 3;
 pub const ASP_WINDOW_MAX_SIZE: i16 = 4000;
