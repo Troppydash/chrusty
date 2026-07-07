@@ -2,8 +2,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use shakmaty::{Chess, Move, MoveList, Position};
 
-use crate::{ext::NULL_MOVE, movepick::Movepick, param::*, pesto};
-
+use crate::{
+    ext::NULL_MOVE, heuristic::Heuristic, movepick::Movepick, param::*, pesto, timer::Timer,
+};
 #[derive(Clone, Copy)]
 struct SearchStack {
     ply: i8,
@@ -38,34 +39,6 @@ impl SearchStack {
     }
 }
 
-struct Heuristic {
-    // lmr[move_count][depth]
-    lmr: [[i8; LMR_DEPTH]; LMR_MOVE_COUNT], // TODO: history
-}
-
-impl Heuristic {
-    pub fn new() -> Self {
-        let mut lmr = [[0; LMR_DEPTH]; LMR_MOVE_COUNT];
-        for move_count in 0..LMR_MOVE_COUNT {
-            for depth in 0..LMR_DEPTH {
-                if move_count <= 1 || depth <= 1 {
-                    lmr[move_count][depth] = 0;
-                } else {
-                    lmr[move_count][depth] =
-                        (0.99 + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14) as i8;
-                }
-            }
-        }
-
-        Self { lmr }
-    }
-
-    pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
-        assert!(depth >= 0);
-        self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct RootMove {
     pv_list: [Move; MAX_DEPTH as usize],
@@ -90,56 +63,6 @@ impl RootMove {
 pub struct SearchResult {
     pub root: RootMove,
     pub depth: i8,
-}
-
-pub struct Timer {
-    start: u128,
-    duration: u128,
-    stopped: bool,
-}
-
-impl Timer {
-    fn new() -> Self {
-        Self {
-            start: 0,
-            duration: 0,
-            stopped: false,
-        }
-    }
-
-    fn now() -> u128 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    }
-
-    fn start(&mut self, duration: u128) {
-        self.start = Self::now();
-        self.duration = duration;
-    }
-
-    fn check(&mut self) {
-        if self.stopped {
-            return;
-        }
-
-        if Self::now() >= self.start + self.duration {
-            self.stopped = true;
-        }
-    }
-
-    fn stopped(&self) -> bool {
-        self.stopped
-    }
-
-    fn test(&self, duration: u128) -> bool {
-        Self::now() >= self.start + duration
-    }
-
-    fn delta(&self) -> u128 {
-        Self::now() - self.start
-    }
 }
 
 pub struct Engine {
@@ -512,5 +435,9 @@ impl Engine {
             root: self.root_moves[0],
             depth,
         }
+    }
+
+    pub fn stop_search(&mut self) {
+        self.timer.force_stop();
     }
 }

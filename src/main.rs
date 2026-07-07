@@ -13,9 +13,6 @@ mod uci;
 
 fn main() {
     pesto::init();
-    // TODO: uci
 
-    let mut engine = Engine::new();
-    let mut pos = Chess::new();
-    engine.search(&mut pos, 10000, 10000);
+    uci::start();
 }

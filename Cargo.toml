@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 arrayvec = "0.7.7"
+rustyline = "18.0.1"
 shakmaty = "0.30.1"
