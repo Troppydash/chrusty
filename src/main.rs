@@ -1,3 +1,5 @@
+use shakmaty::Chess;
+
 use crate::engine::Engine;
 mod engine;
 mod ext;

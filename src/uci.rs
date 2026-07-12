@@ -1,7 +1,7 @@
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
-use crate::{Chess, Engine};
-use std::process::exit;
+use crate::{Engine};
+use crate::Chess;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
