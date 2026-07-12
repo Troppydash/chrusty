@@ -6,6 +6,8 @@ pub const VALUE_NONE: i16 = 32701;
 pub const VALUE_CHECKMATE: i16 = VALUE_INF - (MAX_DEPTH as i16) - 1;
 pub const VALUE_EVAL: i16 = VALUE_CHECKMATE - 1;
 pub const VALUE_DRAW: i16 = 0;
+pub const OPT_TIME: u128 = 10000;
+pub const MAX_TIME: u128 = 10000;
 
 pub fn is_decisive(value: i16) -> bool {
     value.abs() > VALUE_CHECKMATE

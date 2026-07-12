@@ -4,6 +4,26 @@ use shakmaty::{Chess, Move, MoveList, Position};
 
 use crate::{ext::NULL_MOVE, movepick::Movepick, param::*, pesto};
 
+pub struct SearchLimits {
+    pub depths: Option<i8>,
+    pub nodes: Option<i64>,
+    pub max_time: Option<u128>,
+    pub opt_time: Option<u128>,
+    pub infinite: bool,
+}
+
+impl SearchLimits {
+    pub fn new() -> Self {
+        Self {
+            depths: None,
+            nodes: None,
+            max_time: None,
+            opt_time: None,
+            infinite: false,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SearchStack {
     ply: i8,
@@ -367,14 +387,30 @@ impl Engine {
         best_score
     }
 
-    pub fn search(&mut self, pos: &mut Chess, opt_time: u128, max_time: u128) -> SearchResult {
-        assert!(
-            opt_time > 0 && max_time >= opt_time,
-            "time must be > 0 and max_time > opt_time"
-        );
-
-        // timer
-        self.timer.start(max_time);
+    pub fn search(&mut self, pos: &mut Chess, searchLimits: &SearchLimits) -> SearchResult {
+        
+        if searchLimits.max_time.is_some() && searchLimits.opt_time.is_some() {
+            assert!(
+                searchLimits.opt_time.unwrap() > 0 && 
+                searchLimits.max_time.unwrap() >= searchLimits.opt_time.unwrap(),
+                "time must be > 0 and max_time > opt_time"
+            );
+            self.timer.start(searchLimits.max_time.unwrap());
+        }
+        
+        if searchLimits.nodes.is_some() {
+            assert!(
+                searchLimits.nodes.unwrap() > 0,
+                "number of nodes must be > 0"
+            );
+        }
+        
+        if searchLimits.depths.is_some() {
+            assert!(
+                searchLimits.depths.unwrap() > 0,
+                "depth must be > 0"
+            );
+        }
 
         // root moves
         self.root_moves.clear();
@@ -394,6 +430,34 @@ impl Engine {
         // iterative deepening
         let mut depth = 1;
         while depth < MAX_DEPTH {
+            // check time
+            if searchLimits.max_time.is_some() && searchLimits.opt_time.is_some() {
+                // force exit
+                if self.timer.stopped() {
+                    println!("Max time reached");
+                    break;
+                }
+
+                // opt exit
+                if self.timer.test(searchLimits.opt_time.unwrap()) {
+                    println!("Opt time reached");
+                    break;
+                }
+            }
+            
+            // check depth
+            if searchLimits.depths.is_some() {
+                if depth > searchLimits.depths.unwrap() {
+                    break;
+                }
+            }
+            
+            if searchLimits.nodes.is_some() {
+                if self.nodes > searchLimits.nodes.unwrap() {
+                    break;
+                }
+            }
+
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
@@ -438,16 +502,6 @@ impl Engine {
                 }
             }
 
-            // force exit
-            if self.timer.stopped() {
-                break;
-            }
-
-            // opt exit
-            if self.timer.test(opt_time) {
-                break;
-            }
-
             let nps = self.nodes * 1000 / self.timer.delta().max(1) as i64;
             let score = self.root_moves[0].score;
             let score_str = if is_win(score) {
@@ -471,7 +525,6 @@ impl Engine {
                 print!(" {}", self.root_moves[0].pv_list[i]);
             }
             println!("");
-
             depth += 1;
         }
 
