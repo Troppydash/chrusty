@@ -3,10 +3,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use shakmaty::{Chess, Move, MoveList, Position, uci::UciMove};
+use shakmaty::{Chess, Move, MoveList, Position, uci::UciMove, zobrist::Zobrist64};
 
 use crate::{
-    ext::NULL_MOVE, heuristic::Heuristic, movepick::Movepick, param::*, pesto, timer::Timer,
+    ext::NULL_MOVE, heuristic::Heuristic, movepick::Movepick, param::*, pesto, rep::RepTable,
+    timer::Timer,
 };
 
 #[derive(Clone, Copy)]
@@ -75,6 +76,7 @@ pub struct Engine {
     nodes: i64,
     root_moves: Vec<RootMove>, // only allocated once so Vec is ok
     timer: Arc<RwLock<Timer>>,
+    rep: RepTable,
 }
 
 impl Engine {
@@ -85,6 +87,7 @@ impl Engine {
             nodes: 0,
             root_moves: vec![],
             timer,
+            rep: RepTable::new(),
         }
     }
 
@@ -101,7 +104,8 @@ impl Engine {
         self.root_moves.swap(0, best);
     }
 
-    fn make_move(&mut self, pos: &Chess, m: &Move, ss: usize) -> Chess {
+    fn make_move(&mut self, pos: &Chess, m: &Move, ss: usize, key: u64) -> Chess {
+        self.rep.add(key);
         self.stack[ss].m = m.clone();
 
         let mut new_pos = pos.clone();
@@ -111,6 +115,10 @@ impl Engine {
             new_pos.play_unchecked(*m);
             new_pos
         }
+    }
+
+    fn unmake_move(&mut self, key: u64) {
+        self.rep.remove(key);
     }
 
     fn evaluate(&mut self, pos: &mut Chess) -> i16 {
@@ -134,7 +142,7 @@ impl Engine {
         let ply = self.stack[ss].ply;
         let is_root = ply == 0;
 
-        assert!(alpha < beta);
+        assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
         assert!(!(is_root && cut_node));
         assert!(!(is_pv && cut_node));
 
@@ -158,7 +166,11 @@ impl Engine {
             return self.evaluate(pos);
         }
 
-        // draw checks
+        // TODO: use a better library, this is so slow
+        let key = pos
+            .zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal)
+            .0;
+
         if !is_root {
             if pos.has_insufficient_material(pos.turn()) {
                 return VALUE_DRAW;
@@ -169,6 +181,10 @@ impl Engine {
                     return lose_in(ply);
                 }
 
+                return VALUE_DRAW;
+            }
+
+            if self.rep.check(key) {
                 return VALUE_DRAW;
             }
 
@@ -211,7 +227,7 @@ impl Engine {
             let m = m.unwrap();
             move_count += 1;
 
-            let mut new_pos = self.make_move(pos, &m.m, ss);
+            let mut new_pos = self.make_move(pos, &m.m, ss, key);
 
             let new_depth = depth - 1;
             let mut score = 0;
@@ -257,6 +273,8 @@ impl Engine {
                 score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
+            self.unmake_move(key);
+
             if self.timer.read().unwrap().stopped() {
                 return 0;
             }
@@ -268,7 +286,7 @@ impl Engine {
                     .find(|rm| rm.pv_list[0] == m.m)
                     .unwrap();
                 root_move.average_score = if is_valid(root_move.average_score) {
-                    (root_move.average_score + score) / 2
+                    ((root_move.average_score as i32 + score as i32) / 2) as i16
                 } else {
                     score
                 };
@@ -332,8 +350,19 @@ impl Engine {
         best_score
     }
 
-    pub fn search(&mut self, pos: &mut Chess) -> SearchResult {
+    pub fn search(&mut self, startpos: Chess, moves: Vec<Move>) -> SearchResult {
         self.nodes = 0;
+        self.rep.clear();
+
+        // history tracking
+        let mut pos = startpos;
+        for m in moves.iter() {
+            let key = pos
+                .zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal)
+                .0;
+            self.rep.add_history(key);
+            pos.play_unchecked(*m);
+        }
 
         // root moves
         self.root_moves.clear();
@@ -358,22 +387,27 @@ impl Engine {
 
             let average_score = self.root_moves[0].average_score;
             let mut window = if is_valid(average_score) {
-                ASP_WINDOW
-                    + (average_score as i64 * average_score as i64 / ASP_WINDOW_SCORE_SCALE as i64)
-                        as i16
+                // need to wrap to prevent overflow
+                let base = ASP_WINDOW as i32
+                    + (average_score as i32 * average_score as i32 / ASP_WINDOW_SCORE_SCALE as i32);
+                base.min(ASP_WINDOW_MAX_SIZE as i32) as i16
             } else {
                 ASP_WINDOW
             };
 
+            assert!(window >= 0, "window must be >= 0");
+
             if depth >= ASP_WINDOW_MIN_DEPTH {
-                alpha = (-VALUE_INF).max(self.root_moves[0].score - window);
-                beta = (VALUE_INF).min(self.root_moves[0].score + window);
+                alpha =
+                    (-VALUE_INF as i32).max(self.root_moves[0].score as i32 - window as i32) as i16;
+                beta =
+                    (VALUE_INF as i32).min(self.root_moves[0].score as i32 + window as i32) as i16;
             }
 
             // asp window
             loop {
                 assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
-                let score = self.negamax(pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
+                let score = self.negamax(&mut pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();
 
                 if self.timer.read().unwrap().stopped() {
@@ -381,14 +415,15 @@ impl Engine {
                 }
 
                 if score <= alpha {
-                    beta = (alpha + beta) / 2;
-                    alpha = (-VALUE_INF).max(score - window);
+                    beta = ((alpha as i32 + beta as i32) / 2) as i16;
+                    alpha = (-VALUE_INF as i32).max(score as i32 - window as i32) as i16;
                 } else if score >= beta {
-                    beta = (VALUE_INF).min(score + window);
+                    beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
                 } else {
                     break;
                 }
 
+                // need [ASP_WINDOW_MAX_SIZE] to be small enough to prevent overflow
                 window += window / ASP_WINDOW_SCALE;
                 if window > ASP_WINDOW_MAX_SIZE {
                     window = ASP_WINDOW_MAX_SIZE;

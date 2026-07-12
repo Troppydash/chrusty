@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
 use rustyline::DefaultEditor;
+use rustyline::history;
+use shakmaty::Move;
 use shakmaty::Position;
 use shakmaty::fen::Fen;
 use shakmaty::uci::UciMove;
@@ -57,10 +59,10 @@ impl AsyncEngine {
         timer.start(limits.max_time);
     }
 
-    fn search(&mut self, mut pos: Chess) {
+    fn search(&mut self, startpos: Chess, moves: Vec<Move>) {
         let engine = self.engine.clone();
         self.handle = Some(thread::spawn(move || {
-            engine.lock().unwrap().search(&mut pos);
+            engine.lock().unwrap().search(startpos, moves);
         }));
     }
 
@@ -78,7 +80,9 @@ impl AsyncEngine {
 pub fn start() {
     let mut async_engine = AsyncEngine::new();
     let mut rl = DefaultEditor::new().unwrap();
+    let mut startpos = Chess::new();
     let mut pos = Chess::new();
+    let mut moves = vec![];
     loop {
         let line = rl.readline("");
         let line = match line {
@@ -114,7 +118,7 @@ pub fn start() {
                 let mut offset = 1;
                 match parts[1] {
                     "startpos" => {
-                        pos = Chess::new();
+                        startpos = Chess::new();
                         offset = 3;
                     }
                     "fen" => {
@@ -122,7 +126,7 @@ pub fn start() {
                             "{} {} {} {} {} {}",
                             parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
                         );
-                        pos = Fen::from_str(&fen)
+                        startpos = Fen::from_str(&fen)
                             .unwrap()
                             .into_position(shakmaty::CastlingMode::Standard)
                             .unwrap();
@@ -132,8 +136,12 @@ pub fn start() {
                         panic!("unknown position type {}", parts[1]);
                     }
                 }
+
+                moves.clear();
+                pos = startpos.clone();
                 for i in offset..parts.len() {
                     let m = UciMove::from_str(parts[i]).unwrap().to_move(&pos).unwrap();
+                    moves.push(m);
                     pos.play_unchecked(m);
                 }
             }
@@ -207,7 +215,7 @@ pub fn start() {
 
                 async_engine.stop();
                 async_engine.start_timer(&search_limits);
-                async_engine.search(pos.clone());
+                async_engine.search(startpos.clone(), moves.clone());
             }
             "stop" => {
                 async_engine.stop();

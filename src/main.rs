@@ -10,6 +10,7 @@ mod pesto;
 mod timer;
 mod tt;
 mod uci;
+mod rep;
 
 fn main() {
     pesto::init();

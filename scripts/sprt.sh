@@ -10,7 +10,7 @@ if [[ -z "$NEW" || -z "$OLD" ]]; then
     exit 1
 fi
 
-CONCURRENCY=1
+CONCURRENCY=$3
 LOG_FILE="./bench/logs/${NEW}_vs_${OLD}"
 mkdir -p $LOG_FILE
 ./bench/fastchess/fastchess \
