@@ -1,30 +1,14 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use shakmaty::{Chess, Move, MoveList, Position};
+use shakmaty::{Chess, Move, MoveList, Position, uci::UciMove};
 
 use crate::{
     ext::NULL_MOVE, heuristic::Heuristic, movepick::Movepick, param::*, pesto, timer::Timer,
 };
 
-pub struct SearchLimits {
-    pub depths: Option<i8>,
-    pub nodes: Option<i64>,
-    pub max_time: Option<u128>,
-    pub opt_time: Option<u128>,
-    pub infinite: bool,
-}
-
-impl SearchLimits {
-    pub fn new() -> Self {
-        Self {
-            depths: None,
-            nodes: None,
-            max_time: None,
-            opt_time: None,
-            infinite: false,
-        }
-    }
-}
 #[derive(Clone, Copy)]
 struct SearchStack {
     ply: i8,
@@ -90,17 +74,17 @@ pub struct Engine {
     heuristic: Box<Heuristic>,
     nodes: i64,
     root_moves: Vec<RootMove>, // only allocated once so Vec is ok
-    timer: Timer,
+    timer: Arc<RwLock<Timer>>,
 }
 
 impl Engine {
-    pub fn new() -> Self {
+    pub fn new(timer: Arc<RwLock<Timer>>) -> Self {
         Self {
             stack: [SearchStack::new(); SS_SIZE],
             heuristic: Box::new(Heuristic::new()),
             nodes: 0,
             root_moves: vec![],
-            timer: Timer::new(),
+            timer,
         }
     }
 
@@ -154,9 +138,15 @@ impl Engine {
 
         self.stack[ss].pv_size = 0;
 
-        if self.nodes % 4096 == 0 {
-            self.timer.check();
-            if self.timer.stopped() {
+        if self.nodes % 8192 == 0 {
+            self.timer.write().unwrap().check();
+            if !self.timer.read().unwrap().stopped() {
+                if self.nodes >= self.timer.read().unwrap().max_nodes {
+                    self.timer.write().unwrap().force_stop();
+                }
+            }
+
+            if self.timer.read().unwrap().stopped() {
                 return 0;
             }
         }
@@ -265,7 +255,7 @@ impl Engine {
                 score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
-            if self.timer.stopped() {
+            if self.timer.read().unwrap().stopped() {
                 return 0;
             }
 
@@ -340,31 +330,7 @@ impl Engine {
         best_score
     }
 
-    pub fn search(&mut self, pos: &mut Chess, searchLimits: &SearchLimits) -> SearchResult {
-        
-        if searchLimits.max_time.is_some() && searchLimits.opt_time.is_some() {
-            assert!(
-                searchLimits.opt_time.unwrap() > 0 && 
-                searchLimits.max_time.unwrap() >= searchLimits.opt_time.unwrap(),
-                "time must be > 0 and max_time > opt_time"
-            );
-            self.timer.start(searchLimits.max_time.unwrap());
-        }
-        
-        if searchLimits.nodes.is_some() {
-            assert!(
-                searchLimits.nodes.unwrap() > 0,
-                "number of nodes must be > 0"
-            );
-        }
-        
-        if searchLimits.depths.is_some() {
-            assert!(
-                searchLimits.depths.unwrap() > 0,
-                "depth must be > 0"
-            );
-        }
-
+    pub fn search(&mut self, pos: &mut Chess) -> SearchResult {
         // root moves
         self.root_moves.clear();
         for m in pos.legal_moves() {
@@ -382,35 +348,7 @@ impl Engine {
 
         // iterative deepening
         let mut depth = 1;
-        while depth < MAX_DEPTH {
-            // check time
-            if searchLimits.max_time.is_some() && searchLimits.opt_time.is_some() {
-                // force exit
-                if self.timer.stopped() {
-                    println!("Max time reached");
-                    break;
-                }
-
-                // opt exit
-                if self.timer.test(searchLimits.opt_time.unwrap()) {
-                    println!("Opt time reached");
-                    break;
-                }
-            }
-            
-            // check depth
-            if searchLimits.depths.is_some() {
-                if depth > searchLimits.depths.unwrap() {
-                    break;
-                }
-            }
-            
-            if searchLimits.nodes.is_some() {
-                if self.nodes > searchLimits.nodes.unwrap() {
-                    break;
-                }
-            }
-
+        while depth < self.timer.read().unwrap().max_depth {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
@@ -434,7 +372,7 @@ impl Engine {
                 let score = self.negamax(pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();
 
-                if self.timer.stopped() {
+                if self.timer.read().unwrap().stopped() {
                     break;
                 }
 
@@ -455,7 +393,23 @@ impl Engine {
                 }
             }
 
-            let nps = self.nodes * 1000 / self.timer.delta().max(1) as i64;
+            // force exit
+            if self.timer.read().unwrap().stopped() {
+                break;
+            }
+
+            // opt exit
+            if self
+                .timer
+                .read()
+                .unwrap()
+                .test(self.timer.read().unwrap().opt_time)
+            {
+                break;
+            }
+
+            let delta = self.timer.read().unwrap().delta();
+            let nps = self.nodes * 1000 / delta.max(1) as i64;
             let score = self.root_moves[0].score;
             let score_str = if is_win(score) {
                 let ply = VALUE_INF - score;
@@ -468,29 +422,34 @@ impl Engine {
             };
             print!(
                 "info depth {} nodes {} time {} score {} nps {} pv",
-                depth,
-                self.nodes,
-                self.timer.delta(),
-                score_str,
-                nps,
+                depth, self.nodes, delta, score_str, nps,
             );
             for i in 0..self.root_moves[0].pv_size {
-                print!(
-                    " {}",
-                    shakmaty::uci::UciMove::from_standard(self.root_moves[0].pv_list[i])
-                );
+                print!(" {}", UciMove::from_standard(self.root_moves[0].pv_list[i]));
             }
             println!("");
             depth += 1;
         }
 
-        SearchResult {
+        let result = SearchResult {
             root: self.root_moves[0],
             depth,
-        }
-    }
+        };
 
-    pub fn stop_search(&mut self) {
-        self.timer.force_stop();
+        assert!(result.root.pv_size != 0);
+        if result.root.pv_size >= 2 {
+            println!(
+                "bestmove {} ponder {}",
+                UciMove::from_standard(result.root.pv_list[0]),
+                UciMove::from_standard(result.root.pv_list[1])
+            );
+        } else {
+            println!(
+                "bestmove {} ",
+                UciMove::from_standard(result.root.pv_list[0])
+            );
+        }
+
+        result
     }
 }

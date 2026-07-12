@@ -16,6 +16,10 @@ pub fn get_pv(mask: u8) -> bool {
     (mask >> (AGE_SIZE + 2)) == 1
 }
 
+pub fn can_use(value: i16, alpha: i16, beta: i16, flag: u8) -> bool {
+    todo!()
+}
+
 pub struct EntryValue {
     hash: u16,
     pv: PackedUciMove,

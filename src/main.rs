@@ -1,6 +1,4 @@
-use shakmaty::{Board, Chess, Position};
-
-use crate::{engine::Engine};
+use crate::engine::Engine;
 mod engine;
 mod ext;
 mod heuristic;
@@ -13,7 +11,5 @@ mod uci;
 
 fn main() {
     pesto::init();
-    uci::start();
-
     uci::start();
 }
