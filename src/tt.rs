@@ -2,7 +2,11 @@ use shakmaty::{Move, packed::PackedUciMove};
 
 use crate::param::{UNINIT_DEPTH, VALUE_NONE};
 
-pub const AGE_SIZE: usize = 5;
+const AGE_SIZE: usize = 5;
+const FLAG_NONE: u8 = 0;
+const FLAG_ALPHA: u8 = 1;
+const FLAG_BETA: u8 = 2;
+const FLAG_EXACT: u8 = 3;
 
 pub fn get_flag(mask: u8) -> u8 {
     (mask >> AGE_SIZE) & 0b11
@@ -16,8 +20,21 @@ pub fn get_pv(mask: u8) -> bool {
     (mask >> (AGE_SIZE + 2)) == 1
 }
 
-pub fn can_use(value: i16, alpha: i16, beta: i16, flag: u8) -> bool {
-    todo!()
+// can [value] derived using [flag] cutoff given [alpha, beta]
+pub fn can_use(value: i16, flag: u8, alpha: i16, beta: i16) -> bool {
+    if flag == FLAG_EXACT {
+        return true;
+    }
+
+    if flag == FLAG_ALPHA {
+        return value <= alpha;
+    }
+
+    if flag == FLAG_BETA {
+        return value >= beta;
+    }
+
+    return false;
 }
 
 pub struct EntryValue {

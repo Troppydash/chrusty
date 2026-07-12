@@ -37,8 +37,6 @@ pub const QDEPTH: i8 = 0;
 pub const UNSEARCH_DEPTH: i8 = -10;
 pub const UNINIT_DEPTH: i8 = -20;
 
-pub const REP_SIZE: usize = 1 << 15;
-
 pub const PIECE_VALUE: [i16; Role::ALL.len() + 1] = [100, 300, 300, 500, 900, 0, 0];
 
 pub const NONE_PIECE_INDEX: usize = Role::ALL.len();

@@ -1,7 +1,6 @@
 use shakmaty::Move;
 
-use crate::param::REP_SIZE;
-
+const REP_SIZE: usize = 1 << 15;
 const UNSET: u64 = 1;
 
 #[derive(Clone, Copy)]

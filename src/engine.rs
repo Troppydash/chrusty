@@ -122,7 +122,9 @@ impl Engine {
     }
 
     fn evaluate(&mut self, pos: &mut Chess) -> i16 {
-        return pesto::evaluate(pos) as i16 + 20;
+        let tempo = 20;
+        let eval = pesto::evaluate(pos);
+        return (eval + tempo).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
     fn qsearch(&mut self, pos: Chess, alpha: i16, beta: i16, depth: i8) -> i16 {
