@@ -8,6 +8,7 @@ use std::thread::{self, JoinHandle};
 
 use rustyline::DefaultEditor;
 use shakmaty::Position;
+use shakmaty::fen::Fen;
 use shakmaty::uci::UciMove;
 
 pub struct SearchLimits {
@@ -57,9 +58,6 @@ impl AsyncEngine {
     }
 
     fn search(&mut self, mut pos: Chess) {
-        self.stop();
-        assert!(self.handle.is_none());
-
         let engine = self.engine.clone();
         self.handle = Some(thread::spawn(move || {
             engine.lock().unwrap().search(&mut pos);
@@ -90,6 +88,8 @@ pub fn start() {
             Ok(line) => line,
         };
 
+        rl.add_history_entry(&line).unwrap();
+
         let parts = line.split_whitespace().collect::<Vec<&str>>();
         if parts.len() == 0 {
             println!("warn empty input");
@@ -103,13 +103,36 @@ pub fn start() {
                 println!("id name Chrusty");
                 println!("id authors A Chinese boy and a Vietnamese man");
                 println!("");
+                println!("option name Threads type spin default 1 min 1 max 1");
+                println!("option name Hash type spin default 32 min 8 max 16000");
                 println!("uciok");
             }
             "position" => {
                 // position startpos moves <move1> <move2>
-                assert!(parts[1] == "startpos");
-                pos = Chess::new();
-                for i in 3..parts.len() {
+                // position fen <fen> moves <move1> <move2>
+
+                let mut offset = 1;
+                match parts[1] {
+                    "startpos" => {
+                        pos = Chess::new();
+                        offset = 3;
+                    }
+                    "fen" => {
+                        let fen = format!(
+                            "{} {} {} {} {} {}",
+                            parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
+                        );
+                        pos = Fen::from_str(&fen)
+                            .unwrap()
+                            .into_position(shakmaty::CastlingMode::Standard)
+                            .unwrap();
+                        offset = 9;
+                    }
+                    _ => {
+                        panic!("unknown position type {}", parts[1]);
+                    }
+                }
+                for i in offset..parts.len() {
                     let m = UciMove::from_str(parts[i]).unwrap().to_move(&pos).unwrap();
                     pos.play_unchecked(m);
                 }
@@ -127,40 +150,40 @@ pub fn start() {
                 while i < parts.len() {
                     match parts[i] {
                         "depth" => {
-                            search_limits.max_depths = parts[i].parse::<i8>().unwrap();
+                            search_limits.max_depths = parts[i + 1].parse::<i8>().unwrap();
                             i += 2;
                         }
                         "nodes" => {
-                            search_limits.max_nodes = parts[i].parse::<i64>().unwrap();
+                            search_limits.max_nodes = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
                         "movetime" => {
-                            let time = parts[i].parse::<u128>().unwrap();
+                            let time = parts[i + 1].parse::<u128>().unwrap();
                             search_limits.opt_time = time;
                             search_limits.max_time = time;
                             i += 2;
                         }
                         "wtime" => {
                             is_competitive = true;
-                            wtime = parts[i].parse::<u128>().unwrap();
+                            wtime = parts[i + 1].parse::<u128>().unwrap();
                             i += 2;
                         }
 
                         "winc" => {
                             is_competitive = true;
-                            winc = parts[i].parse::<u128>().unwrap();
+                            winc = parts[i + 1].parse::<u128>().unwrap();
                             i += 2;
                         }
 
                         "btime" => {
                             is_competitive = true;
-                            btime = parts[i].parse::<u128>().unwrap();
+                            btime = parts[i + 1].parse::<u128>().unwrap();
                             i += 2;
                         }
 
                         "binc" => {
                             is_competitive = true;
-                            binc = parts[i].parse::<u128>().unwrap();
+                            binc = parts[i + 1].parse::<u128>().unwrap();
                             i += 2;
                         }
                         _ => {
@@ -182,6 +205,7 @@ pub fn start() {
                     search_limits.max_time = max_time;
                 }
 
+                async_engine.stop();
                 async_engine.start_timer(&search_limits);
                 async_engine.search(pos.clone());
             }
@@ -189,8 +213,14 @@ pub fn start() {
                 async_engine.stop();
             }
             "setoption" => {
-                // can ignore for now
-                todo!()
+                // setoption name <name> value <value>
+                match parts[2] {
+                    "Threads" => {}
+                    "Hash" => {}
+                    _ => {
+                        println!("unknown option {}, skipping", parts[2]);
+                    }
+                }
             }
             "ucinewgame" => {
                 async_engine.newgame();

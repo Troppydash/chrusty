@@ -333,6 +333,8 @@ impl Engine {
     }
 
     pub fn search(&mut self, pos: &mut Chess) -> SearchResult {
+        self.nodes = 0;
+
         // root moves
         self.root_moves.clear();
         for m in pos.legal_moves() {
@@ -370,7 +372,7 @@ impl Engine {
 
             // asp window
             loop {
-                assert!(alpha < beta, "alpha beta invariance");
+                assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
                 let score = self.negamax(pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();
 
@@ -387,9 +389,9 @@ impl Engine {
                     break;
                 }
 
-                if window < ASP_WINDOW_MAX_SIZE {
-                    window += window / ASP_WINDOW_SCALE;
-                } else {
+                window += window / ASP_WINDOW_SCALE;
+                if window > ASP_WINDOW_MAX_SIZE {
+                    window = ASP_WINDOW_MAX_SIZE;
                     alpha = -VALUE_INF;
                     beta = VALUE_INF;
                 }
@@ -437,6 +439,7 @@ impl Engine {
             root: self.root_moves[0],
             depth,
         };
+        println!("info time {}", self.timer.read().unwrap().delta());
 
         assert!(result.root.pv_size != 0);
         if result.root.pv_size >= 2 {

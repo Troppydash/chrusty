@@ -2,6 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 
+#[derive(Debug)]
 pub struct Timer {
     start: u128,
     duration: u128,
@@ -34,6 +35,7 @@ impl Timer {
     pub fn start(&mut self, duration: u128) {
         self.start = Self::now();
         self.duration = duration;
+        self.stopped = false;
     }
 
     pub fn check(&mut self) {
