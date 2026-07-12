@@ -1,8 +1,4 @@
-use shakmaty::{
-    Chess,
-    Color::{Black, White},
-    Position,
-};
+use shakmaty::{Chess, Color::White, Position};
 
 const MG_VALUE: [i32; 6] = [82, 337, 365, 477, 1025, 0];
 const EG_VALUE: [i32; 6] = [94, 281, 297, 512, 936, 0];

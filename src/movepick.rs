@@ -128,7 +128,8 @@ impl<'a> Movepick<'a> {
                         let mut scores_move = ScoredMove::from_move(m);
 
                         // mvv-lva
-                        scores_move.score = PIECE_VALUE[Self::get_captured(&m) - 1]
+                        scores_move.score = MVV_MULTIPLIER
+                            * PIECE_VALUE[Self::get_captured(&m) - 1]
                             - PIECE_VALUE[m.role() as usize - 1];
 
                         self.moves.push(scores_move);
