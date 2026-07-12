@@ -88,6 +88,8 @@ impl Engine {
         }
     }
 
+    pub fn newgame(&mut self) {}
+
     fn sort_root_moves(&mut self) {
         let mut best = 0;
         for i in 1..self.root_moves.len() {
