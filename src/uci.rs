@@ -68,7 +68,7 @@ pub fn start() {
     let mut async_engine = AsyncEngine::new();
     let mut rl = DefaultEditor::new().unwrap();
     loop {
-        let line = rl.readline(">");
+        let line = rl.readline("");
         let line = match line {
             Err(_) => {
                 break;
