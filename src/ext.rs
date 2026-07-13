@@ -54,16 +54,7 @@ impl ExtBoard for Board {
     }
 
     fn any_moves(&self) -> bool {
-        let mut any = false;
-        self.generate_moves(|moves| {
-            if !moves.is_empty() {
-                any = true;
-            }
-
-            true
-        });
-
-        any
+        self.generate_moves(|_m| true)
     }
 
     fn is_capture(&self, m: &Move) -> bool {

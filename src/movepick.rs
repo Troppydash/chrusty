@@ -1,5 +1,9 @@
 use arrayvec::ArrayVec;
-use cozy_chess::{Board, Move, Piece, Rank};
+use cozy_chess::{
+    Board,
+    Color::{Black, White},
+    Move, Piece, Rank,
+};
 
 use crate::{
     ext::{ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
@@ -53,6 +57,7 @@ impl<'a> Movepick<'a> {
 
     /// Sort by descending
     pub fn sort_moves(&mut self, start: usize, end: usize) {
+        // TODO: try selection sort
         for i in (start + 1)..end {
             let temp = self.moves[i];
             let mut j = i - 1;
@@ -95,33 +100,54 @@ impl<'a> Movepick<'a> {
                 Stage::CaptureInit => {
                     // generate captures into [moves]
                     let opp = self.pos.colors(!self.pos.side_to_move());
-                    self.pos.generate_moves(|moves| {
-                        // only captures, so moves with [.to] on
+                    let promotion_pawns = self.pos.pieces(Piece::Pawn)
+                        & match self.pos.side_to_move() {
+                            White => Rank::Seventh.bitboard(),
+                            Black => Rank::Second.bitboard(),
+                        };
+                    let non_promotions = self.pos.occupied() - promotion_pawns;
 
-                        let to = moves.to & opp;
-                        for t in to {
-                            // check promotions
-                            let is_promotion = moves.piece == Piece::Pawn
-                                && matches!(t.rank(), Rank::First | Rank::Eighth);
-                            if is_promotion {
+                    // captures
+                    self.pos.generate_moves_for(non_promotions, |moves| {
+                        for t in moves.to & opp {
+                            self.moves.push(ScoredMove {
+                                inner: Move {
+                                    from: moves.from,
+                                    to: t,
+                                    promotion: None,
+                                },
+                                score: 0,
+                            });
+                        }
+                        false
+                    });
+
+                    // capture promotions or queen promotions
+                    self.pos.generate_moves_for(promotion_pawns, |moves| {
+                        // captures
+                        for t in moves.to & opp {
+                            for p in [Piece::Queen, Piece::Rook, Piece::Knight, Piece::Bishop] {
                                 self.moves.push(ScoredMove {
                                     inner: Move {
                                         from: moves.from,
                                         to: t,
-                                        promotion: Some(Piece::Queen),
-                                    },
-                                    score: 0,
-                                });
-                            } else {
-                                self.moves.push(ScoredMove {
-                                    inner: Move {
-                                        from: moves.from,
-                                        to: t,
-                                        promotion: None,
+                                        promotion: Some(p),
                                     },
                                     score: 0,
                                 });
                             }
+                        }
+
+                        // non-captures
+                        for t in moves.to & !opp {
+                            self.moves.push(ScoredMove {
+                                inner: Move {
+                                    from: moves.from,
+                                    to: t,
+                                    promotion: Some(Piece::Queen),
+                                },
+                                score: 0,
+                            });
                         }
 
                         false
@@ -163,32 +189,39 @@ impl<'a> Movepick<'a> {
                 }
                 Stage::QuietInit => {
                     // generate quiets into [moves]
-                    let not_opp = !self.pos.colors(!self.pos.side_to_move());
-                    self.pos.generate_moves(|moves| {
-                        // only quiets, so moves with [.to] on not opp
+                    let opp = self.pos.colors(!self.pos.side_to_move());
+                    let promotion_pawns = self.pos.pieces(Piece::Pawn)
+                        & match self.pos.side_to_move() {
+                            White => Rank::Seventh.bitboard(),
+                            Black => Rank::Second.bitboard(),
+                        };
+                    let non_promotions = self.pos.occupied() - promotion_pawns;
 
-                        let to = moves.to & not_opp;
-                        for t in to {
-                            // check promotions
-                            let is_promotion = moves.piece == Piece::Pawn
-                                && matches!(t.rank(), Rank::First | Rank::Eighth);
-                            if is_promotion {
-                                for p in [Piece::Rook, Piece::Knight, Piece::Bishop] {
-                                    self.moves.push(ScoredMove {
-                                        inner: Move {
-                                            from: moves.from,
-                                            to: t,
-                                            promotion: Some(p),
-                                        },
-                                        score: 0,
-                                    });
-                                }
-                            } else {
+                    // non-captures
+                    self.pos.generate_moves_for(non_promotions, |moves| {
+                        for t in moves.to & !opp {
+                            self.moves.push(ScoredMove {
+                                inner: Move {
+                                    from: moves.from,
+                                    to: t,
+                                    promotion: None,
+                                },
+                                score: 0,
+                            });
+                        }
+
+                        false
+                    });
+
+                    // non-capture non-queen promotions
+                    self.pos.generate_moves_for(promotion_pawns, |moves| {
+                        for t in moves.to & !opp {
+                            for p in [Piece::Rook, Piece::Knight, Piece::Bishop] {
                                 self.moves.push(ScoredMove {
                                     inner: Move {
                                         from: moves.from,
                                         to: t,
-                                        promotion: None,
+                                        promotion: Some(p),
                                     },
                                     score: 0,
                                 });

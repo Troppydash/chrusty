@@ -2,6 +2,7 @@ use crate::Engine;
 use crate::ext::ExtMove;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
+use std::process::exit;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
@@ -73,31 +74,22 @@ impl AsyncEngine {
     }
 }
 
-pub fn start() {
+pub fn start(args: Vec<String>) {
     let mut async_engine = AsyncEngine::new();
     let mut rl = DefaultEditor::new().unwrap();
     let mut startpos = Board::startpos();
     let mut pos = Board::startpos();
     let mut moves = vec![];
-    loop {
-        let line = rl.readline("");
-        let line = match line {
-            Err(_) => {
-                break;
-            }
-            Ok(line) => line,
-        };
 
-        rl.add_history_entry(&line).unwrap();
-
+    let mut process_line = |line: &String| -> () {
         let parts = line.split_whitespace().collect::<Vec<&str>>();
         if parts.len() == 0 {
             println!("warn empty input");
-            continue;
+            return;
         }
         match parts[0] {
             "quit" => {
-                break;
+                exit(0);
             }
             "uci" => {
                 println!("id name Chrusty");
@@ -233,5 +225,22 @@ pub fn start() {
                 println!("warn unknown command {}", parts[0]);
             }
         }
+    };
+
+    for arg in args.iter() {
+        process_line(arg);
+    }
+
+    loop {
+        let line = rl.readline("");
+        let line = match line {
+            Err(_) => {
+                break;
+            }
+            Ok(line) => line,
+        };
+
+        rl.add_history_entry(&line).unwrap();
+        process_line(&line);
     }
 }
