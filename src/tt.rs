@@ -1,5 +1,3 @@
-use shakmaty::{Move, packed::PackedUciMove};
-
 use crate::param::{UNINIT_DEPTH, VALUE_NONE};
 
 const AGE_SIZE: usize = 5;
@@ -39,7 +37,7 @@ pub fn can_use(value: i16, flag: u8, alpha: i16, beta: i16) -> bool {
 
 pub struct EntryValue {
     hash: u16,
-    pv: PackedUciMove,
+    pv: u16,
     depth: i8,
     static_score: i16,
     score: i16,
@@ -51,7 +49,7 @@ pub struct EntryValue {
 #[derive(Clone, Copy)]
 pub struct Entry {
     hash: u16,
-    pv: PackedUciMove,
+    pv: u16,
     depth: i8,
     static_score: i16,
     score: i16,
@@ -62,7 +60,7 @@ impl Entry {
     fn new() -> Self {
         Self {
             hash: 0,
-            pv: PackedUciMove::from_bytes([0, 0]),
+            pv: 0,
             depth: UNINIT_DEPTH,
             static_score: VALUE_NONE,
             score: VALUE_NONE,

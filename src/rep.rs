@@ -1,5 +1,3 @@
-use shakmaty::Move;
-
 const REP_SIZE: usize = 1 << 15;
 const UNSET: u64 = 1;
 

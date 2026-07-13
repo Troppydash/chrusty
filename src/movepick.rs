@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
-use shakmaty::{Board, Chess, Move, MoveList, Position, Role};
+use cozy_chess::{Board, Move, Piece, Rank};
 
 use crate::{
-    ext::ScoredMove,
+    ext::{ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
     param::{BAD_QUIET_SCORE, MVV_MULTIPLIER, NONE_PIECE_INDEX, PIECE_VALUE},
 };
 
@@ -16,27 +16,19 @@ enum Stage {
     BadQuiet,
 }
 
-type ScoredMoveList = ArrayVec<ScoredMove, 270>;
-
 pub struct Movepick<'a> {
-    pos: &'a Chess,
+    pos: &'a Board,
     moves: ScoredMoveList,
     ptr: usize,
-    pv: Option<Move>,
+    pv: Move,
     stage: Stage,
     captures_end: usize,
     bad_capture_len: usize,
     bad_quiet_len: usize,
-    raw_moves: MoveList,
 }
 
-// [bad_captures, good_captures, bad_quiets, good_quiets]
-//                             ^ capture_end
-// ___________ <- bad_capture_len
-//                              ___________ <- bad_quiet_len
-
 impl<'a> Movepick<'a> {
-    pub fn new_negamax(pos: &'a Chess, pv: Option<Move>) -> Self {
+    pub fn new_negamax(pos: &'a Board, pv: Move) -> Self {
         Self {
             pos,
             moves: ScoredMoveList::new(),
@@ -46,25 +38,17 @@ impl<'a> Movepick<'a> {
             captures_end: 0,
             bad_capture_len: 0,
             bad_quiet_len: 0,
-            raw_moves: MoveList::new(),
         }
     }
 
-    pub fn is_quiet(m: &Move) -> bool {
+    pub fn is_quiet(pos: &Board, m: &Move) -> bool {
         // a quiet move is not a capture and not a queen promotion
         let is_queen_promotion = m
-            .promotion()
-            .map(|role| role == Role::Queen)
+            .promotion
+            .map(|piece| piece == Piece::Queen)
             .unwrap_or(false);
 
-        !m.is_capture() && !is_queen_promotion
-    }
-
-    pub fn get_captured(capture_move: &Move) -> usize {
-        capture_move
-            .capture()
-            .map(|role| role as usize)
-            .unwrap_or(NONE_PIECE_INDEX)
+        !pos.is_capture(m) && !is_queen_promotion
     }
 
     /// Sort by descending
@@ -84,7 +68,7 @@ impl<'a> Movepick<'a> {
         }
     }
 
-    pub fn pick<F>(&mut self, end: usize, mut filter: F) -> Option<ScoredMove>
+    pub fn pick<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
     where
         F: FnMut(&mut ScoredMoveList, usize) -> bool,
     {
@@ -92,47 +76,71 @@ impl<'a> Movepick<'a> {
             let ok = filter(&mut self.moves, self.ptr);
             self.ptr += 1;
             if ok {
-                return Some(self.moves[self.ptr - 1]);
+                return self.moves[self.ptr - 1];
             }
         }
 
-        None
+        ScoredMove::NULL_MOVE
     }
 
-    pub fn next_move(&mut self) -> Option<ScoredMove> {
+    pub fn next_move(&mut self) -> ScoredMove {
         loop {
             match self.stage {
                 Stage::Pv => {
                     self.stage = Stage::CaptureInit;
-                    match self.pv {
-                        None => {}
-                        Some(pv) => {
-                            return Some(ScoredMove::from_move(pv));
-                        }
+                    if !self.pv.is_null() {
+                        return ScoredMove::from_move(self.pv);
                     }
                 }
                 Stage::CaptureInit => {
                     // generate captures into [moves]
-                    self.raw_moves = self.pos.legal_moves();
+                    let opp = self.pos.colors(!self.pos.side_to_move());
+                    self.pos.generate_moves(|moves| {
+                        // only captures, so moves with [.to] on
 
-                    for i in 0..self.raw_moves.len() {
-                        let m = self.raw_moves[i];
-                        if Self::is_quiet(&m) {
-                            continue;
+                        let to = moves.to & opp;
+                        for t in to {
+                            // check promotions
+                            let is_promotion = moves.piece == Piece::Pawn
+                                && matches!(t.rank(), Rank::First | Rank::Eighth);
+                            if is_promotion {
+                                self.moves.push(ScoredMove {
+                                    inner: Move {
+                                        from: moves.from,
+                                        to: t,
+                                        promotion: Some(Piece::Queen),
+                                    },
+                                    score: 0,
+                                });
+                            } else {
+                                self.moves.push(ScoredMove {
+                                    inner: Move {
+                                        from: moves.from,
+                                        to: t,
+                                        promotion: None,
+                                    },
+                                    score: 0,
+                                });
+                            }
                         }
 
-                        if self.pv.map(|pv| pv == m).unwrap_or(false) {
+                        false
+                    });
+
+                    let mut i = 0;
+                    while i < self.moves.len() {
+                        let scored_move = &mut self.moves[i];
+                        if self.pv == scored_move.inner {
+                            self.moves.swap_remove(i);
                             continue;
                         }
-
-                        let mut scores_move = ScoredMove::from_move(m);
 
                         // mvv-lva
-                        scores_move.score = MVV_MULTIPLIER
-                            * PIECE_VALUE[Self::get_captured(&m) - 1]
-                            - PIECE_VALUE[m.role() as usize - 1];
+                        scored_move.score = MVV_MULTIPLIER
+                            * PIECE_VALUE[self.pos.get_captured_index(&scored_move.inner)]
+                            - PIECE_VALUE[self.pos.get_from_index(&scored_move.inner)];
 
-                        self.moves.push(scores_move);
+                        i += 1;
                     }
 
                     self.sort_moves(0, self.moves.len());
@@ -147,37 +155,63 @@ impl<'a> Movepick<'a> {
                     });
                     self.bad_capture_len = 0;
 
-                    match next_move {
-                        None => {
-                            self.stage = Stage::QuietInit;
-                        }
-                        Some(next_move) => {
-                            return Some(next_move);
-                        }
+                    if !next_move.is_null() {
+                        return next_move;
                     }
+
+                    self.stage = Stage::QuietInit;
                 }
                 Stage::QuietInit => {
-                    for i in 0..self.raw_moves.len() {
-                        let m = self.raw_moves[i];
-                        if !Self::is_quiet(&m) {
-                            continue;
+                    // generate quiets into [moves]
+                    let not_opp = !self.pos.colors(!self.pos.side_to_move());
+                    self.pos.generate_moves(|moves| {
+                        // only quiets, so moves with [.to] on not opp
+
+                        let to = moves.to & not_opp;
+                        for t in to {
+                            // check promotions
+                            let is_promotion = moves.piece == Piece::Pawn
+                                && matches!(t.rank(), Rank::First | Rank::Eighth);
+                            if is_promotion {
+                                for p in [Piece::Rook, Piece::Knight, Piece::Bishop] {
+                                    self.moves.push(ScoredMove {
+                                        inner: Move {
+                                            from: moves.from,
+                                            to: t,
+                                            promotion: Some(p),
+                                        },
+                                        score: 0,
+                                    });
+                                }
+                            } else {
+                                self.moves.push(ScoredMove {
+                                    inner: Move {
+                                        from: moves.from,
+                                        to: t,
+                                        promotion: None,
+                                    },
+                                    score: 0,
+                                });
+                            }
                         }
 
-                        if self.pv.map(|pv| pv == m).unwrap_or(false) {
+                        false
+                    });
+
+                    let mut i = self.captures_end;
+                    while i < self.moves.len() {
+                        let scored_move = &mut self.moves[i];
+                        if self.pv == scored_move.inner {
+                            self.moves.swap_remove(i);
                             continue;
                         }
 
                         // TODO: killer moves
-
-                        let mut scored_move = ScoredMove::from_move(m);
-
                         // TODO: history heuristic
 
-                        self.moves.push(scored_move);
+                        i += 1;
                     }
 
-                    // [...captures; quiets]
-                    // [bad_captures; good_captures; bad_quiets; good_quiet]
                     self.sort_moves(self.captures_end, self.moves.len());
                     self.ptr = self.captures_end;
                     self.stage = Stage::GoodQuiet;
@@ -196,41 +230,29 @@ impl<'a> Movepick<'a> {
                     });
                     self.bad_quiet_len = bad_quiet_len;
 
-                    match next_move {
-                        None => {
-                            self.ptr = 0;
-                            self.stage = Stage::BadCapture;
-                        }
-                        Some(next_move) => {
-                            return Some(next_move);
-                        }
+                    if !next_move.is_null() {
+                        return next_move;
                     }
+
+                    self.ptr = 0;
+                    self.stage = Stage::BadCapture;
                 }
                 Stage::BadCapture => {
                     let next_move = self.pick(self.bad_capture_len, |_moves, _i| true);
-
-                    match next_move {
-                        None => {
-                            self.ptr = self.captures_end;
-                            self.stage = Stage::BadQuiet;
-                        }
-                        Some(next_move) => {
-                            return Some(next_move);
-                        }
+                    if !next_move.is_null() {
+                        return next_move;
                     }
+
+                    self.ptr = self.captures_end;
+                    self.stage = Stage::BadQuiet;
                 }
                 Stage::BadQuiet => {
                     let next_move =
                         self.pick(self.bad_quiet_len + self.captures_end, |_moves, _i| true);
-
-                    match next_move {
-                        None => {
-                            return None;
-                        }
-                        Some(next_move) => {
-                            return Some(next_move);
-                        }
+                    if !next_move.is_null() {
+                        return next_move;
                     }
+                    return ScoredMove::NULL_MOVE;
                 }
             }
         }

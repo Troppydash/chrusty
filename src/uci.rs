@@ -1,17 +1,13 @@
-use crate::Chess;
 use crate::Engine;
+use crate::ext::ExtMove;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
+use cozy_chess::Board;
+use cozy_chess::Move;
 use rustyline::DefaultEditor;
-use rustyline::history;
-use shakmaty::Move;
-use shakmaty::Position;
-use shakmaty::fen::Fen;
-use shakmaty::uci::UciMove;
 
 pub struct SearchLimits {
     pub max_depths: i8,
@@ -59,7 +55,7 @@ impl AsyncEngine {
         timer.start(limits.max_time);
     }
 
-    fn search(&mut self, startpos: Chess, moves: Vec<Move>) {
+    fn search(&mut self, startpos: Board, moves: Vec<Move>) {
         let engine = self.engine.clone();
         self.handle = Some(thread::spawn(move || {
             engine.lock().unwrap().search(startpos, moves);
@@ -80,8 +76,8 @@ impl AsyncEngine {
 pub fn start() {
     let mut async_engine = AsyncEngine::new();
     let mut rl = DefaultEditor::new().unwrap();
-    let mut startpos = Chess::new();
-    let mut pos = Chess::new();
+    let mut startpos = Board::startpos();
+    let mut pos = Board::startpos();
     let mut moves = vec![];
     loop {
         let line = rl.readline("");
@@ -118,7 +114,7 @@ pub fn start() {
                 let mut offset = 1;
                 match parts[1] {
                     "startpos" => {
-                        startpos = Chess::new();
+                        startpos = Board::startpos();
                         offset = 3;
                     }
                     "fen" => {
@@ -126,10 +122,7 @@ pub fn start() {
                             "{} {} {} {} {} {}",
                             parts[2], parts[3], parts[4], parts[5], parts[6], parts[7]
                         );
-                        startpos = Fen::from_str(&fen)
-                            .unwrap()
-                            .into_position(shakmaty::CastlingMode::Standard)
-                            .unwrap();
+                        startpos = Board::from_fen(&fen, false).unwrap();
                         offset = 9;
                     }
                     _ => {
@@ -140,7 +133,7 @@ pub fn start() {
                 moves.clear();
                 pos = startpos.clone();
                 for i in offset..parts.len() {
-                    let m = UciMove::from_str(parts[i]).unwrap().to_move(&pos).unwrap();
+                    let m = Move::from_uci(parts[i], &pos);
                     moves.push(m);
                     pos.play_unchecked(m);
                 }
@@ -202,9 +195,9 @@ pub fn start() {
                 }
 
                 if is_competitive {
-                    let (time, inc) = match pos.turn() {
-                        shakmaty::Color::White => (wtime, winc),
-                        shakmaty::Color::Black => (btime, binc),
+                    let (time, inc) = match pos.side_to_move() {
+                        cozy_chess::Color::White => (wtime, winc),
+                        cozy_chess::Color::Black => (btime, binc),
                     };
 
                     let opt_time = (time / 20 + inc / 2).max(10);

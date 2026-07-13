@@ -3,10 +3,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use shakmaty::{Chess, Move, MoveList, Position, uci::UciMove, zobrist::Zobrist64};
+use cozy_chess::{Board, Move};
 
 use crate::{
-    ext::NULL_MOVE, heuristic::Heuristic, movepick::Movepick, param::*, pesto, rep::RepTable,
+    ext::{ExtBoard, ExtMove},
+    heuristic::Heuristic,
+    movepick::Movepick,
+    param::*,
+    pesto,
+    rep::RepTable,
     timer::Timer,
 };
 
@@ -24,8 +29,8 @@ impl SearchStack {
     pub fn new() -> Self {
         Self {
             ply: 0,
-            m: NULL_MOVE,
-            pv_list: [NULL_MOVE; MAX_DEPTH as usize],
+            m: Move::NULL_MOVE,
+            pv_list: [Move::NULL_MOVE; MAX_DEPTH as usize],
             pv_size: 0,
             in_check: false,
             adjusted_static: VALUE_NONE,
@@ -35,8 +40,8 @@ impl SearchStack {
     pub fn new_ply(ply: i8) -> Self {
         Self {
             ply,
-            m: NULL_MOVE,
-            pv_list: [NULL_MOVE; MAX_DEPTH as usize],
+            m: Move::NULL_MOVE,
+            pv_list: [Move::NULL_MOVE; MAX_DEPTH as usize],
             pv_size: 0,
             in_check: false,
             adjusted_static: VALUE_NONE,
@@ -44,7 +49,7 @@ impl SearchStack {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct RootMove {
     pv_list: [Move; MAX_DEPTH as usize],
     pv_size: usize,
@@ -54,7 +59,7 @@ pub struct RootMove {
 
 impl RootMove {
     fn new(m: Move) -> Self {
-        let mut pv_list = [NULL_MOVE; MAX_DEPTH as usize];
+        let mut pv_list = [Move::NULL_MOVE; MAX_DEPTH as usize];
         pv_list[0] = m;
         Self {
             pv_list,
@@ -104,36 +109,36 @@ impl Engine {
         self.root_moves.swap(0, best);
     }
 
-    fn make_move(&mut self, pos: &Chess, m: &Move, ss: usize, key: u64) -> Chess {
-        self.rep.add(key);
+    fn make_move(&mut self, pos: &Board, m: &Move, ss: usize) -> Board {
+        self.rep.add(pos.hash());
         self.stack[ss].m = m.clone();
 
         let mut new_pos = pos.clone();
-        if *m == NULL_MOVE {
-            new_pos.swap_turn().unwrap()
+        if m.is_null() {
+            new_pos.null_move().unwrap()
         } else {
             new_pos.play_unchecked(*m);
             new_pos
         }
     }
 
-    fn unmake_move(&mut self, key: u64) {
-        self.rep.remove(key);
+    fn unmake_move(&mut self, pos: &Board) {
+        self.rep.remove(pos.hash());
     }
 
-    fn evaluate(&mut self, pos: &mut Chess) -> i16 {
+    fn evaluate(&mut self, pos: &Board) -> i16 {
         let tempo = 20;
         let eval = pesto::evaluate(pos);
         return (eval + tempo).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
-    fn qsearch(&mut self, pos: Chess, alpha: i16, beta: i16, depth: i8) -> i16 {
+    fn qsearch(&mut self, pos: &mut Board, alpha: i16, beta: i16, depth: i8) -> i16 {
         todo!()
     }
 
     fn negamax(
         &mut self,
-        pos: &mut Chess,
+        pos: &mut Board,
         mut alpha: i16,
         mut beta: i16,
         depth: i8,
@@ -169,17 +174,15 @@ impl Engine {
         }
 
         // TODO: use a better library, this is so slow
-        let key = pos
-            .zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal)
-            .0;
+        let key = pos.hash();
 
         if !is_root {
-            if pos.has_insufficient_material(pos.turn()) {
-                return VALUE_DRAW;
-            }
+            // if pos.has_insufficient_material(pos.turn()) {
+            //     return VALUE_DRAW;
+            // }
 
-            if pos.halfmoves() >= 50 {
-                if pos.is_check() && pos.legal_moves().is_empty() {
+            if pos.halfmove_clock() >= 50 {
+                if pos.in_check() && !pos.any_moves() {
                     return lose_in(ply);
                 }
 
@@ -203,7 +206,7 @@ impl Engine {
         // TODO: tt
 
         let mut unadjusted_static = VALUE_NONE;
-        self.stack[ss].in_check = pos.is_check();
+        self.stack[ss].in_check = pos.in_check();
         let in_check = self.stack[ss].in_check;
         if in_check {
             self.stack[ss].adjusted_static = VALUE_NONE;
@@ -218,18 +221,18 @@ impl Engine {
 
         let mut move_count = 0;
         let mut best_score = -VALUE_INF;
-        let mut best_move = NULL_MOVE;
+        let mut best_move = Move::NULL_MOVE;
 
-        let mut movepick = Movepick::new_negamax(&pos, None);
+        let mut movepick = Movepick::new_negamax(&pos, Move::NULL_MOVE);
         loop {
-            let m = movepick.next_move();
-            if m.is_none() {
+            let next_move = movepick.next_move();
+            if next_move.is_null() {
                 break;
             }
-            let m = m.unwrap();
+
             move_count += 1;
 
-            let mut new_pos = self.make_move(pos, &m.m, ss, key);
+            let mut new_pos = self.make_move(pos, &next_move.inner, ss);
 
             let new_depth = depth - 1;
             let mut score = 0;
@@ -275,7 +278,7 @@ impl Engine {
                 score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
-            self.unmake_move(key);
+            self.unmake_move(pos);
 
             if self.timer.read().unwrap().stopped() {
                 return 0;
@@ -285,7 +288,7 @@ impl Engine {
                 let root_move = self
                     .root_moves
                     .iter_mut()
-                    .find(|rm| rm.pv_list[0] == m.m)
+                    .find(|rm| rm.pv_list[0] == next_move.inner)
                     .unwrap();
                 root_move.average_score = if is_valid(root_move.average_score) {
                     ((root_move.average_score as i32 + score as i32) / 2) as i16
@@ -297,7 +300,7 @@ impl Engine {
                     root_move.score = score;
 
                     for i in 0..self.stack[ss + 1].pv_size {
-                        assert!(self.stack[ss + 1].pv_list[i] != NULL_MOVE);
+                        assert!(self.stack[ss + 1].pv_list[i] != Move::NULL_MOVE);
                         root_move.pv_list[1 + i] = self.stack[ss + 1].pv_list[i];
                     }
 
@@ -312,12 +315,12 @@ impl Engine {
                 best_score = score;
 
                 if score > alpha {
-                    best_move = m.m;
+                    best_move = next_move.inner;
 
                     if is_pv && !is_root {
                         self.stack[ss].pv_list[0] = best_move;
                         for i in 0..self.stack[ss + 1].pv_size {
-                            assert!(self.stack[ss + 1].pv_list[i] != NULL_MOVE);
+                            assert!(self.stack[ss + 1].pv_list[i] != Move::NULL_MOVE);
                             self.stack[ss].pv_list[1 + i] = self.stack[ss + 1].pv_list[i];
                         }
 
@@ -332,7 +335,7 @@ impl Engine {
                 }
             }
 
-            if m.m != best_move {
+            if next_move.inner != best_move {
                 // TODO history
             }
         }
@@ -352,23 +355,21 @@ impl Engine {
         best_score
     }
 
-    pub fn search(&mut self, startpos: Chess, moves: Vec<Move>) -> SearchResult {
+    pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
         self.nodes = 0;
         self.rep.clear();
 
         // history tracking
         let mut pos = startpos;
         for m in moves.iter() {
-            let key = pos
-                .zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal)
-                .0;
+            let key = pos.hash();
             self.rep.add_history(key);
             pos.play_unchecked(*m);
         }
 
         // root moves
         self.root_moves.clear();
-        for m in pos.legal_moves() {
+        for m in pos.get_legal_moves() {
             self.root_moves.push(RootMove::new(m));
         }
         assert!(!self.root_moves.is_empty(), "root moves is empty");
@@ -465,8 +466,11 @@ impl Engine {
                 "info depth {} nodes {} time {} score {} nps {} pv",
                 depth, self.nodes, delta, score_str, nps,
             );
+
+            let mut next_pos = pos.clone();
             for i in 0..self.root_moves[0].pv_size {
-                print!(" {}", UciMove::from_standard(self.root_moves[0].pv_list[i]));
+                print!(" {}", self.root_moves[0].pv_list[i].to_uci(&next_pos));
+                next_pos.play_unchecked(self.root_moves[0].pv_list[i]);
             }
             println!("");
             depth += 1;
@@ -479,17 +483,18 @@ impl Engine {
         println!("info time {}", self.timer.read().unwrap().delta());
 
         assert!(result.root.pv_size != 0);
+        let best_move = result.root.pv_list[0];
         if result.root.pv_size >= 2 {
+            let ponder = result.root.pv_list[1];
+            let mut next_pos = pos.clone();
+            next_pos.play_unchecked(best_move.clone());
             println!(
                 "bestmove {} ponder {}",
-                UciMove::from_standard(result.root.pv_list[0]),
-                UciMove::from_standard(result.root.pv_list[1])
+                best_move.to_uci(&pos),
+                ponder.to_uci(&next_pos)
             );
         } else {
-            println!(
-                "bestmove {} ",
-                UciMove::from_standard(result.root.pv_list[0])
-            );
+            println!("bestmove {} ", best_move.to_uci(&pos));
         }
 
         result

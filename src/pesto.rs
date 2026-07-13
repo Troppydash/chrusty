@@ -1,4 +1,4 @@
-use shakmaty::{Chess, Color::White, Position};
+use cozy_chess::{Board, Color::White};
 
 const MG_VALUE: [i32; 6] = [82, 337, 365, 477, 1025, 0];
 const EG_VALUE: [i32; 6] = [94, 281, 297, 512, 936, 0];
@@ -119,22 +119,24 @@ pub fn init() {
     }
 }
 
-pub fn evaluate(pos: &Chess) -> i32 {
+pub fn evaluate(pos: &Board) -> i32 {
     let mut mg = [0, 0];
     let mut eg = [0, 0];
     let mut game_phase = 0;
 
-    for sq in pos.us() | pos.them() {
-        let pc = pos.board().piece_at(sq).unwrap();
-        let offset = pc.role as usize - 1 + if pc.color == White { 0 } else { 6 };
+    for sq in pos.occupied() {
+        let color = pos.color_on(sq).unwrap();
+        let piece = pos.piece_on(sq).unwrap();
+
+        let offset = piece as usize + if color == White { 0 } else { 6 };
         unsafe {
-            mg[pc.color as usize] += MG_TABLE[offset][sq as usize];
-            eg[pc.color as usize] += EG_TABLE[offset][sq as usize];
+            mg[color as usize] += MG_TABLE[offset][sq as usize];
+            eg[color as usize] += EG_TABLE[offset][sq as usize];
         }
-        game_phase += GAMEPHASE_INC[pc.role as usize - 1];
+        game_phase += GAMEPHASE_INC[piece as usize];
     }
 
-    let side2move = pos.turn() as usize;
+    let side2move = pos.side_to_move() as usize;
     let mg_score = mg[side2move] - mg[side2move ^ 1];
     let eg_score = eg[side2move] - eg[side2move ^ 1];
 

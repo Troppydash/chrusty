@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cozy-chess = { version = "0.3.4", features = ["pext"] }
 arrayvec = "0.7.7"
 rustyline = "18.0.1"
-shakmaty = "0.30.1"
