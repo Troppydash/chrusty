@@ -22,6 +22,10 @@ impl Heuristic {
         Self { lmr }
     }
 
+    pub fn clear(&mut self) {
+
+    }
+
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
         assert!(depth >= 0);
         self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]

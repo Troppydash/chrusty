@@ -1,3 +1,5 @@
+use std::ptr::null_mut;
+
 use cozy_chess::Move;
 
 use crate::{
@@ -216,6 +218,7 @@ impl Bucket {
     }
 }
 
+// TODO: support resizing tt
 pub struct Table {
     buckets: Vec<Bucket>,
     age: u8,
@@ -231,6 +234,7 @@ impl Table {
     }
 
     pub fn clear(&mut self) {
+        self.age = 0;
         for bucket in self.buckets.iter_mut() {
             bucket.clear();
         }
@@ -249,3 +253,19 @@ impl Table {
         todo!()
     }
 }
+
+pub struct TablePtr(pub *mut Table);
+impl TablePtr {
+    pub const NULL_PTR: TablePtr = TablePtr(null_mut());
+
+    pub fn from_table(table: &mut Table) -> TablePtr {
+        TablePtr(table as *mut Table)
+    }
+
+    pub fn get(&mut self) -> &mut Table {
+        assert!(!self.0.is_null());
+        unsafe { &mut *self.0 }
+    }
+}
+unsafe impl Send for TablePtr {}
+unsafe impl Sync for TablePtr {}

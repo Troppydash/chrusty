@@ -1,4 +1,6 @@
 use std::{
+    ops::DerefMut,
+    ptr::{null, null_mut},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -13,6 +15,7 @@ use crate::{
     pesto,
     rep::RepTable,
     timer::Timer,
+    tt::{Table, TablePtr},
 };
 
 #[derive(Clone, Copy)]
@@ -82,10 +85,15 @@ pub struct Engine {
     root_moves: Vec<RootMove>, // only allocated once so Vec is ok
     timer: Arc<RwLock<Timer>>,
     rep: RepTable,
+    table: TablePtr,
 }
 
 impl Engine {
     pub fn new(timer: Arc<RwLock<Timer>>) -> Self {
+        Self::new_with_table(timer, TablePtr::NULL_PTR)
+    }
+
+    pub fn new_with_table(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
         Self {
             stack: [SearchStack::new(); SS_SIZE],
             heuristic: Box::new(Heuristic::new()),
@@ -93,10 +101,13 @@ impl Engine {
             root_moves: vec![],
             timer,
             rep: RepTable::new(),
+            table,
         }
     }
 
-    pub fn newgame(&mut self) {}
+    pub fn newgame(&mut self) {
+        self.heuristic.clear();
+    }
 
     fn sort_root_moves(&mut self) {
         let mut best = 0;
@@ -358,6 +369,7 @@ impl Engine {
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
         self.nodes = 0;
         self.rep.clear();
+        self.table.get().next_search();
 
         // history tracking
         let mut pos = startpos;

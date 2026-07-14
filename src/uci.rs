@@ -2,6 +2,8 @@ use crate::Engine;
 use crate::ext::ExtMove;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
+use crate::tt::{Table, TablePtr};
+use std::pin::Pin;
 use std::process::exit;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -9,6 +11,8 @@ use std::thread::{self, JoinHandle};
 use cozy_chess::Board;
 use cozy_chess::Move;
 use rustyline::DefaultEditor;
+
+pub const DEFAULT_TT_SIZE: usize = 16;
 
 pub struct SearchLimits {
     pub max_depths: i8,
@@ -27,25 +31,31 @@ impl SearchLimits {
         }
     }
 }
+
 struct AsyncEngine {
     timer: Arc<RwLock<Timer>>,
     engine: Arc<Mutex<Engine>>,
     handle: Option<JoinHandle<()>>,
+    table: Pin<Box<Table>>,
 }
 
 impl AsyncEngine {
     fn new() -> Self {
         let timer = Arc::new(RwLock::new(Timer::new()));
-        let engine = Arc::new(Mutex::new(Engine::new(timer.clone())));
+        let mut table = Pin::new(Box::new(Table::new(DEFAULT_TT_SIZE)));
+        let table_ptr = TablePtr::from_table(&mut table);
+        let engine = Arc::new(Mutex::new(Engine::new_with_table(timer.clone(), table_ptr)));
         Self {
             timer,
             engine,
             handle: None,
+            table,
         }
     }
 
     fn newgame(&mut self) {
         self.engine.lock().unwrap().newgame();
+        self.table.clear();
     }
 
     fn start_timer(&mut self, limits: &SearchLimits) {
@@ -227,7 +237,7 @@ pub fn start(args: Vec<String>) {
         }
     };
 
-    for arg in args.iter() {
+    for arg in args.iter().skip(1) {
         process_line(arg);
     }
 
