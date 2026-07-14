@@ -89,7 +89,9 @@ pub struct Engine {
     stack: [SearchStack; SS_SIZE],
     heuristic: Box<Heuristic>,
     nodes: i64,
-    root_moves: Vec<RootMove>, // only allocated once so Vec is ok
+    // only allocated once so Vec is ok
+    root_moves: Vec<RootMove>, 
+    // TODO: accesing the entire timer via RwLock is expensive
     timer: Arc<RwLock<Timer>>,
     rep: RepTable,
     table: TablePtr,
