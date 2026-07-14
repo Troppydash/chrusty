@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use cozy_chess::{Board, Move, Piece};
+use cozy_chess::{Board, Move, Piece, Square};
 
 use crate::param::NONE_PIECE_INDEX;
 
@@ -11,10 +11,14 @@ pub type MoveList = ArrayVec<Move, MAX_MOVES>;
 
 pub trait ExtMove {
     const NULL_MOVE: Move;
+    const NULL_MOVE_BITS: u16;
 
     fn is_null(&self) -> bool;
     fn to_uci(&self, board: &Board) -> String;
     fn from_uci(uci: &str, board: &Board) -> Move;
+
+    fn to_bits(&self) -> u16;
+    fn from_bits(value: u16) -> Move;
 }
 
 impl ExtMove for Move {
@@ -23,6 +27,7 @@ impl ExtMove for Move {
         to: cozy_chess::Square::A1,
         promotion: None,
     };
+    const NULL_MOVE_BITS: u16 = 6 << 12;
 
     fn is_null(&self) -> bool {
         *self == Self::NULL_MOVE
@@ -34,6 +39,33 @@ impl ExtMove for Move {
 
     fn from_uci(uci: &str, board: &Board) -> Move {
         cozy_chess::util::parse_uci_move(board, uci).unwrap()
+    }
+
+    fn to_bits(&self) -> u16 {
+        let from = self.from as u16;
+        let to = self.to as u16;
+        let promotion = match self.promotion {
+            None => 6,
+            Some(piece) => piece as u16,
+        };
+
+        // 6 bits + 6 bits + 3 bits = 15 bits
+        from | (to << 6) | (promotion << 12)
+    }
+
+    fn from_bits(value: u16) -> Move {
+        let from = value & (0b111111);
+        let to = (value >> 6) & (0b111111);
+        let promotion = value >> 12;
+
+        Move {
+            from: Square::ALL[from as usize],
+            to: Square::ALL[to as usize],
+            promotion: match promotion {
+                6 => None,
+                _ => Some(Piece::ALL[promotion as usize]),
+            },
+        }
     }
 }
 
