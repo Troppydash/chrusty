@@ -9,10 +9,10 @@ use crate::{
 
 const AGE_SIZE: usize = 5;
 const MAX_AGE: u8 = 1 << AGE_SIZE;
-const FLAG_NONE: u8 = 0;
-const FLAG_ALPHA: u8 = 1;
-const FLAG_BETA: u8 = 2;
-const FLAG_EXACT: u8 = 3;
+pub const FLAG_NONE: u8 = 0;
+pub const FLAG_ALPHA: u8 = 1;
+pub const FLAG_BETA: u8 = 2;
+pub const FLAG_EXACT: u8 = 3;
 
 // can [value] derived using [flag] cutoff given [alpha, beta]
 pub fn get_can_use(value: i16, flag: u8, alpha: i16, beta: i16) -> bool {
@@ -36,14 +36,14 @@ fn key_matches(key: u64, hash: u16) -> bool {
 }
 
 pub struct EntryValue {
-    hit: bool,
-    can_use: bool,
-    pv: Move,
-    depth: i8,
-    static_score: i16,
-    score: i16,
-    is_pv: bool,
-    flag: u8,
+    pub hit: bool,
+    pub can_use: bool,
+    pub pv: Move,
+    pub depth: i8,
+    pub static_score: i16,
+    pub score: i16,
+    pub is_pv: bool,
+    pub flag: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -249,11 +249,16 @@ impl Table {
         self.buckets[index].get(key, self.age)
     }
 
+    pub fn get_age(&self) -> u8 {
+        self.age
+    }
+
     pub fn prefetch(&self, key: u64) {
         todo!()
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct TablePtr(pub *mut Table);
 impl TablePtr {
     pub const NULL_PTR: TablePtr = TablePtr(null_mut());
@@ -262,7 +267,7 @@ impl TablePtr {
         TablePtr(table as *mut Table)
     }
 
-    pub fn get(&mut self) -> &mut Table {
+    pub fn get(&self) -> &mut Table {
         assert!(!self.0.is_null());
         unsafe { &mut *self.0 }
     }

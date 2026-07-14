@@ -44,7 +44,7 @@ impl AsyncEngine {
         let timer = Arc::new(RwLock::new(Timer::new()));
         let mut table = Pin::new(Box::new(Table::new(DEFAULT_TT_SIZE)));
         let table_ptr = TablePtr::from_table(&mut table);
-        let engine = Arc::new(Mutex::new(Engine::new_with_table(timer.clone(), table_ptr)));
+        let engine = Arc::new(Mutex::new(Engine::new(timer.clone(), table_ptr)));
         Self {
             timer,
             engine,
@@ -81,6 +81,12 @@ impl AsyncEngine {
             self.timer.write().unwrap().force_stop();
             handle.join().unwrap();
         }
+    }
+}
+
+impl Drop for AsyncEngine {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

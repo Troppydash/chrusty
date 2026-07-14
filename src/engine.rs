@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     ops::DerefMut,
     ptr::{null, null_mut},
     sync::{Arc, RwLock},
@@ -15,7 +16,7 @@ use crate::{
     pesto,
     rep::RepTable,
     timer::Timer,
-    tt::{Table, TablePtr},
+    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, Table, TablePtr, get_can_use},
 };
 
 #[derive(Clone, Copy)]
@@ -26,6 +27,8 @@ struct SearchStack {
     pv_size: usize,
     in_check: bool,
     adjusted_static: i16,
+    tt_hit: bool,
+    tt_pv: bool,
 }
 
 impl SearchStack {
@@ -37,6 +40,8 @@ impl SearchStack {
             pv_size: 0,
             in_check: false,
             adjusted_static: VALUE_NONE,
+            tt_hit: false,
+            tt_pv: false,
         }
     }
 
@@ -48,6 +53,8 @@ impl SearchStack {
             pv_size: 0,
             in_check: false,
             adjusted_static: VALUE_NONE,
+            tt_hit: false,
+            tt_pv: false,
         }
     }
 }
@@ -89,11 +96,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(timer: Arc<RwLock<Timer>>) -> Self {
-        Self::new_with_table(timer, TablePtr::NULL_PTR)
-    }
-
-    pub fn new_with_table(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
+    pub fn new(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
         Self {
             stack: [SearchStack::new(); SS_SIZE],
             heuristic: Box::new(Heuristic::new()),
@@ -173,26 +176,37 @@ impl Engine {
                     self.timer.write().unwrap().force_stop();
                 }
             }
+        }
 
-            if self.timer.read().unwrap().stopped() {
-                return 0;
+        if self.timer.read().unwrap().stopped() {
+            return 0;
+        }
+
+        //- prevent high depths
+        if ply > MAX_DEPTH - 4 {
+            if pos.in_check() {
+                return VALUE_DRAW;
             }
+
+            return self.evaluate(pos);
         }
 
         self.nodes += 1;
+
+        //- qsearch drop
         if depth <= 0 {
             return self.evaluate(pos);
         }
 
-        // TODO: use a better library, this is so slow
         let key = pos.hash();
 
+        //- simple draw checks
         if !is_root {
             // if pos.has_insufficient_material(pos.turn()) {
             //     return VALUE_DRAW;
             // }
 
-            if pos.halfmove_clock() >= 50 {
+            if pos.halfmove_clock() >= 100 {
                 if pos.in_check() && !pos.any_moves() {
                     return lose_in(ply);
                 }
@@ -214,16 +228,79 @@ impl Engine {
             // TODO: cuckoo table
         }
 
-        // TODO: tt
+        //- tt
+        // this clone only clones the tt ptr
+        let table = self.table.clone();
+        let table = table.get();
+        let tt_age = table.get_age();
+        let (reader, writer) = table.get(key);
+        let mut tt_data = reader.get(key, ply, depth, alpha, beta);
 
+        //- tt parsing
+        self.stack[ss].tt_hit = tt_data.hit;
+        self.stack[ss].tt_pv = is_pv || (tt_data.hit && tt_data.is_pv);
+
+        // legality
+        tt_data.pv = if tt_data.hit && !tt_data.pv.is_null() && pos.is_legal(tt_data.pv) {
+            tt_data.pv
+        } else {
+            Move::NULL_MOVE
+        };
+
+        //- always use pv of root_moves
+        if is_root {
+            tt_data.pv = self.root_moves[0].pv_list[0];
+        }
+
+        //- tt early return
+        if !is_pv
+            && tt_data.can_use
+            && (cut_node == (tt_data.score >= beta))
+            && tt_data.depth >= depth + (tt_data.score >= beta) as i8
+        {
+            if pos.halfmove_clock() < 80 {
+                return tt_data.score;
+            }
+        }
+
+        //- adjusted/unadjusted evals
         let mut unadjusted_static = VALUE_NONE;
-        self.stack[ss].in_check = pos.in_check();
-        let in_check = self.stack[ss].in_check;
+        let in_check = pos.in_check();
+        self.stack[ss].in_check = in_check;
         if in_check {
             self.stack[ss].adjusted_static = VALUE_NONE;
+        } else if self.stack[ss].tt_hit {
+            unadjusted_static = tt_data.static_score;
+            if !is_valid(unadjusted_static) {
+                unadjusted_static = self.evaluate(pos);
+            }
+            self.stack[ss].adjusted_static = unadjusted_static;
+
+            //- use tt score to improve static score
+            let can_improve_static = get_can_use(
+                tt_data.score,
+                tt_data.flag,
+                self.stack[ss].adjusted_static,
+                self.stack[ss].adjusted_static,
+            );
+            if is_valid(tt_data.score) && !is_decisive(tt_data.score) && can_improve_static {
+                self.stack[ss].adjusted_static = tt_data.score;
+            }
         } else {
             unadjusted_static = self.evaluate(pos);
             self.stack[ss].adjusted_static = unadjusted_static;
+
+            writer.set(
+                key,
+                &Move::NULL_MOVE,
+                ply,
+                UNSEARCH_DEPTH,
+                FLAG_NONE,
+                VALUE_NONE,
+                unadjusted_static,
+                self.stack[ss].tt_pv,
+                tt_age,
+            );
         }
 
         if !in_check {
@@ -234,7 +311,8 @@ impl Engine {
         let mut best_score = -VALUE_INF;
         let mut best_move = Move::NULL_MOVE;
 
-        let mut movepick = Movepick::new_negamax(&pos, Move::NULL_MOVE);
+        //- negamax alphabeta search
+        let mut movepick = Movepick::new_negamax(&pos, tt_data.pv);
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -248,10 +326,12 @@ impl Engine {
             let new_depth = depth - 1;
             let mut score = 0;
 
+            //- late move reduction
             if depth >= 2 && move_count > 1 + 2 * is_root as usize {
                 let reduction = self.heuristic.get_lmr(move_count, depth);
                 let reduced_depth = (new_depth - reduction).clamp(1, new_depth + 1);
 
+                //- pv search
                 score = -self.negamax(
                     &mut new_pos,
                     -(alpha + 1),
@@ -295,6 +375,7 @@ impl Engine {
                 return 0;
             }
 
+            //- root moves update
             if is_root {
                 let root_move = self
                     .root_moves
@@ -361,7 +442,31 @@ impl Engine {
             // TODO: history update
         }
 
-        // TODO: tt
+        //- tt_pv propagation
+        if best_score <= alpha {
+            self.stack[ss].tt_pv = self.stack[ss].tt_pv || self.stack[ss - 1].tt_pv;
+        }
+
+        let flag = if best_score >= beta {
+            FLAG_BETA
+        } else if is_pv && !best_move.is_null() {
+            FLAG_EXACT
+        } else {
+            FLAG_ALPHA
+        };
+
+        //- tt update
+        writer.set(
+            key,
+            &best_move,
+            ply,
+            depth,
+            flag,
+            best_score,
+            unadjusted_static,
+            self.stack[ss].tt_pv,
+            tt_age,
+        );
 
         best_score
     }
