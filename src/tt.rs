@@ -253,8 +253,10 @@ impl Table {
         self.age
     }
 
-    pub fn prefetch(&self, key: u64) {
-        todo!()
+    pub fn resize(&mut self, size_in_mbytes: usize) {
+        let buckets = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
+        self.buckets = vec![Bucket::new(); buckets];
+        self.age = 0;
     }
 }
 

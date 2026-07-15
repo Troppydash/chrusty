@@ -82,6 +82,10 @@ impl AsyncEngine {
             handle.join().unwrap();
         }
     }
+
+    fn resize_table(&mut self, size_in_mbytes: usize) {
+        self.table.resize(size_in_mbytes);
+    }
 }
 
 impl Drop for AsyncEngine {
@@ -112,7 +116,10 @@ pub fn start(args: Vec<String>) {
                 println!("id authors A Chinese boy and a Vietnamese man");
                 println!("");
                 println!("option name Threads type spin default 1 min 1 max 1");
-                println!("option name Hash type spin default 32 min 8 max 16000");
+                println!(
+                    "option name Hash type spin default {} min 8 max 16000",
+                    DEFAULT_TT_SIZE
+                );
                 println!("uciok");
             }
             "position" => {
@@ -177,7 +184,6 @@ pub fn start(args: Vec<String>) {
                             wtime = parts[i + 1].parse::<u128>().unwrap();
                             i += 2;
                         }
-
                         "winc" => {
                             is_competitive = true;
                             winc = parts[i + 1].parse::<u128>().unwrap();
@@ -225,7 +231,10 @@ pub fn start(args: Vec<String>) {
                 // setoption name <name> value <value>
                 match parts[2] {
                     "Threads" => {}
-                    "Hash" => {}
+                    "Hash" => {
+                        let size = parts[4].parse::<usize>().unwrap();
+                        async_engine.resize_table(size);
+                    }
                     _ => {
                         println!("unknown option {}, skipping", parts[2]);
                     }
