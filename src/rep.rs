@@ -65,14 +65,14 @@ impl RepEntry {
 }
 
 pub struct RepTable {
-    history: Vec<RepEntry>,
-    search: Vec<RepEntry>,
+    history: Box<[RepEntry]>,
+    search: Box<[RepEntry]>,
 }
 
 impl RepTable {
     pub fn new() -> Self {
-        let history = vec![RepEntry::new(); REP_SIZE];
-        let search = vec![RepEntry::new(); REP_SIZE];
+        let history = vec![RepEntry::new(); REP_SIZE].into_boxed_slice();
+        let search = vec![RepEntry::new(); REP_SIZE].into_boxed_slice();
         Self { history, search }
     }
 

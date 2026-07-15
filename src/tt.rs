@@ -220,15 +220,15 @@ impl Bucket {
 
 // TODO: support resizing tt
 pub struct Table {
-    buckets: Vec<Bucket>,
+    buckets: Box<[Bucket]>,
     age: u8,
 }
 
 impl Table {
     pub fn new(size_in_mbytes: usize) -> Self {
-        let buckets = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
+        let size = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
         Self {
-            buckets: vec![Bucket::new(); buckets],
+            buckets: vec![Bucket::new(); size].into_boxed_slice(),
             age: 0,
         }
     }
@@ -254,8 +254,8 @@ impl Table {
     }
 
     pub fn resize(&mut self, size_in_mbytes: usize) {
-        let buckets = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
-        self.buckets = vec![Bucket::new(); buckets];
+        let size = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
+        self.buckets = vec![Bucket::new(); size].into_boxed_slice();
         self.age = 0;
     }
 }

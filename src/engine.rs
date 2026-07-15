@@ -82,10 +82,10 @@ pub struct SearchResult {
 
 pub struct Engine {
     stack: [SearchStack; SS_SIZE],
-    heuristic: Box<Heuristic>,
+    heuristic: Heuristic,
     nodes: i64,
     // only allocated once so Vec is ok
-    root_moves: Vec<RootMove>,
+    root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
     timer: Arc<RwLock<Timer>>,
     rep: RepTable,
@@ -96,9 +96,9 @@ impl Engine {
     pub fn new(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
         Self {
             stack: [SearchStack::new(); SS_SIZE],
-            heuristic: Box::new(Heuristic::new()),
+            heuristic: Heuristic::new(),
             nodes: 0,
-            root_moves: vec![],
+            root_moves: vec![].into_boxed_slice(),
             timer,
             rep: RepTable::new(),
             table,
@@ -668,10 +668,11 @@ impl Engine {
         }
 
         // root moves
-        self.root_moves.clear();
+        let mut root_moves = vec![];
         for m in pos.get_legal_moves() {
-            self.root_moves.push(RootMove::new(m));
+            root_moves.push(RootMove::new(m));
         }
+        self.root_moves = root_moves.into_boxed_slice();
         assert!(!self.root_moves.is_empty(), "root moves is empty");
 
         // search stack

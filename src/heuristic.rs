@@ -2,12 +2,12 @@ use crate::param::*;
 
 pub struct Heuristic {
     // lmr[move_count][depth]
-    lmr: [[i8; LMR_DEPTH]; LMR_MOVE_COUNT], // TODO: history
+    lmr: Box<[[i8; LMR_DEPTH]; LMR_MOVE_COUNT]>,
 }
 
 impl Heuristic {
     pub fn new() -> Self {
-        let mut lmr = [[0; LMR_DEPTH]; LMR_MOVE_COUNT];
+        let mut lmr = Box::new([[0; LMR_DEPTH]; LMR_MOVE_COUNT]);
         for move_count in 0..LMR_MOVE_COUNT {
             for depth in 0..LMR_DEPTH {
                 if move_count <= 1 || depth <= 1 {
@@ -22,9 +22,7 @@ impl Heuristic {
         Self { lmr }
     }
 
-    pub fn clear(&mut self) {
-
-    }
+    pub fn clear(&mut self) {}
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
         assert!(depth >= 0);
