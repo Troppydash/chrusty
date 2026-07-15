@@ -9,7 +9,7 @@ use std::{
 use cozy_chess::{Board, Move};
 
 use crate::{
-    ext::{ExtBoard, ExtMove},
+    ext::{ExtBoard, ExtMove, MoveList},
     helpers::avg,
     heuristic::Heuristic,
     movepick::Movepick,
@@ -265,12 +265,8 @@ impl Engine {
         //- negamax
         let mut move_count = 0;
         let mut best_move = Move::NULL_MOVE;
-        let mut movepick = if in_check {
-            Movepick::new_evasion(pos, tt_data.pv)
-        } else {
-            Movepick::new_qsearch(pos, tt_data.pv)
-        };
-
+        let mut movepick =
+            Movepick::new_qsearch(pos.clone(), tt_data.pv, &self.heuristic, in_check);
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -339,7 +335,7 @@ impl Engine {
 
     fn negamax(
         &mut self,
-        pos: &mut Board,
+        pos: &Board,
         mut alpha: i16,
         mut beta: i16,
         depth: i8,
@@ -494,8 +490,11 @@ impl Engine {
         let mut best_score = -VALUE_INF;
         let mut best_move = Move::NULL_MOVE;
 
+        let mut quiets = MoveList::new();
+        let mut captures = MoveList::new();
+
         //- negamax alphabeta search
-        let mut movepick = Movepick::new_negamax(&pos, tt_data.pv);
+        let mut movepick = Movepick::new_negamax(pos.clone(), tt_data.pv, &self.heuristic);
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -611,7 +610,11 @@ impl Engine {
             }
 
             if next_move.inner != best_move {
-                // TODO history
+                if Movepick::is_quiet(pos, &next_move.inner) {
+                    quiets.push(next_move.inner);
+                } else {
+                    captures.push(next_move.inner);
+                }
             }
         }
 
@@ -622,7 +625,8 @@ impl Engine {
                 best_score = VALUE_DRAW;
             }
         } else if best_score >= beta {
-            // TODO: history update
+            self.heuristic
+                .update_history(pos, depth, &best_move, &captures, &quiets);
         }
 
         //- tt_pv propagation

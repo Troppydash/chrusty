@@ -1,8 +1,38 @@
-use crate::param::*;
+use cozy_chess::{Board, Move};
+
+use crate::{
+    ext::{ExtMove, MoveList},
+    movepick::Movepick,
+    param::*,
+};
+
+#[derive(Clone, Copy)]
+pub struct History<const LIMIT: i16> {
+    value: i16,
+}
+
+impl<const LIMIT: i16> History<LIMIT> {
+    fn new() -> History<LIMIT> {
+        Self { value: 0 }
+    }
+
+    fn add(&mut self, value: i16) {
+        let clamped = value.clamp(-LIMIT, LIMIT) as i32;
+        self.value = (value as i32 + clamped - value as i32 * clamped.abs() / LIMIT as i32) as i16;
+    }
+
+    pub fn get(&self) -> i16 {
+        self.value
+    }
+}
+
+type MainHistory = History<20000>;
 
 pub struct Heuristic {
     // lmr[move_count][depth]
     lmr: Box<[[i8; LMR_DEPTH]; LMR_MOVE_COUNT]>,
+    // history heuristic [from][to]
+    main_history: Box<[[[MainHistory; 64]; 64]; 2]>,
 }
 
 impl Heuristic {
@@ -19,13 +49,53 @@ impl Heuristic {
             }
         }
 
-        Self { lmr }
+        let main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
+
+        Self { lmr, main_history }
     }
 
-    pub fn clear(&mut self) {}
+    pub fn clear(&mut self) {
+        self.main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
+    }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
         assert!(depth >= 0);
         self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]
+    }
+
+    pub fn get_main_history(&self, pos: &Board, m: &Move) -> &MainHistory {
+        &self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
+    }
+
+    pub fn get_main_history_mut(&mut self, pos: &Board, m: &Move) -> &mut MainHistory {
+        &mut self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
+    }
+
+    pub fn update_history(
+        &mut self,
+        pos: &Board,
+        depth: i8,
+        best_move: &Move,
+        captures: &MoveList,
+        quiets: &MoveList,
+    ) {
+        assert!(!best_move.is_null(), "best move null in history update");
+
+        let bonus = i32::min(180 * depth as i32 - 100, 1000) as i16;
+        let malus = i32::min(180 * depth as i32 - 100, 1000) as i16;
+
+        if Movepick::is_quiet(pos, best_move) {
+            self.get_main_history_mut(pos, best_move).add(bonus);
+
+            for m in quiets.iter() {
+                assert!(!m.is_null());
+                self.get_main_history_mut(pos, m).add(-malus);
+            }
+        }
+
+        for m in captures.iter() {
+            assert!(!m.is_null());
+            self.get_main_history_mut(pos, m).add(-malus);
+        }
     }
 }

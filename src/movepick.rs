@@ -7,6 +7,7 @@ use cozy_chess::{
 
 use crate::{
     ext::{ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
+    heuristic::Heuristic,
     param::{BAD_QUIET_SCORE, MVV_MULTIPLIER, NONE_PIECE_INDEX, PIECE_VALUE},
 };
 
@@ -32,8 +33,10 @@ enum Stage {
     EQuiet,
 }
 
-pub struct Movepick<'a> {
-    pos: &'a Board,
+pub struct Movepick {
+    pos: Board,
+    // this is needed to prevent a refcell which is expensive
+    heuristic: *const Heuristic,
     moves: ScoredMoveList,
     ptr: usize,
     pv: Move,
@@ -43,10 +46,11 @@ pub struct Movepick<'a> {
     bad_quiet_len: usize,
 }
 
-impl<'a> Movepick<'a> {
-    pub fn new_negamax(pos: &'a Board, pv: Move) -> Self {
+impl Movepick {
+    pub fn new_negamax(pos: Board, pv: Move, heuristic: &Heuristic) -> Self {
         Self {
             pos,
+            heuristic,
             moves: ScoredMoveList::new(),
             ptr: 0,
             pv,
@@ -57,26 +61,14 @@ impl<'a> Movepick<'a> {
         }
     }
 
-    pub fn new_qsearch(pos: &'a Board, pv: Move) -> Self {
+    pub fn new_qsearch(pos: Board, pv: Move, heuristic: &Heuristic, in_check: bool) -> Self {
         Self {
             pos,
+            heuristic,
             moves: ScoredMoveList::new(),
             ptr: 0,
             pv,
-            stage: Stage::QPv,
-            captures_end: 0,
-            bad_capture_len: 0,
-            bad_quiet_len: 0,
-        }
-    }
-
-    pub fn new_evasion(pos: &'a Board, pv: Move) -> Self {
-        Self {
-            pos,
-            moves: ScoredMoveList::new(),
-            ptr: 0,
-            pv,
-            stage: Stage::EPv,
+            stage: if in_check { Stage::EPv } else { Stage::QPv },
             captures_end: 0,
             bad_capture_len: 0,
             bad_quiet_len: 0,
@@ -91,6 +83,10 @@ impl<'a> Movepick<'a> {
             .unwrap_or(false);
 
         !pos.is_capture(m) && !is_queen_promotion
+    }
+
+    fn get_heuristic(&self) -> &Heuristic {
+        unsafe { &*self.heuristic }
     }
 
     /// Sort by descending
@@ -279,14 +275,16 @@ impl<'a> Movepick<'a> {
 
                     let mut i = self.captures_end;
                     while i < self.moves.len() {
-                        let scored_move = &mut self.moves[i];
-                        if self.pv == scored_move.inner {
+                        if self.pv == self.moves[i].inner {
                             self.moves.swap_remove(i);
                             continue;
                         }
 
                         // TODO: killer moves
-                        // TODO: history heuristic
+                        let heuristic = self.get_heuristic();
+                        self.moves[i].score = heuristic
+                            .get_main_history(&self.pos, &self.moves[i].inner)
+                            .get();
 
                         i += 1;
                     }
@@ -421,14 +419,16 @@ impl<'a> Movepick<'a> {
 
                     let mut i = self.captures_end;
                     while i < self.moves.len() {
-                        let scored_move = &mut self.moves[i];
-                        if self.pv == scored_move.inner {
+                        if self.pv == self.moves[i].inner {
                             self.moves.swap_remove(i);
                             continue;
                         }
 
                         // TODO: killer moves
-                        // TODO: history heuristic
+                        let heuristic = self.get_heuristic();
+                        self.moves[i].score = heuristic
+                            .get_main_history(&self.pos, &self.moves[i].inner)
+                            .get();
 
                         i += 1;
                     }
