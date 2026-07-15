@@ -258,7 +258,7 @@ impl Table {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TablePtr(pub *mut Table);
 impl TablePtr {
     pub const NULL_PTR: TablePtr = TablePtr(null_mut());

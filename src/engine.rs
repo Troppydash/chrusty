@@ -90,7 +90,7 @@ pub struct Engine {
     heuristic: Box<Heuristic>,
     nodes: i64,
     // only allocated once so Vec is ok
-    root_moves: Vec<RootMove>, 
+    root_moves: Vec<RootMove>,
     // TODO: accesing the entire timer via RwLock is expensive
     timer: Arc<RwLock<Timer>>,
     rep: RepTable,
@@ -173,10 +173,8 @@ impl Engine {
 
         if self.nodes % 8192 == 0 {
             self.timer.write().unwrap().check();
-            if !self.timer.read().unwrap().stopped() {
-                if self.nodes >= self.timer.read().unwrap().max_nodes {
-                    self.timer.write().unwrap().force_stop();
-                }
+            if self.nodes >= self.timer.read().unwrap().max_nodes {
+                self.timer.write().unwrap().force_stop();
             }
         }
 
