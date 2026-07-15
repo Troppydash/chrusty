@@ -11,6 +11,7 @@ use crate::{
 };
 
 enum Stage {
+    // negamax
     Pv = 0,
     CaptureInit,
     GoodCapture,
@@ -18,6 +19,17 @@ enum Stage {
     GoodQuiet,
     BadCapture,
     BadQuiet,
+
+    // qsearch
+    QPv,
+    QCaptureInit,
+    QCapture,
+
+    EPv,
+    ECaptureInit,
+    ECapture,
+    EQuietInit,
+    EQuiet,
 }
 
 pub struct Movepick<'a> {
@@ -39,6 +51,32 @@ impl<'a> Movepick<'a> {
             ptr: 0,
             pv,
             stage: Stage::Pv,
+            captures_end: 0,
+            bad_capture_len: 0,
+            bad_quiet_len: 0,
+        }
+    }
+
+    pub fn new_qsearch(pos: &'a Board, pv: Move) -> Self {
+        Self {
+            pos,
+            moves: ScoredMoveList::new(),
+            ptr: 0,
+            pv,
+            stage: Stage::QPv,
+            captures_end: 0,
+            bad_capture_len: 0,
+            bad_quiet_len: 0,
+        }
+    }
+
+    pub fn new_evasion(pos: &'a Board, pv: Move) -> Self {
+        Self {
+            pos,
+            moves: ScoredMoveList::new(),
+            ptr: 0,
+            pv,
+            stage: Stage::EPv,
             captures_end: 0,
             bad_capture_len: 0,
             bad_quiet_len: 0,
@@ -88,6 +126,108 @@ impl<'a> Movepick<'a> {
         ScoredMove::NULL_MOVE
     }
 
+    fn generate_captures(&mut self) {
+        // generate captures into [moves]
+        let opp = self.pos.colors(!self.pos.side_to_move());
+        let promotion_pawns = self.pos.pieces(Piece::Pawn)
+            & match self.pos.side_to_move() {
+                White => Rank::Seventh.bitboard(),
+                Black => Rank::Second.bitboard(),
+            };
+        let non_promotions = self.pos.occupied() - promotion_pawns;
+
+        // captures
+        self.pos.generate_moves_for(non_promotions, |moves| {
+            for t in moves.to & opp {
+                self.moves.push(ScoredMove {
+                    inner: Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: None,
+                    },
+                    score: 0,
+                });
+            }
+            false
+        });
+
+        // capture promotions or queen promotions
+        self.pos.generate_moves_for(promotion_pawns, |moves| {
+            // captures
+            for t in moves.to & opp {
+                for p in [Piece::Queen, Piece::Rook, Piece::Knight, Piece::Bishop] {
+                    self.moves.push(ScoredMove {
+                        inner: Move {
+                            from: moves.from,
+                            to: t,
+                            promotion: Some(p),
+                        },
+                        score: 0,
+                    });
+                }
+            }
+
+            // non-captures
+            for t in moves.to & !opp {
+                self.moves.push(ScoredMove {
+                    inner: Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: Some(Piece::Queen),
+                    },
+                    score: 0,
+                });
+            }
+
+            false
+        });
+    }
+
+    fn generate_quiets(&mut self) {
+        // generate quiets into [moves]
+        let opp = self.pos.colors(!self.pos.side_to_move());
+        let promotion_pawns = self.pos.pieces(Piece::Pawn)
+            & match self.pos.side_to_move() {
+                White => Rank::Seventh.bitboard(),
+                Black => Rank::Second.bitboard(),
+            };
+        let non_promotions = self.pos.occupied() - promotion_pawns;
+
+        // non-captures
+        self.pos.generate_moves_for(non_promotions, |moves| {
+            for t in moves.to & !opp {
+                self.moves.push(ScoredMove {
+                    inner: Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: None,
+                    },
+                    score: 0,
+                });
+            }
+
+            false
+        });
+
+        // non-capture non-queen promotions
+        self.pos.generate_moves_for(promotion_pawns, |moves| {
+            for t in moves.to & !opp {
+                for p in [Piece::Rook, Piece::Knight, Piece::Bishop] {
+                    self.moves.push(ScoredMove {
+                        inner: Move {
+                            from: moves.from,
+                            to: t,
+                            promotion: Some(p),
+                        },
+                        score: 0,
+                    });
+                }
+            }
+
+            false
+        });
+    }
+
     pub fn next_move(&mut self) -> ScoredMove {
         loop {
             match self.stage {
@@ -98,60 +238,7 @@ impl<'a> Movepick<'a> {
                     }
                 }
                 Stage::CaptureInit => {
-                    // generate captures into [moves]
-                    let opp = self.pos.colors(!self.pos.side_to_move());
-                    let promotion_pawns = self.pos.pieces(Piece::Pawn)
-                        & match self.pos.side_to_move() {
-                            White => Rank::Seventh.bitboard(),
-                            Black => Rank::Second.bitboard(),
-                        };
-                    let non_promotions = self.pos.occupied() - promotion_pawns;
-
-                    // captures
-                    self.pos.generate_moves_for(non_promotions, |moves| {
-                        for t in moves.to & opp {
-                            self.moves.push(ScoredMove {
-                                inner: Move {
-                                    from: moves.from,
-                                    to: t,
-                                    promotion: None,
-                                },
-                                score: 0,
-                            });
-                        }
-                        false
-                    });
-
-                    // capture promotions or queen promotions
-                    self.pos.generate_moves_for(promotion_pawns, |moves| {
-                        // captures
-                        for t in moves.to & opp {
-                            for p in [Piece::Queen, Piece::Rook, Piece::Knight, Piece::Bishop] {
-                                self.moves.push(ScoredMove {
-                                    inner: Move {
-                                        from: moves.from,
-                                        to: t,
-                                        promotion: Some(p),
-                                    },
-                                    score: 0,
-                                });
-                            }
-                        }
-
-                        // non-captures
-                        for t in moves.to & !opp {
-                            self.moves.push(ScoredMove {
-                                inner: Move {
-                                    from: moves.from,
-                                    to: t,
-                                    promotion: Some(Piece::Queen),
-                                },
-                                score: 0,
-                            });
-                        }
-
-                        false
-                    });
+                    self.generate_captures();
 
                     let mut i = 0;
                     while i < self.moves.len() {
@@ -188,48 +275,7 @@ impl<'a> Movepick<'a> {
                     self.stage = Stage::QuietInit;
                 }
                 Stage::QuietInit => {
-                    // generate quiets into [moves]
-                    let opp = self.pos.colors(!self.pos.side_to_move());
-                    let promotion_pawns = self.pos.pieces(Piece::Pawn)
-                        & match self.pos.side_to_move() {
-                            White => Rank::Seventh.bitboard(),
-                            Black => Rank::Second.bitboard(),
-                        };
-                    let non_promotions = self.pos.occupied() - promotion_pawns;
-
-                    // non-captures
-                    self.pos.generate_moves_for(non_promotions, |moves| {
-                        for t in moves.to & !opp {
-                            self.moves.push(ScoredMove {
-                                inner: Move {
-                                    from: moves.from,
-                                    to: t,
-                                    promotion: None,
-                                },
-                                score: 0,
-                            });
-                        }
-
-                        false
-                    });
-
-                    // non-capture non-queen promotions
-                    self.pos.generate_moves_for(promotion_pawns, |moves| {
-                        for t in moves.to & !opp {
-                            for p in [Piece::Rook, Piece::Knight, Piece::Bishop] {
-                                self.moves.push(ScoredMove {
-                                    inner: Move {
-                                        from: moves.from,
-                                        to: t,
-                                        promotion: Some(p),
-                                    },
-                                    score: 0,
-                                });
-                            }
-                        }
-
-                        false
-                    });
+                    self.generate_quiets();
 
                     let mut i = self.captures_end;
                     while i < self.moves.len() {
@@ -285,6 +331,117 @@ impl<'a> Movepick<'a> {
                     if !next_move.is_null() {
                         return next_move;
                     }
+                    return ScoredMove::NULL_MOVE;
+                }
+
+                Stage::QPv => {
+                    self.stage = Stage::QCaptureInit;
+                    if !self.pv.is_null() {
+                        return ScoredMove::from_move(self.pv);
+                    }
+                }
+                Stage::QCaptureInit => {
+                    self.generate_captures();
+
+                    let mut i = 0;
+                    while i < self.moves.len() {
+                        let scored_move = &mut self.moves[i];
+                        if self.pv == scored_move.inner {
+                            self.moves.swap_remove(i);
+                            continue;
+                        }
+
+                        // mvv-lva
+                        scored_move.score = MVV_MULTIPLIER
+                            * PIECE_VALUE[self.pos.get_captured_index(&scored_move.inner)]
+                            - PIECE_VALUE[self.pos.get_from_index(&scored_move.inner)];
+
+                        i += 1;
+                    }
+
+                    self.sort_moves(0, self.moves.len());
+                    self.ptr = 0;
+                    self.stage = Stage::QCapture;
+                }
+                Stage::QCapture => {
+                    let next_move = self.pick(self.moves.len(), |_list, _i| {
+                        // TODO: see
+                        true
+                    });
+                    if !next_move.is_null() {
+                        return next_move;
+                    }
+
+                    return ScoredMove::NULL_MOVE;
+                }
+
+                Stage::EPv => {
+                    self.stage = Stage::ECaptureInit;
+                    if !self.pv.is_null() {
+                        return ScoredMove::from_move(self.pv);
+                    }
+                }
+                Stage::ECaptureInit => {
+                    self.generate_captures();
+
+                    let mut i = 0;
+                    while i < self.moves.len() {
+                        let scored_move = &mut self.moves[i];
+                        if self.pv == scored_move.inner {
+                            self.moves.swap_remove(i);
+                            continue;
+                        }
+
+                        // mvv-lva
+                        scored_move.score = MVV_MULTIPLIER
+                            * PIECE_VALUE[self.pos.get_captured_index(&scored_move.inner)]
+                            - PIECE_VALUE[self.pos.get_from_index(&scored_move.inner)];
+
+                        i += 1;
+                    }
+
+                    self.sort_moves(0, self.moves.len());
+                    self.ptr = 0;
+                    self.captures_end = self.moves.len();
+                    self.stage = Stage::ECapture;
+                }
+                Stage::ECapture => {
+                    let next_move = self.pick(self.moves.len(), |_list, _i| {
+                        // TODO: see
+                        true
+                    });
+                    if !next_move.is_null() {
+                        return next_move;
+                    }
+
+                    self.stage = Stage::EQuietInit;
+                }
+                Stage::EQuietInit => {
+                    self.generate_quiets();
+
+                    let mut i = self.captures_end;
+                    while i < self.moves.len() {
+                        let scored_move = &mut self.moves[i];
+                        if self.pv == scored_move.inner {
+                            self.moves.swap_remove(i);
+                            continue;
+                        }
+
+                        // TODO: killer moves
+                        // TODO: history heuristic
+
+                        i += 1;
+                    }
+
+                    self.sort_moves(self.captures_end, self.moves.len());
+                    self.stage = Stage::EQuiet;
+                }
+                Stage::EQuiet => {
+                    let next_move = self.pick(self.moves.len(), |_list, _i| true);
+                    if !next_move.is_null() {
+                        return next_move;
+                    }
+
                     return ScoredMove::NULL_MOVE;
                 }
             }

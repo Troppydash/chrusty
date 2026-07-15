@@ -10,6 +10,7 @@ use cozy_chess::{Board, Move};
 
 use crate::{
     ext::{ExtBoard, ExtMove},
+    helpers::avg,
     heuristic::Heuristic,
     movepick::Movepick,
     param::*,
@@ -25,9 +26,7 @@ struct SearchStack {
     m: Move,
     pv_list: [Move; MAX_DEPTH as usize],
     pv_size: usize,
-    in_check: bool,
     adjusted_static: i16,
-    tt_hit: bool,
     tt_pv: bool,
 }
 
@@ -38,9 +37,7 @@ impl SearchStack {
             m: Move::NULL_MOVE,
             pv_list: [Move::NULL_MOVE; MAX_DEPTH as usize],
             pv_size: 0,
-            in_check: false,
             adjusted_static: VALUE_NONE,
-            tt_hit: false,
             tt_pv: false,
         }
     }
@@ -51,9 +48,7 @@ impl SearchStack {
             m: Move::NULL_MOVE,
             pv_list: [Move::NULL_MOVE; MAX_DEPTH as usize],
             pv_size: 0,
-            in_check: false,
             adjusted_static: VALUE_NONE,
-            tt_hit: false,
             tt_pv: false,
         }
     }
@@ -148,8 +143,198 @@ impl Engine {
         return (eval + tempo).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
-    fn qsearch(&mut self, pos: &mut Board, alpha: i16, beta: i16, depth: i8) -> i16 {
-        todo!()
+    fn qsearch(
+        &mut self,
+        pos: &Board,
+        mut alpha: i16,
+        mut beta: i16,
+        depth: i8,
+        ss: usize,
+        is_pv: bool,
+    ) -> i16 {
+        // note that we don't check timer in qsearch
+        let ply = self.stack[ss].ply;
+
+        assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
+
+        //- prevent high depths
+        if ply > MAX_DEPTH - 4 {
+            if pos.in_check() {
+                return VALUE_DRAW;
+            }
+
+            return self.evaluate(pos);
+        }
+
+        let key = pos.hash();
+        //- simple draw checks
+        // if pos.has_insufficient_material(pos.turn()) {
+        //     return VALUE_DRAW;
+        // }
+
+        if pos.halfmove_clock() >= 100 {
+            if pos.in_check() && !pos.any_moves() {
+                return lose_in(ply);
+            }
+
+            return VALUE_DRAW;
+        }
+
+        if self.rep.check(key) {
+            return VALUE_DRAW;
+        }
+
+        // mate score pruning
+        alpha = alpha.max(lose_in(ply));
+        beta = beta.min(win_in(ply + 1));
+        if alpha >= beta {
+            return alpha;
+        }
+
+        //- tt
+        // this clone only clones the tt ptr
+        let table = self.table.clone();
+        let table = table.get();
+        let tt_age = table.get_age();
+        let (reader, writer) = table.get(key);
+        let mut tt_data = reader.get(key, ply, QDEPTH, alpha, beta);
+
+        //- tt parsing
+        tt_data.pv = if tt_data.hit && !tt_data.pv.is_null() && pos.is_legal(tt_data.pv) {
+            tt_data.pv
+        } else {
+            Move::NULL_MOVE
+        };
+
+        //- tt cutoff
+        if !is_pv && tt_data.can_use {
+            return tt_data.score;
+        }
+
+        //- adjusted/unadjusted evals
+        let mut unadjusted_static = VALUE_NONE;
+        let mut best_score = -VALUE_INF;
+        let in_check = pos.in_check();
+        if in_check {
+            best_score = -VALUE_INF;
+        } else {
+            if tt_data.hit {
+                unadjusted_static = tt_data.static_score;
+                if !is_valid(unadjusted_static) {
+                    unadjusted_static = self.evaluate(pos);
+                }
+                best_score = unadjusted_static;
+
+                //- use tt score to improve static score
+                let can_improve_static =
+                    get_can_use(tt_data.score, tt_data.flag, best_score, best_score);
+                if is_valid(tt_data.score) && !is_decisive(tt_data.score) && can_improve_static {
+                    best_score = tt_data.score;
+                }
+            } else {
+                unadjusted_static = self.evaluate(pos);
+                best_score = unadjusted_static;
+
+                writer.set(
+                    key,
+                    &Move::NULL_MOVE,
+                    ply,
+                    UNSEARCH_DEPTH,
+                    FLAG_NONE,
+                    VALUE_NONE,
+                    unadjusted_static,
+                    false,
+                    tt_age,
+                );
+            }
+
+            //- standing pat
+            if best_score >= beta {
+                if !is_decisive(best_score) {
+                    return avg(best_score, beta);
+                }
+
+                return best_score;
+            }
+
+            if best_score > alpha {
+                alpha = best_score;
+            }
+        }
+
+        //- negamax
+        let mut move_count = 0;
+        let mut best_move = Move::NULL_MOVE;
+        let mut movepick = if in_check {
+            Movepick::new_evasion(pos, tt_data.pv)
+        } else {
+            Movepick::new_qsearch(pos, tt_data.pv)
+        };
+
+        loop {
+            let next_move = movepick.next_move();
+            if next_move.is_null() {
+                break;
+            }
+
+            move_count += 1;
+
+            let new_pos = self.make_move(pos, &next_move.inner, ss);
+            let score = -self.qsearch(&new_pos, -beta, -alpha, depth, ss + 1, is_pv);
+            self.unmake_move(pos);
+
+            if score > best_score {
+                best_score = score;
+
+                if score > alpha {
+                    best_move = next_move.inner;
+
+                    if score >= beta {
+                        break;
+                    }
+
+                    alpha = score;
+                }
+            }
+
+            //- late move prune
+            if !is_loss(best_score) {
+                if !in_check && move_count >= 3 {
+                    break;
+                }
+
+                if in_check && Movepick::is_quiet(pos, &next_move.inner) {
+                    break;
+                }
+            }
+        }
+
+        //- mates
+        if in_check && move_count == 0 {
+            best_score = lose_in(ply);
+        } else if !is_decisive(best_score) && best_score > beta {
+            best_score = avg(best_score, beta);
+        }
+
+        let flag = if best_score >= beta {
+            FLAG_BETA
+        } else {
+            FLAG_ALPHA
+        };
+
+        writer.set(
+            key,
+            &best_move,
+            ply,
+            QDEPTH,
+            flag,
+            best_score,
+            unadjusted_static,
+            is_pv || (tt_data.hit && tt_data.is_pv),
+            tt_age,
+        );
+
+        best_score
     }
 
     fn negamax(
@@ -195,7 +380,7 @@ impl Engine {
 
         //- qsearch drop
         if depth <= 0 {
-            return self.evaluate(pos);
+            return self.qsearch(pos, alpha, beta, depth, ss, is_pv);
         }
 
         let key = pos.hash();
@@ -237,7 +422,6 @@ impl Engine {
         let mut tt_data = reader.get(key, ply, depth, alpha, beta);
 
         //- tt parsing
-        self.stack[ss].tt_hit = tt_data.hit;
         self.stack[ss].tt_pv = is_pv || (tt_data.hit && tt_data.is_pv);
 
         // legality
@@ -266,10 +450,9 @@ impl Engine {
         //- adjusted/unadjusted evals
         let mut unadjusted_static = VALUE_NONE;
         let in_check = pos.in_check();
-        self.stack[ss].in_check = in_check;
         if in_check {
             self.stack[ss].adjusted_static = VALUE_NONE;
-        } else if self.stack[ss].tt_hit {
+        } else if tt_data.hit {
             unadjusted_static = tt_data.static_score;
             if !is_valid(unadjusted_static) {
                 unadjusted_static = self.evaluate(pos);
@@ -383,7 +566,7 @@ impl Engine {
                     .find(|rm| rm.pv_list[0] == next_move.inner)
                     .unwrap();
                 root_move.average_score = if is_valid(root_move.average_score) {
-                    ((root_move.average_score as i32 + score as i32) / 2) as i16
+                    avg(root_move.average_score, score)
                 } else {
                     score
                 };
@@ -433,7 +616,7 @@ impl Engine {
         }
 
         if move_count == 0 {
-            if self.stack[ss].in_check {
+            if in_check {
                 best_score = lose_in(ply);
             } else {
                 best_score = VALUE_DRAW;
@@ -535,7 +718,7 @@ impl Engine {
                 }
 
                 if score <= alpha {
-                    beta = ((alpha as i32 + beta as i32) / 2) as i16;
+                    beta = avg(alpha, beta);
                     alpha = (-VALUE_INF as i32).max(score as i32 - window as i32) as i16;
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
