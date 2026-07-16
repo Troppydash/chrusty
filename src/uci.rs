@@ -126,7 +126,7 @@ pub fn start(args: Vec<String>) {
                 // position startpos moves <move1> <move2>
                 // position fen <fen> moves <move1> <move2>
 
-                let mut offset = 1;
+                let offset;
                 match parts[1] {
                     "startpos" => {
                         startpos = Board::startpos();

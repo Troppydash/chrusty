@@ -1,10 +1,4 @@
-use std::{
-    cell::RefCell,
-    ops::DerefMut,
-    ptr::{null, null_mut},
-    sync::{Arc, RwLock},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::{Arc, RwLock};
 
 use cozy_chess::{Board, Move};
 
@@ -17,7 +11,7 @@ use crate::{
     pesto,
     rep::RepTable,
     timer::Timer,
-    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, Table, TablePtr, get_can_use},
+    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
 
 #[derive(Clone, Copy)]

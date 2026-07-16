@@ -2,7 +2,6 @@ use cozy_chess::{Board, Move};
 
 use crate::{
     ext::{ExtBoard, ExtMove, MoveList},
-    movepick::Movepick,
     param::*,
 };
 
