@@ -1,7 +1,11 @@
 use arrayvec::ArrayVec;
-use cozy_chess::{Board, Move, Piece, Square};
-
-use crate::param::NONE_PIECE_INDEX;
+use cozy_chess::{
+    Board,
+    Color::{Black, White},
+    Move,
+    Piece::{self, Queen},
+    Rank, Square,
+};
 
 // these are stack allocated
 
@@ -72,10 +76,12 @@ impl ExtMove for Move {
 pub trait ExtBoard {
     fn in_check(&self) -> bool;
     fn any_moves(&self) -> bool;
-    fn is_capture(&self, m: &Move) -> bool;
+
     fn get_captured(&self, m: &Move) -> Piece;
-    fn get_captured_index(&self, m: &Move) -> usize;
-    fn get_from_index(&self, m: &Move) -> usize;
+    fn is_quiet(&self, m: &Move) -> bool;
+    fn ep_square(&self) -> Option<Square>;
+    fn is_ep(&self, m: &Move) -> bool;
+    fn is_castle(&self, m: &Move) -> bool;
 
     fn get_legal_moves(&self) -> MoveList;
 }
@@ -89,23 +95,15 @@ impl ExtBoard for Board {
         self.generate_moves(|_m| true)
     }
 
-    fn is_capture(&self, m: &Move) -> bool {
-        !self.piece_on(m.to).is_none()
-    }
-
     fn get_captured(&self, m: &Move) -> Piece {
-        self.piece_on(m.to).unwrap()
-    }
-
-    fn get_captured_index(&self, m: &Move) -> usize {
+        // queen promotions treated as pawn capture
         match self.piece_on(m.to) {
-            Some(piece) => piece as usize,
-            None => NONE_PIECE_INDEX,
+            Some(piece) => piece,
+            None => {
+                assert!(m.promotion == Some(Queen) || self.is_ep(m));
+                Piece::Pawn
+            }
         }
-    }
-
-    fn get_from_index(&self, m: &Move) -> usize {
-        self.piece_on(m.from).unwrap() as usize
     }
 
     fn get_legal_moves(&self) -> MoveList {
@@ -119,12 +117,47 @@ impl ExtBoard for Board {
 
         ml
     }
+
+    fn is_quiet(&self, m: &Move) -> bool {
+        // special moves are CASTLE, PROMOTION, ENPASSENT
+        if self.is_ep(m) {
+            return false;
+        }
+
+        if self.is_castle(m) {
+            return true;
+        }
+
+        // a quiet move is not a capture and not a queen promotion
+        self.piece_on(m.to).is_none() && m.promotion != Some(Piece::Queen)
+    }
+
+    fn ep_square(&self) -> Option<Square> {
+        match self.en_passant() {
+            Some(file) => {
+                let ep_rank = match self.side_to_move() {
+                    White => Rank::Sixth,
+                    Black => Rank::Third,
+                };
+                Some(Square::new(file, ep_rank))
+            }
+            None => None,
+        }
+    }
+
+    fn is_ep(&self, m: &Move) -> bool {
+        self.piece_on(m.from) == Some(Piece::Pawn) && self.ep_square() == Some(m.to)
+    }
+
+    fn is_castle(&self, m: &Move) -> bool {
+        self.piece_on(m.to) == Some(Piece::Rook) && self.color_on(m.to) == Some(self.side_to_move())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScoredMove {
     pub inner: Move,
-    pub score: i16,
+    pub score: i32,
 }
 
 impl ScoredMove {
@@ -133,7 +166,7 @@ impl ScoredMove {
         score: 0,
     };
 
-    pub fn new(inner: Move, score: i16) -> Self {
+    pub fn new(inner: Move, score: i32) -> Self {
         Self { inner, score }
     }
 

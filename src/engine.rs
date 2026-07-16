@@ -299,7 +299,7 @@ impl Engine {
                     break;
                 }
 
-                if in_check && Movepick::is_quiet(pos, &next_move.inner) {
+                if in_check && pos.is_quiet(&next_move.inner) {
                     break;
                 }
             }
@@ -610,7 +610,7 @@ impl Engine {
             }
 
             if next_move.inner != best_move {
-                if Movepick::is_quiet(pos, &next_move.inner) {
+                if pos.is_quiet(&next_move.inner) {
                     quiets.push(next_move.inner);
                 } else {
                     captures.push(next_move.inner);

@@ -1,7 +1,7 @@
 use cozy_chess::{Board, Move};
 
 use crate::{
-    ext::{ExtMove, MoveList},
+    ext::{ExtBoard, ExtMove, MoveList},
     movepick::Movepick,
     param::*,
 };
@@ -27,12 +27,15 @@ impl<const LIMIT: i16> History<LIMIT> {
 }
 
 type MainHistory = History<20000>;
+type CaptureHistory = History<20000>;
 
 pub struct Heuristic {
     // lmr[move_count][depth]
     lmr: Box<[[i8; LMR_DEPTH]; LMR_MOVE_COUNT]>,
-    // history heuristic [from][to]
+    // history heuristic [side][from][to]
     main_history: Box<[[[MainHistory; 64]; 64]; 2]>,
+    // capture history [colored_piece][to][captured_piece]
+    capture_history: Box<[[[CaptureHistory; 6]; 64]; 12]>,
 }
 
 impl Heuristic {
@@ -50,12 +53,18 @@ impl Heuristic {
         }
 
         let main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
+        let capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
 
-        Self { lmr, main_history }
+        Self {
+            lmr,
+            main_history,
+            capture_history,
+        }
     }
 
     pub fn clear(&mut self) {
         self.main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
+        self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -71,6 +80,22 @@ impl Heuristic {
         &mut self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
+    pub fn get_capture_history(&self, pos: &Board, m: &Move) -> &MainHistory {
+        assert!(!pos.is_quiet(m));
+
+        &self.capture_history
+            [pos.piece_on(m.from).unwrap() as usize + 6 * pos.side_to_move() as usize]
+            [m.to as usize][pos.get_captured(m) as usize]
+    }
+
+    pub fn get_capture_history_mut(&mut self, pos: &Board, m: &Move) -> &mut MainHistory {
+        assert!(!pos.is_quiet(m));
+
+        &mut self.capture_history
+            [pos.piece_on(m.from).unwrap() as usize + 6 * pos.side_to_move() as usize]
+            [m.to as usize][pos.get_captured(m) as usize]
+    }
+
     pub fn update_history(
         &mut self,
         pos: &Board,
@@ -84,18 +109,20 @@ impl Heuristic {
         let bonus = i32::min(180 * depth as i32 - 100, 1000) as i16;
         let malus = i32::min(180 * depth as i32 - 100, 1000) as i16;
 
-        if Movepick::is_quiet(pos, best_move) {
+        if pos.is_quiet(best_move) {
             self.get_main_history_mut(pos, best_move).add(bonus);
 
             for m in quiets.iter() {
                 assert!(!m.is_null());
                 self.get_main_history_mut(pos, m).add(-malus);
             }
+        } else {
+            self.get_capture_history_mut(pos, best_move).add(bonus);
         }
 
         for m in captures.iter() {
             assert!(!m.is_null());
-            self.get_main_history_mut(pos, m).add(-malus);
+            self.get_capture_history_mut(pos, m).add(-malus);
         }
     }
 }
