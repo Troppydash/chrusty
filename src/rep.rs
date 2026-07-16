@@ -21,7 +21,7 @@ impl RepEntry {
         self.counts = [false; 3];
     }
 
-    fn add(&mut self, key: u64) {
+    fn add_history(&mut self, key: u64) {
         for i in 0..3 {
             if self.keys[i] == key {
                 self.counts[i] = true;
@@ -29,6 +29,19 @@ impl RepEntry {
             }
         }
 
+        for i in 0..3 {
+            if self.keys[i] == UNSET {
+                self.keys[i] = key;
+                assert!(!self.counts[i]);
+                return;
+            }
+        }
+
+        // reaching here is bad
+        assert!(false, "ran out of room");
+    }
+
+    fn add(&mut self, key: u64) {
         for i in 0..3 {
             if self.keys[i] == UNSET {
                 self.keys[i] = key;
@@ -77,7 +90,7 @@ impl RepTable {
     }
 
     pub fn add_history(&mut self, key: u64) {
-        self.history[(key as usize) % REP_SIZE].add(key);
+        self.history[(key as usize) % REP_SIZE].add_history(key);
     }
 
     pub fn add(&mut self, key: u64) {

@@ -1,4 +1,7 @@
-use cozy_chess::{Board, Color::White};
+use cozy_chess::{
+    Board,
+    Color::{Black, White},
+};
 
 const MG_VALUE: [i32; 6] = [82, 337, 365, 477, 1025, 0];
 const EG_VALUE: [i32; 6] = [94, 281, 297, 512, 936, 0];
@@ -124,14 +127,24 @@ pub fn evaluate(pos: &Board) -> i32 {
     let mut eg = [0, 0];
     let mut game_phase = 0;
 
-    for sq in pos.occupied() {
-        let color = pos.color_on(sq).unwrap();
+    for sq in pos.colors(White) {
         let piece = pos.piece_on(sq).unwrap();
 
-        let offset = piece as usize + if color == White { 0 } else { 6 };
+        let offset = piece as usize;
         unsafe {
-            mg[color as usize] += MG_TABLE[offset][sq as usize];
-            eg[color as usize] += EG_TABLE[offset][sq as usize];
+            mg[0] += MG_TABLE[offset][sq as usize];
+            eg[0] += EG_TABLE[offset][sq as usize];
+        }
+        game_phase += GAMEPHASE_INC[piece as usize];
+    }
+
+    for sq in pos.colors(Black) {
+        let piece = pos.piece_on(sq).unwrap();
+
+        let offset = piece as usize + 6;
+        unsafe {
+            mg[1] += MG_TABLE[offset][sq as usize];
+            eg[1] += EG_TABLE[offset][sq as usize];
         }
         game_phase += GAMEPHASE_INC[piece as usize];
     }

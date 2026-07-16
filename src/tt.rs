@@ -218,7 +218,6 @@ impl Bucket {
     }
 }
 
-// TODO: support resizing tt
 pub struct Table {
     buckets: Box<[Bucket]>,
     age: u8,

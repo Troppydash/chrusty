@@ -12,3 +12,6 @@ cozy-chess = { version = "0.3.4", features = ["pext"] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 cozy-chess = { version = "0.3.4" }
+
+[profile.release]
+lto = "thin"
