@@ -1,4 +1,3 @@
-use arrayvec::ArrayVec;
 use cozy_chess::{
     BitBoard, Board,
     Color::{Black, White},
@@ -79,29 +78,19 @@ impl Movepick {
         unsafe { &*self.heuristic }
     }
 
-    /// Sort by descending
-    pub fn sort_moves(&mut self, start: usize, end: usize) {
-        // TODO: try selection sort
-        for i in (start + 1)..end {
-            let temp = self.moves[i];
-            let mut j = i - 1;
-            while j >= start && self.moves[j].score < temp.score {
-                self.moves[j + 1] = self.moves[j];
-
-                if j == 0 {
-                    break;
-                }
-                j -= 1;
-            }
-            self.moves[j + 1] = temp;
-        }
-    }
-
     pub fn pick<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
     where
         F: FnMut(&mut ScoredMoveList, usize) -> bool,
     {
         while self.ptr < end {
+            let mut best_i = self.ptr;
+            for i in (self.ptr + 1)..end {
+                if self.moves[i].score > self.moves[best_i].score {
+                    best_i = i;
+                }
+            }
+            self.moves.swap(self.ptr, best_i);
+
             let ok = filter(&mut self.moves, self.ptr);
             self.ptr += 1;
             if ok {
@@ -259,7 +248,6 @@ impl Movepick {
                     self.generate_captures();
                     self.score_captures();
 
-                    self.sort_moves(0, self.moves.len());
                     self.ptr = 0;
                     self.captures_end = self.moves.len();
                     self.stage = Stage::GoodCapture;
@@ -305,7 +293,6 @@ impl Movepick {
                         i += 1;
                     }
 
-                    self.sort_moves(self.captures_end, self.moves.len());
                     self.ptr = self.captures_end;
                     self.stage = Stage::GoodQuiet;
                 }
@@ -358,7 +345,6 @@ impl Movepick {
                     self.generate_captures();
                     self.score_captures();
 
-                    self.sort_moves(0, self.moves.len());
                     self.ptr = 0;
                     self.stage = Stage::QCapture;
                 }
@@ -384,7 +370,6 @@ impl Movepick {
                     self.generate_captures();
                     self.score_captures();
 
-                    self.sort_moves(0, self.moves.len());
                     self.ptr = 0;
                     self.captures_end = self.moves.len();
                     self.stage = Stage::ECapture;
@@ -422,7 +407,6 @@ impl Movepick {
                         i += 1;
                     }
 
-                    self.sort_moves(self.captures_end, self.moves.len());
                     self.stage = Stage::EQuiet;
                 }
                 Stage::EQuiet => {
