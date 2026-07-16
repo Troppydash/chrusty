@@ -260,7 +260,7 @@ impl Engine {
         let mut move_count = 0;
         let mut best_move = Move::NULL_MOVE;
         let mut movepick =
-            Movepick::new_qsearch(pos.clone(), tt_data.pv, &self.heuristic, in_check);
+            Movepick::new_qsearch(pos.clone(), tt_data.pv, ply, &self.heuristic, in_check);
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -488,7 +488,7 @@ impl Engine {
         let mut captures = MoveList::new();
 
         //- negamax alphabeta search
-        let mut movepick = Movepick::new_negamax(pos.clone(), tt_data.pv, &self.heuristic);
+        let mut movepick = Movepick::new_negamax(pos.clone(), tt_data.pv, ply, &self.heuristic);
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -620,7 +620,7 @@ impl Engine {
             }
         } else if best_score >= beta {
             self.heuristic
-                .update_history(pos, depth, &best_move, &captures, &quiets);
+                .update_history(pos, depth, ply, &best_move, &captures, &quiets);
         }
 
         //- tt_pv propagation

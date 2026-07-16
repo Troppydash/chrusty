@@ -34,11 +34,14 @@ enum Stage {
 
 pub struct Movepick {
     pos: Board,
+    pv: Move,
+    ply: i8,
     // this is needed to prevent a refcell which is expensive
     heuristic: *const Heuristic,
+
+    // internal
     moves: ScoredMoveList,
     ptr: usize,
-    pv: Move,
     stage: Stage,
     captures_end: usize,
     bad_capture_len: usize,
@@ -46,13 +49,14 @@ pub struct Movepick {
 }
 
 impl Movepick {
-    pub fn new_negamax(pos: Board, pv: Move, heuristic: &Heuristic) -> Self {
+    pub fn new_negamax(pos: Board, pv: Move, ply: i8, heuristic: &Heuristic) -> Self {
         Self {
             pos,
+            pv,
+            ply,
             heuristic,
             moves: ScoredMoveList::new(),
             ptr: 0,
-            pv,
             stage: Stage::Pv,
             captures_end: 0,
             bad_capture_len: 0,
@@ -60,13 +64,20 @@ impl Movepick {
         }
     }
 
-    pub fn new_qsearch(pos: Board, pv: Move, heuristic: &Heuristic, in_check: bool) -> Self {
+    pub fn new_qsearch(
+        pos: Board,
+        pv: Move,
+        ply: i8,
+        heuristic: &Heuristic,
+        in_check: bool,
+    ) -> Self {
         Self {
             pos,
+            pv,
+            ply,
             heuristic,
             moves: ScoredMoveList::new(),
             ptr: 0,
-            pv,
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             captures_end: 0,
             bad_capture_len: 0,
@@ -282,8 +293,20 @@ impl Movepick {
                             continue;
                         }
 
-                        // TODO: killer moves
                         let heuristic = self.get_heuristic();
+
+                        let killers = heuristic.get_killers(self.ply);
+                        if self.moves[i].inner == killers[0] {
+                            self.moves[i].score = i32::MAX;
+                            i += 1;
+                            continue;
+                        }
+                        if self.moves[i].inner == killers[1] {
+                            self.moves[i].score = i32::MAX - 1;
+                            i += 1;
+                            continue;
+                        }
+
                         let score = heuristic
                             .get_main_history(&self.pos, &self.moves[i].inner)
                             .get() as i32;
@@ -397,8 +420,20 @@ impl Movepick {
                             continue;
                         }
 
-                        // TODO: killer moves
                         let heuristic = self.get_heuristic();
+
+                        let killers = heuristic.get_killers(self.ply);
+                        if self.moves[i].inner == killers[0] {
+                            self.moves[i].score = i32::MAX;
+                            i += 1;
+                            continue;
+                        }
+                        if self.moves[i].inner == killers[1] {
+                            self.moves[i].score = i32::MAX - 1;
+                            i += 1;
+                            continue;
+                        }
+
                         let score = heuristic
                             .get_main_history(&self.pos, &self.moves[i].inner)
                             .get() as i32;
@@ -438,8 +473,8 @@ mod tests {
 
         let heuristic = Heuristic::new();
         for mut mp in vec![
-            Movepick::new_negamax(pos.clone(), Move::NULL_MOVE, &heuristic),
-            Movepick::new_qsearch(pos.clone(), Move::NULL_MOVE, &heuristic, true),
+            Movepick::new_negamax(pos.clone(), Move::NULL_MOVE, 0, &heuristic),
+            Movepick::new_qsearch(pos.clone(), Move::NULL_MOVE, 0, &heuristic, true),
         ] {
             let mut mp_moves = vec![];
             loop {

@@ -27,6 +27,7 @@ impl<const LIMIT: i16> History<LIMIT> {
 
 type MainHistory = History<20000>;
 type CaptureHistory = History<20000>;
+pub const NUM_KILLERS: usize = 2;
 
 pub struct Heuristic {
     // lmr[move_count][depth]
@@ -35,6 +36,8 @@ pub struct Heuristic {
     main_history: Box<[[[MainHistory; 64]; 64]; 2]>,
     // capture history [colored_piece][to][captured_piece]
     capture_history: Box<[[[CaptureHistory; 6]; 64]; 12]>,
+    // killer moves [ply][n]
+    killer_moves: Box<[[Move; NUM_KILLERS]; MAX_DEPTH as usize]>,
 }
 
 impl Heuristic {
@@ -53,17 +56,20 @@ impl Heuristic {
 
         let main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
         let capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
+        let killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
 
         Self {
             lmr,
             main_history,
             capture_history,
+            killer_moves,
         }
     }
 
     pub fn clear(&mut self) {
         self.main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
         self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
+        self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -95,10 +101,19 @@ impl Heuristic {
             [m.to as usize][pos.get_captured(m) as usize]
     }
 
+    pub fn get_killers(&self, ply: i8) -> &[Move; NUM_KILLERS] {
+        &self.killer_moves[ply as usize]
+    }
+
+    pub fn get_killers_mut(&mut self, ply: i8) -> &mut [Move; NUM_KILLERS] {
+        &mut self.killer_moves[ply as usize]
+    }
+
     pub fn update_history(
         &mut self,
         pos: &Board,
         depth: i8,
+        ply: i8,
         best_move: &Move,
         captures: &MoveList,
         quiets: &MoveList,
@@ -115,6 +130,12 @@ impl Heuristic {
                 assert!(!m.is_null());
                 self.get_main_history_mut(pos, m).add(-malus);
             }
+
+            let killers = self.get_killers_mut(ply);
+            if &killers[0] != best_move {
+                killers[1] = killers[0];
+            }
+            killers[0] = *best_move;
         } else {
             self.get_capture_history_mut(pos, best_move).add(bonus);
         }
