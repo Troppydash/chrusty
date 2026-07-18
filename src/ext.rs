@@ -7,11 +7,22 @@ use cozy_chess::{
     Rank, Square,
 };
 
+use crate::ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL};
+
 // these are stack allocated
 
 pub const MAX_MOVES: usize = 218;
 pub type ScoredMoveList = ArrayVec<ScoredMove, MAX_MOVES>;
 pub type MoveList = ArrayVec<Move, MAX_MOVES>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MoveType {
+    NORMAL,
+    ENPASSENT,
+    CASTLE,
+    PROMOTION,
+    NONE,
+}
 
 pub trait ExtMove {
     const NULL_MOVE: Move;
@@ -84,6 +95,8 @@ pub trait ExtBoard {
     fn is_castle(&self, m: &Move) -> bool;
 
     fn get_legal_moves(&self) -> MoveList;
+
+    fn move_type(&self, m: &Move) -> MoveType;
 }
 
 impl ExtBoard for Board {
@@ -151,6 +164,22 @@ impl ExtBoard for Board {
 
     fn is_castle(&self, m: &Move) -> bool {
         self.piece_on(m.to) == Some(Piece::Rook) && self.color_on(m.to) == Some(self.side_to_move())
+    }
+
+    fn move_type(&self, m: &Move) -> MoveType {
+        if m.is_null() {
+            return NONE;
+        }
+
+        if self.is_ep(m) {
+            return ENPASSENT;
+        }
+
+        if self.is_castle(m) {
+            return CASTLE;
+        }
+
+        return NORMAL;
     }
 }
 

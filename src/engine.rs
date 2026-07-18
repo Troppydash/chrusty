@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use arrayvec::ArrayVec;
 use cozy_chess::{Board, Move};
 
 use crate::{
@@ -14,12 +15,55 @@ use crate::{
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
+struct PvList {
+    moves: ArrayVec<Move, MAX_DEPTH_USIZE>,
+}
+
+impl PvList {
+    fn new() -> Self {
+        Self {
+            moves: ArrayVec::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.moves.clear();
+    }
+
+    fn set(&mut self, m: &Move, other: &PvList) {
+        self.moves.clear();
+        self.moves.push(*m);
+
+        for m in other.moves.iter() {
+            self.moves.push(*m);
+        }
+    }
+
+    fn pv(&self) -> Move {
+        assert!(self.moves.len() > 0);
+        return self.moves[0];
+    }
+
+    fn get(&self, i: usize) -> Move {
+        assert!(i < self.moves.len());
+        return self.moves[i];
+    }
+
+    fn get_moves(&self) -> &ArrayVec<Move, MAX_DEPTH_USIZE> {
+        &self.moves
+    }
+
+    fn len(&self) -> usize {
+        self.moves.len()
+    }
+}
+
+#[derive(Clone, Debug)]
 struct SearchStack {
     ply: i8,
     m: Move,
-    pv_list: [Move; MAX_DEPTH as usize],
-    pv_size: usize,
+    pv_list: PvList,
     adjusted_static: i16,
     tt_pv: bool,
 }
@@ -29,8 +73,7 @@ impl SearchStack {
         Self {
             ply: 0,
             m: Move::NULL_MOVE,
-            pv_list: [Move::NULL_MOVE; MAX_DEPTH as usize],
-            pv_size: 0,
+            pv_list: PvList::new(),
             adjusted_static: VALUE_NONE,
             tt_pv: false,
         }
@@ -40,29 +83,26 @@ impl SearchStack {
         Self {
             ply,
             m: Move::NULL_MOVE,
-            pv_list: [Move::NULL_MOVE; MAX_DEPTH as usize],
-            pv_size: 0,
+            pv_list: PvList::new(),
             adjusted_static: VALUE_NONE,
             tt_pv: false,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct RootMove {
-    pv_list: [Move; MAX_DEPTH as usize],
-    pv_size: usize,
+    pv_list: PvList,
     average_score: i16,
     score: i16,
 }
 
 impl RootMove {
-    fn new(m: Move) -> Self {
-        let mut pv_list = [Move::NULL_MOVE; MAX_DEPTH as usize];
-        pv_list[0] = m;
+    fn new(m: &Move) -> Self {
+        let mut pv_list = PvList::new();
+        pv_list.set(m, &PvList::new());
         Self {
             pv_list,
-            pv_size: 1,
             average_score: VALUE_NONE,
             score: 0,
         }
@@ -75,8 +115,9 @@ pub struct SearchResult {
 }
 
 pub struct Engine {
-    stack: [SearchStack; SS_SIZE],
-    heuristic: Heuristic,
+    stack: Box<[SearchStack]>,
+    // need to Box for movepick ptr
+    heuristic: Box<Heuristic>,
     nodes: i64,
     // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
@@ -89,8 +130,8 @@ pub struct Engine {
 impl Engine {
     pub fn new(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
         Self {
-            stack: [SearchStack::new(); SS_SIZE],
-            heuristic: Heuristic::new(),
+            stack: vec![SearchStack::new(); SS_SIZE].into_boxed_slice(),
+            heuristic: Box::new(Heuristic::new()),
             nodes: 0,
             root_moves: vec![].into_boxed_slice(),
             timer,
@@ -344,7 +385,7 @@ impl Engine {
         assert!(!(is_root && cut_node));
         assert!(!(is_pv && cut_node));
 
-        self.stack[ss].pv_size = 0;
+        self.stack[ss].pv_list.clear();
 
         if self.nodes % 8192 == 0 {
             self.timer.write().unwrap().check();
@@ -423,7 +464,7 @@ impl Engine {
 
         //- always use pv of root_moves
         if is_root {
-            tt_data.pv = self.root_moves[0].pv_list[0];
+            tt_data.pv = self.root_moves[0].pv_list.pv();
         }
 
         //- tt early return
@@ -556,7 +597,7 @@ impl Engine {
                 let root_move = self
                     .root_moves
                     .iter_mut()
-                    .find(|rm| rm.pv_list[0] == next_move.inner)
+                    .find(|rm| rm.pv_list.pv() == next_move.inner)
                     .unwrap();
                 root_move.average_score = if is_valid(root_move.average_score) {
                     avg(root_move.average_score, score)
@@ -566,13 +607,9 @@ impl Engine {
 
                 if move_count == 1 || score > alpha {
                     root_move.score = score;
-
-                    for i in 0..self.stack[ss + 1].pv_size {
-                        assert!(self.stack[ss + 1].pv_list[i] != Move::NULL_MOVE);
-                        root_move.pv_list[1 + i] = self.stack[ss + 1].pv_list[i];
-                    }
-
-                    root_move.pv_size = self.stack[ss + 1].pv_size + 1;
+                    root_move
+                        .pv_list
+                        .set(&root_move.pv_list.pv(), &self.stack[ss + 1].pv_list);
                 } else {
                     // fail-low cannot be ordered
                     root_move.score = -VALUE_INF;
@@ -586,13 +623,8 @@ impl Engine {
                     best_move = next_move.inner;
 
                     if is_pv && !is_root {
-                        self.stack[ss].pv_list[0] = best_move;
-                        for i in 0..self.stack[ss + 1].pv_size {
-                            assert!(self.stack[ss + 1].pv_list[i] != Move::NULL_MOVE);
-                            self.stack[ss].pv_list[1 + i] = self.stack[ss + 1].pv_list[i];
-                        }
-
-                        self.stack[ss].pv_size = self.stack[ss + 1].pv_size + 1;
+                        let (current, next) = self.stack.split_at_mut(ss + 1);
+                        current[ss].pv_list.set(&best_move, &next[0].pv_list);
                     }
 
                     if score >= beta {
@@ -667,8 +699,8 @@ impl Engine {
 
         // root moves
         let mut root_moves = vec![];
-        for m in pos.get_legal_moves() {
-            root_moves.push(RootMove::new(m));
+        for m in pos.get_legal_moves().iter() {
+            root_moves.push(RootMove::new(&m));
         }
         self.root_moves = root_moves.into_boxed_slice();
         assert!(!self.root_moves.is_empty(), "root moves is empty");
@@ -767,24 +799,23 @@ impl Engine {
             );
 
             let mut next_pos = pos.clone();
-            for i in 0..self.root_moves[0].pv_size {
-                print!(" {}", self.root_moves[0].pv_list[i].to_uci(&next_pos));
-                next_pos.play_unchecked(self.root_moves[0].pv_list[i]);
+            for m in self.root_moves[0].pv_list.get_moves().iter() {
+                print!(" {}", m.to_uci(&next_pos));
+                next_pos.play_unchecked(*m);
             }
             println!("");
             depth += 1;
         }
 
         let result = SearchResult {
-            root: self.root_moves[0],
+            root: self.root_moves[0].clone(),
             depth,
         };
         println!("info time {}", self.timer.read().unwrap().delta());
 
-        assert!(result.root.pv_size != 0);
-        let best_move = result.root.pv_list[0];
-        if result.root.pv_size >= 2 {
-            let ponder = result.root.pv_list[1];
+        let best_move = result.root.pv_list.pv();
+        if result.root.pv_list.len() >= 2 {
+            let ponder = result.root.pv_list.get(1);
             let mut next_pos = pos.clone();
             next_pos.play_unchecked(best_move.clone());
             println!(

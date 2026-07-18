@@ -3,7 +3,6 @@ use crate::ext::ExtMove;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
-use std::pin::Pin;
 use std::process::exit;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -36,13 +35,13 @@ struct AsyncEngine {
     timer: Arc<RwLock<Timer>>,
     engine: Arc<Mutex<Engine>>,
     handle: Option<JoinHandle<()>>,
-    table: Pin<Box<Table>>,
+    table: Box<Table>,
 }
 
 impl AsyncEngine {
     fn new() -> Self {
         let timer = Arc::new(RwLock::new(Timer::new()));
-        let mut table = Pin::new(Box::new(Table::new(DEFAULT_TT_SIZE)));
+        let mut table = Box::new(Table::new(DEFAULT_TT_SIZE));
         let table_ptr = TablePtr::from_table(&mut table);
         let engine = Arc::new(Mutex::new(Engine::new(timer.clone(), table_ptr)));
         Self {
