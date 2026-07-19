@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cozy_chess::{
     Board,
-    Color::{Black, White},
+    Color::{self, Black, White},
     Move,
     Piece::{self, Queen},
     Rank, Square,
@@ -100,6 +100,8 @@ pub trait ExtBoard {
 
     /// [piece_on] but None is 6
     fn piece_on_index(&self, sq: Square) -> usize;
+
+    fn has_insufficient_material(&self) -> bool;
 }
 
 impl ExtBoard for Board {
@@ -191,6 +193,54 @@ impl ExtBoard for Board {
             Some(piece) => piece as usize,
         }
     }
+
+    fn has_insufficient_material(&self) -> bool {
+        let count = self.occupied().len();
+
+        // only kings
+        if count == 2 {
+            return true;
+        }
+
+        // only bishop/knight
+        if count == 3 {
+            if !self.pieces(Piece::Bishop).is_empty() || !self.pieces(Piece::Knight).is_empty() {
+                return true;
+            }
+        }
+
+        if count == 4 {
+            let mut white_bishops = self.colored_pieces(Color::White, Piece::Bishop);
+            let mut black_bishops = self.colored_pieces(Color::Black, Piece::Bishop);
+            // same colored bishops
+            if !white_bishops.is_empty() && !black_bishops.is_empty() {
+                let wb = white_bishops.next_square().unwrap();
+                let bb = black_bishops.next_square().unwrap();
+                if Square::same_color(&wb, &bb) {
+                    return true;
+                }
+            }
+
+            // one side with same color bishops
+            if white_bishops.len() == 2 {
+                let sq1 = white_bishops.next_square().unwrap();
+                white_bishops ^= sq1.bitboard();
+                let sq2 = white_bishops.next_square().unwrap();
+                if Square::same_color(&sq1, &sq2) {
+                    return true;
+                }
+            } else if black_bishops.len() == 2 {
+                let sq1 = black_bishops.next_square().unwrap();
+                black_bishops ^= sq1.bitboard();
+                let sq2 = black_bishops.next_square().unwrap();
+                if Square::same_color(&sq1, &sq2) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -215,5 +265,16 @@ impl ScoredMove {
 
     pub fn is_null(&self) -> bool {
         self.inner.is_null()
+    }
+}
+
+pub trait ExtSquare {
+    fn same_color(&self, other: &Square) -> bool;
+}
+
+impl ExtSquare for Square {
+    fn same_color(&self, other: &Square) -> bool {
+        // magic
+        ((9 * (*self as i32 ^ *other as i32)) & 8) == 0
     }
 }

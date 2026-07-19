@@ -202,10 +202,9 @@ impl Engine {
         }
 
         let key = pos.hash();
-        //- simple draw checks
-        // if pos.has_insufficient_material(pos.turn()) {
-        //     return VALUE_DRAW;
-        // }
+        if pos.has_insufficient_material() {
+            return VALUE_DRAW;
+        }
 
         if pos.halfmove_clock() >= 100 {
             if pos.in_check() && !pos.any_moves() {
@@ -418,9 +417,9 @@ impl Engine {
 
         //- simple draw checks
         if !is_root {
-            // if pos.has_insufficient_material(pos.turn()) {
-            //     return VALUE_DRAW;
-            // }
+            if pos.has_insufficient_material() {
+                return VALUE_DRAW;
+            }
 
             if pos.halfmove_clock() >= 100 {
                 if pos.in_check() && !pos.any_moves() {
