@@ -97,6 +97,9 @@ pub trait ExtBoard {
     fn get_legal_moves(&self) -> MoveList;
 
     fn move_type(&self, m: &Move) -> MoveType;
+
+    /// [piece_on] but None is 6
+    fn piece_on_index(&self, sq: Square) -> usize;
 }
 
 impl ExtBoard for Board {
@@ -180,6 +183,13 @@ impl ExtBoard for Board {
         }
 
         return NORMAL;
+    }
+
+    fn piece_on_index(&self, sq: Square) -> usize {
+        match self.piece_on(sq) {
+            None => 6,
+            Some(piece) => piece as usize,
+        }
     }
 }
 

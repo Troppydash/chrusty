@@ -41,6 +41,7 @@ pub const PIECE_VALUE: [i32; ALL_PIECES + 1] = [100, 300, 300, 500, 900, 20000, 
 
 pub const MVV_MULTIPLIER: i32 = 8;
 pub const BAD_QUIET_SCORE: i32 = -15000;
+pub const GOOD_CAPTURE_SEE_DIV: i32 = 25;
 
 pub const LMR_MOVE_COUNT: usize = 96;
 pub const LMR_DEPTH: usize = MAX_DEPTH as usize;

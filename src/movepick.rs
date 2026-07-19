@@ -7,7 +7,8 @@ use cozy_chess::{
 use crate::{
     ext::{ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
     heuristic::Heuristic,
-    param::{BAD_QUIET_SCORE, MVV_MULTIPLIER, PIECE_VALUE},
+    param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, PIECE_VALUE},
+    see,
 };
 
 enum Stage {
@@ -32,6 +33,68 @@ enum Stage {
     EQuiet,
 }
 
+struct DynamicScoredMoveList {
+    moves: ScoredMoveList,
+    ptr: usize,
+}
+
+impl DynamicScoredMoveList {
+    fn new() -> Self {
+        Self {
+            moves: ScoredMoveList::new(),
+            ptr: 0,
+        }
+    }
+
+    fn pick<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
+    where
+        F: FnMut(&mut ScoredMoveList, usize) -> bool,
+    {
+        assert!(end <= self.moves.len());
+        while self.ptr < end {
+            let mut best_i = self.ptr;
+            for i in (self.ptr + 1)..end {
+                if self.moves[i].score > self.moves[best_i].score {
+                    best_i = i;
+                }
+            }
+            self.moves.swap(self.ptr, best_i);
+
+            let ok = filter(&mut self.moves, self.ptr);
+            self.ptr += 1;
+            if ok {
+                return self.moves[self.ptr - 1];
+            }
+        }
+
+        ScoredMove::NULL_MOVE
+    }
+
+    fn push(&mut self, m: ScoredMove) {
+        self.moves.push(m);
+    }
+
+    fn len(&self) -> usize {
+        self.moves.len()
+    }
+
+    fn get(&self, i: usize) -> &ScoredMove {
+        &self.moves[i]
+    }
+
+    fn get_mut(&mut self, i: usize) -> &mut ScoredMove {
+        &mut self.moves[i]
+    }
+
+    fn swap_remove(&mut self, i: usize) {
+        self.moves.swap_remove(i);
+    }
+
+    fn shift(&mut self, i: usize) {
+        self.ptr = i;
+    }
+}
+
 pub struct Movepick {
     pos: Board,
     pv: Move,
@@ -39,10 +102,10 @@ pub struct Movepick {
     // this is needed to prevent a refcell which is expensive
     heuristic: *const Heuristic,
 
-    // internal
-    moves: ScoredMoveList,
-    ptr: usize,
+    // internal //
+    moves: DynamicScoredMoveList,
     stage: Stage,
+    // only used for [negamax] //
     captures_end: usize,
     bad_capture_len: usize,
     bad_quiet_len: usize,
@@ -55,8 +118,7 @@ impl Movepick {
             pv,
             ply,
             heuristic,
-            moves: ScoredMoveList::new(),
-            ptr: 0,
+            moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             captures_end: 0,
             bad_capture_len: 0,
@@ -76,8 +138,7 @@ impl Movepick {
             pv,
             ply,
             heuristic,
-            moves: ScoredMoveList::new(),
-            ptr: 0,
+            moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             captures_end: 0,
             bad_capture_len: 0,
@@ -87,29 +148,6 @@ impl Movepick {
 
     fn get_heuristic(&self) -> &Heuristic {
         unsafe { &*self.heuristic }
-    }
-
-    pub fn pick<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
-    where
-        F: FnMut(&mut ScoredMoveList, usize) -> bool,
-    {
-        while self.ptr < end {
-            let mut best_i = self.ptr;
-            for i in (self.ptr + 1)..end {
-                if self.moves[i].score > self.moves[best_i].score {
-                    best_i = i;
-                }
-            }
-            self.moves.swap(self.ptr, best_i);
-
-            let ok = filter(&mut self.moves, self.ptr);
-            self.ptr += 1;
-            if ok {
-                return self.moves[self.ptr - 1];
-            }
-        }
-
-        ScoredMove::NULL_MOVE
     }
 
     /// generate captures into [moves]
@@ -221,8 +259,8 @@ impl Movepick {
     fn score_captures(&mut self) {
         let mut i = 0;
         while i < self.moves.len() {
-            assert!(!self.pos.is_quiet(&self.moves[i].inner));
-            if self.pv == self.moves[i].inner {
+            assert!(!self.pos.is_quiet(&self.moves.get(i).inner));
+            if self.pv == self.moves.get(i).inner {
                 self.moves.swap_remove(i);
                 continue;
             }
@@ -230,17 +268,17 @@ impl Movepick {
             // mvv-lva
             let heuristic = self.get_heuristic();
             let mut score = heuristic
-                .get_capture_history(&self.pos, &self.moves[i].inner)
+                .get_capture_history(&self.pos, &self.moves.get(i).inner)
                 .get() as i32;
 
-            score +=
-                MVV_MULTIPLIER * PIECE_VALUE[self.pos.get_captured(&self.moves[i].inner) as usize];
+            score += MVV_MULTIPLIER
+                * PIECE_VALUE[self.pos.get_captured(&self.moves.get(i).inner) as usize];
 
-            if self.moves[i].inner.promotion.is_some() {
+            if self.moves.get(i).inner.promotion.is_some() {
                 score += 10000;
             }
 
-            self.moves[i].score = score;
+            self.moves.get_mut(i).score = score;
 
             i += 1;
         }
@@ -258,17 +296,21 @@ impl Movepick {
                 Stage::CaptureInit => {
                     self.generate_captures();
                     self.score_captures();
-
-                    self.ptr = 0;
                     self.captures_end = self.moves.len();
                     self.stage = Stage::GoodCapture;
                 }
                 Stage::GoodCapture => {
-                    let next_move = self.pick(self.moves.len(), |_list, _i| {
-                        // TODO: see
+                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
+                        let m = moves[i];
+                        if !see::see_ge(&self.pos, &m.inner, -m.score / param::GOOD_CAPTURE_SEE_DIV)
+                        {
+                            moves.swap(i, self.bad_capture_len);
+                            self.bad_capture_len += 1;
+                            return false;
+                        }
+
                         true
                     });
-                    self.bad_capture_len = 0;
 
                     if !next_move.is_null() {
                         return next_move;
@@ -279,16 +321,11 @@ impl Movepick {
                 Stage::QuietInit => {
                     self.generate_quiets();
 
-                    let mut i = self.captures_end;
+                    let mut i = self.moves.ptr;
                     while i < self.moves.len() {
-                        assert!(
-                            self.pos.is_quiet(&self.moves[i].inner),
-                            "{} {}",
-                            self.pos,
-                            self.moves[i].inner
-                        );
+                        assert!(self.pos.is_quiet(&self.moves.get(i).inner));
 
-                        if self.pv == self.moves[i].inner {
+                        if self.pv == self.moves.get(i).inner {
                             self.moves.swap_remove(i);
                             continue;
                         }
@@ -296,62 +333,59 @@ impl Movepick {
                         let heuristic = self.get_heuristic();
 
                         let killers = heuristic.get_killers(self.ply);
-                        if self.moves[i].inner == killers[0] {
-                            self.moves[i].score = i32::MAX;
+                        if self.moves.get(i).inner == killers[0] {
+                            self.moves.get_mut(i).score = i32::MAX;
                             i += 1;
                             continue;
                         }
-                        if self.moves[i].inner == killers[1] {
-                            self.moves[i].score = i32::MAX - 1;
+                        if self.moves.get(i).inner == killers[1] {
+                            self.moves.get_mut(i).score = i32::MAX - 1;
                             i += 1;
                             continue;
                         }
 
                         let score = heuristic
-                            .get_main_history(&self.pos, &self.moves[i].inner)
+                            .get_main_history(&self.pos, &self.moves.get(i).inner)
                             .get() as i32;
 
-                        self.moves[i].score = score;
+                        self.moves.get_mut(i).score = score;
 
                         i += 1;
                     }
 
-                    self.ptr = self.captures_end;
                     self.stage = Stage::GoodQuiet;
                 }
                 Stage::GoodQuiet => {
-                    let mut bad_quiet_len = self.bad_quiet_len;
-                    let captures_end = self.captures_end;
-                    let next_move = self.pick(self.moves.len(), |moves, i| {
+                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         if moves[i].score < BAD_QUIET_SCORE {
-                            moves.swap(captures_end + bad_quiet_len, i);
-                            bad_quiet_len += 1;
+                            moves.swap(i, self.captures_end + self.bad_quiet_len);
+                            self.bad_quiet_len += 1;
                             return false;
                         }
 
                         return true;
                     });
-                    self.bad_quiet_len = bad_quiet_len;
 
                     if !next_move.is_null() {
                         return next_move;
                     }
 
-                    self.ptr = 0;
+                    self.moves.shift(0);
                     self.stage = Stage::BadCapture;
                 }
                 Stage::BadCapture => {
-                    let next_move = self.pick(self.bad_capture_len, |_moves, _i| true);
+                    let next_move = self.moves.pick(self.bad_capture_len, |_moves, _i| true);
                     if !next_move.is_null() {
                         return next_move;
                     }
 
-                    self.ptr = self.captures_end;
+                    self.moves.shift(self.captures_end);
                     self.stage = Stage::BadQuiet;
                 }
                 Stage::BadQuiet => {
-                    let next_move =
-                        self.pick(self.bad_quiet_len + self.captures_end, |_moves, _i| true);
+                    let next_move = self
+                        .moves
+                        .pick(self.bad_quiet_len + self.captures_end, |_moves, _i| true);
                     if !next_move.is_null() {
                         return next_move;
                     }
@@ -367,15 +401,10 @@ impl Movepick {
                 Stage::QCaptureInit => {
                     self.generate_captures();
                     self.score_captures();
-
-                    self.ptr = 0;
                     self.stage = Stage::QCapture;
                 }
                 Stage::QCapture => {
-                    let next_move = self.pick(self.moves.len(), |_list, _i| {
-                        // TODO: see
-                        true
-                    });
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
                     if !next_move.is_null() {
                         return next_move;
                     }
@@ -392,16 +421,10 @@ impl Movepick {
                 Stage::ECaptureInit => {
                     self.generate_captures();
                     self.score_captures();
-
-                    self.ptr = 0;
-                    self.captures_end = self.moves.len();
                     self.stage = Stage::ECapture;
                 }
                 Stage::ECapture => {
-                    let next_move = self.pick(self.moves.len(), |_list, _i| {
-                        // TODO: see
-                        true
-                    });
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
                     if !next_move.is_null() {
                         return next_move;
                     }
@@ -411,11 +434,11 @@ impl Movepick {
                 Stage::EQuietInit => {
                     self.generate_quiets();
 
-                    let mut i = self.captures_end;
+                    let mut i = self.moves.ptr;
                     while i < self.moves.len() {
-                        assert!(self.pos.is_quiet(&self.moves[i].inner));
+                        assert!(self.pos.is_quiet(&self.moves.get(i).inner));
 
-                        if self.pv == self.moves[i].inner {
+                        if self.pv == self.moves.get(i).inner {
                             self.moves.swap_remove(i);
                             continue;
                         }
@@ -423,21 +446,21 @@ impl Movepick {
                         let heuristic = self.get_heuristic();
 
                         let killers = heuristic.get_killers(self.ply);
-                        if self.moves[i].inner == killers[0] {
-                            self.moves[i].score = i32::MAX;
+                        if self.moves.get(i).inner == killers[0] {
+                            self.moves.get_mut(i).score = i32::MAX;
                             i += 1;
                             continue;
                         }
-                        if self.moves[i].inner == killers[1] {
-                            self.moves[i].score = i32::MAX - 1;
+                        if self.moves.get(i).inner == killers[1] {
+                            self.moves.get_mut(i).score = i32::MAX - 1;
                             i += 1;
                             continue;
                         }
 
                         let score = heuristic
-                            .get_main_history(&self.pos, &self.moves[i].inner)
+                            .get_main_history(&self.pos, &self.moves.get(i).inner)
                             .get() as i32;
-                        self.moves[i].score = score;
+                        self.moves.get_mut(i).score = score;
 
                         i += 1;
                     }
@@ -445,7 +468,7 @@ impl Movepick {
                     self.stage = Stage::EQuiet;
                 }
                 Stage::EQuiet => {
-                    let next_move = self.pick(self.moves.len(), |_list, _i| true);
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
                     if !next_move.is_null() {
                         return next_move;
                     }
