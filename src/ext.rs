@@ -3,7 +3,7 @@ use cozy_chess::{
     Board,
     Color::{self, Black, White},
     Move,
-    Piece::{self, Queen},
+    Piece::{self, King, Pawn, Queen},
     Rank, Square,
 };
 
@@ -102,6 +102,8 @@ pub trait ExtBoard {
     fn piece_on_index(&self, sq: Square) -> usize;
 
     fn has_insufficient_material(&self) -> bool;
+
+    fn has_non_pawns(&self, side: Color) -> bool;
 }
 
 impl ExtBoard for Board {
@@ -240,6 +242,10 @@ impl ExtBoard for Board {
         }
 
         return false;
+    }
+
+    fn has_non_pawns(&self, side: Color) -> bool {
+        self.occupied() == (self.colored_pieces(side, King) | self.colored_pieces(side, Pawn))
     }
 }
 

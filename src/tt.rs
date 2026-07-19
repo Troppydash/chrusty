@@ -140,7 +140,7 @@ impl Entry {
         is_pv: bool,
         age: u8,
     ) {
-        if self.pv != Move::NULL_MOVE_BITS || !key_matches(key, self.hash) {
+        if pv.to_bits() != Move::NULL_MOVE_BITS || !key_matches(key, self.hash) {
             self.pv = pv.to_bits();
         }
 

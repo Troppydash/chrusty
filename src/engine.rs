@@ -372,7 +372,7 @@ impl Engine {
         pos: &Board,
         mut alpha: i16,
         mut beta: i16,
-        depth: i8,
+        mut depth: i8,
         ss: usize,
         is_pv: bool,
         cut_node: bool,
@@ -518,6 +518,43 @@ impl Engine {
 
         if !in_check {
             // TODO: pruning
+
+            //- null move pruning
+            let has_non_pawns = pos.has_non_pawns(pos.side_to_move());
+            if cut_node
+                && has_non_pawns
+                && !self.stack[ss - 1].m.is_null()
+                && is_valid(self.stack[ss].adjusted_static)
+                && !is_loss(beta)
+                && self.stack[ss].adjusted_static as i32 >= beta as i32 + 200 - 50 * depth as i32
+            {
+                let reduction = (6 + depth as i32 / 4) as i8;
+                let reduced_depth = i8::max(0, depth - reduction);
+                let new_pos = self.make_move(pos, &Move::NULL_MOVE, ss);
+                let score = -self.negamax(
+                    &new_pos,
+                    -beta,
+                    -beta + 1,
+                    reduced_depth,
+                    ss + 1,
+                    false,
+                    false,
+                );
+                self.unmake_move(pos);
+
+                if self.timer.read().unwrap().stopped() {
+                    return 0;
+                }
+
+                if score >= beta {
+                    return score;
+                }
+            }
+
+            //- iir
+            if (is_pv || cut_node) && depth >= (2 + 2 * cut_node as i8) && tt_data.pv.is_null() {
+                depth -= 1;
+            }
         }
 
         let mut move_count = 0;
