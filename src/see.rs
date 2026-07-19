@@ -1,10 +1,7 @@
 use cozy_chess::{
     BitBoard, Board,
-    Color::{self, Black, White},
-    File::B,
-    Move,
-    Piece::{self, Bishop, Pawn},
-    Square, get_bishop_moves, get_rook_moves,
+    Color::{Black, White},
+    Move, Piece, Square, get_bishop_moves, get_rook_moves,
 };
 
 use crate::{
