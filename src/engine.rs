@@ -368,6 +368,8 @@ impl Engine {
         //- mates
         if in_check && move_count == 0 {
             best_score = lose_in(ply);
+        } else if !in_check && move_count == 0 && !pos.any_moves() {
+            best_score = VALUE_DRAW;
         } else if !is_decisive(best_score) && best_score > beta {
             best_score = avg(best_score, beta);
         }
@@ -486,6 +488,11 @@ impl Engine {
         } else {
             Move::NULL_MOVE
         };
+        let is_tt_capture = if tt_data.pv.is_null() {
+            false
+        } else {
+            !pos.is_quiet(&tt_data.pv)
+        };
 
         //- always use pv of root_moves
         if is_root {
@@ -543,7 +550,18 @@ impl Engine {
         }
 
         if !in_check {
-            // TODO: pruning
+            //- static null move pruning
+            let margin = 0.max(70 * depth as i32);
+            if !is_pv
+                && is_valid(self.stack[ss].adjusted_static)
+                && !is_loss(beta)
+                && !is_win(self.stack[ss].adjusted_static)
+                && self.stack[ss].adjusted_static as i32 - margin >= beta as i32
+                && depth <= 14
+                && (tt_data.pv.is_null() || is_tt_capture)
+            {
+                return avg(beta, self.stack[ss].adjusted_static);
+            }
 
             //- null move pruning
             let has_non_pawns = pos.has_non_pawns(pos.side_to_move());
@@ -617,6 +635,11 @@ impl Engine {
                 // cutnode reduction
                 if cut_node {
                     reduction += 2 - self.stack[ss].tt_pv as i8;
+                }
+
+                // capture reduction
+                if is_tt_capture {
+                    reduction += 1;
                 }
 
                 // pv extension
