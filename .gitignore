@@ -1,5 +1,6 @@
 /target
 /bench
+.vscode/
 
 # fastchess
 config.json

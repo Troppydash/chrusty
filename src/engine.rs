@@ -572,16 +572,34 @@ impl Engine {
                 break;
             }
 
+            let is_quiet = pos.is_quiet(&next_move.inner);
             move_count += 1;
 
             let mut new_pos = self.make_move(pos, &next_move.inner, ss);
-
             let new_depth = depth - 1;
             let mut score = 0;
 
             //- late move reduction
             if depth >= 2 && move_count > 1 + 2 * is_root as usize {
-                let reduction = self.heuristic.get_lmr(move_count, depth);
+                let mut reduction = self.heuristic.get_lmr(move_count, depth);
+
+                // check extension
+                if new_pos.in_check() {
+                    reduction -= 1;
+                }
+
+                // cutnode reduction
+                if cut_node {
+                    reduction += 2 - self.stack[ss].tt_pv as i8;
+                }
+
+                // pv extension
+                reduction -= self.stack[ss].tt_pv as i8 + is_pv as i8;
+
+                // history adjustment
+                // let scaled_history_score = next_move.score / if is_quiet { 9000 } else { 8000 };
+                // reduction -= scaled_history_score as i8;
+
                 let reduced_depth = (new_depth - reduction).clamp(1, new_depth + 1);
 
                 //- pv search
@@ -596,15 +614,25 @@ impl Engine {
                 );
 
                 if score > alpha && reduced_depth < new_depth {
-                    score = -self.negamax(
-                        &mut new_pos,
-                        -(alpha + 1),
-                        -alpha,
-                        new_depth,
-                        ss + 1,
-                        false,
-                        !cut_node,
-                    );
+                    //- re-search adjustments
+                    let mut adjusted_new_depth = new_depth;
+                    if (score as i32) > (best_score as i32 + 50 + new_depth as i32 * 2) {
+                        adjusted_new_depth += 1;
+                    } else if (score as i32) < (best_score as i32 - 50) {
+                        adjusted_new_depth -= 1;
+                    }
+
+                    if reduced_depth < adjusted_new_depth {
+                        score = -self.negamax(
+                            &mut new_pos,
+                            -(alpha + 1),
+                            -alpha,
+                            adjusted_new_depth,
+                            ss + 1,
+                            false,
+                            !cut_node,
+                        );
+                    }
                 }
             } else if !is_pv || move_count > 1 {
                 score = -self.negamax(
