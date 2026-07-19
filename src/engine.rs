@@ -11,6 +11,7 @@ use crate::{
     param::*,
     pesto,
     rep::RepTable,
+    see,
     timer::Timer,
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
@@ -248,6 +249,7 @@ impl Engine {
         //- adjusted/unadjusted evals
         let mut unadjusted_static = VALUE_NONE;
         let mut best_score = -VALUE_INF;
+        let mut futility_base = -VALUE_INF;
         let in_check = pos.in_check();
         if in_check {
             best_score = -VALUE_INF;
@@ -294,6 +296,8 @@ impl Engine {
             if best_score > alpha {
                 alpha = best_score;
             }
+
+            futility_base = best_score + 300;
         }
 
         //- negamax
@@ -308,6 +312,28 @@ impl Engine {
             }
 
             move_count += 1;
+
+            //- futility pruning
+            if !is_loss(best_score) {
+                if !pos.is_quiet(&next_move.inner)
+                    && !in_check
+                    && futility_base as i32
+                        + PIECE_VALUE[pos.get_captured(&next_move.inner) as usize]
+                        <= alpha as i32
+                    && !see::see_ge(pos, &next_move.inner, 0)
+                {
+                    let futility_best_score = (futility_base as i32
+                        + PIECE_VALUE[pos.get_captured(&next_move.inner) as usize])
+                        .min(VALUE_EVAL as i32)
+                        as i16;
+                    best_score = best_score.max(futility_best_score);
+                    continue;
+                }
+
+                if !see::see_ge(pos, &next_move.inner, -50) {
+                    continue;
+                }
+            }
 
             let new_pos = self.make_move(pos, &next_move.inner, ss);
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth, ss + 1, is_pv);
