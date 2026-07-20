@@ -24,6 +24,7 @@ impl RepEntry {
     fn add_history(&mut self, key: u64) {
         for i in 0..3 {
             if self.keys[i] == key {
+                assert!(!self.counts[i]);
                 self.counts[i] = true;
                 return;
             }
@@ -57,6 +58,7 @@ impl RepEntry {
     fn remove(&mut self, key: u64) {
         for i in 0..3 {
             if self.keys[i] == key {
+                assert!(!self.counts[i]);
                 self.keys[i] = UNSET;
                 self.counts[i] = false;
                 return;
@@ -116,5 +118,35 @@ impl RepTable {
         for c in self.search.iter_mut() {
             c.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rep_add() {
+        let mut rep = RepTable::new();
+        rep.add(0);
+        assert!(!rep.check(5));
+        rep.add(1);
+        assert!(!rep.check(5));
+        rep.add(2);
+        assert!(!rep.check(5));
+        rep.add(3);
+        assert!(rep.check(0));
+    }
+
+    #[test]
+    fn test_rep_add_remove() {
+        let mut rep = RepTable::new();
+        rep.add(0);
+        rep.add(1);
+        rep.add(2);
+        rep.remove(2);
+        rep.remove(1);
+        rep.add(5);
+        assert!(rep.check(0));
     }
 }

@@ -157,7 +157,7 @@ impl Engine {
     }
 
     fn make_move(&mut self, pos: &Board, m: &Move, ss: usize) -> Board {
-        self.rep.add(pos.hash());
+        self.rep.add(pos.correct_hash());
         self.stack[ss].m = m.clone();
 
         let mut new_pos = pos.clone();
@@ -170,7 +170,7 @@ impl Engine {
     }
 
     fn unmake_move(&mut self, pos: &Board) {
-        self.rep.remove(pos.hash());
+        self.rep.remove(pos.correct_hash());
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
@@ -190,6 +190,7 @@ impl Engine {
     ) -> i16 {
         // note that we don't check timer in qsearch
         let ply = self.stack[ss].ply;
+        self.stack[ss].pv_list.clear();
 
         assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
 
@@ -202,7 +203,7 @@ impl Engine {
             return self.evaluate(pos);
         }
 
-        let key = pos.hash();
+        let key = pos.correct_hash();
         if pos.has_insufficient_material() {
             return VALUE_DRAW;
         }
@@ -313,8 +314,8 @@ impl Engine {
 
             move_count += 1;
 
-            //- futility pruning
             if !is_loss(best_score) {
+                //- delta pruning
                 if !pos.is_quiet(&next_move.inner)
                     && !in_check
                     && futility_base as i32
@@ -330,6 +331,9 @@ impl Engine {
                     continue;
                 }
 
+                // TODO: futility pruning
+
+                //- see pruning
                 if !see::see_ge(pos, &next_move.inner, -50) {
                     continue;
                 }
@@ -438,10 +442,10 @@ impl Engine {
 
         //- qsearch drop
         if depth <= 0 {
-            return self.qsearch(pos, alpha, beta, depth, ss, is_pv);
+            return self.qsearch(pos, alpha, beta, 0, ss, is_pv);
         }
 
-        let key = pos.hash();
+        let key = pos.correct_hash();
 
         //- simple draw checks
         if !is_root {
@@ -549,7 +553,20 @@ impl Engine {
             );
         }
 
-        if !in_check {
+        let mut improving = false;
+        if in_check {
+            improving = false;
+        } else if is_valid(self.stack[ss - 2].adjusted_static)
+            && is_valid(self.stack[ss].adjusted_static)
+        {
+            improving = self.stack[ss].adjusted_static > self.stack[ss - 2].adjusted_static;
+        } else if is_valid(self.stack[ss - 4].adjusted_static)
+            && is_valid(self.stack[ss].adjusted_static)
+        {
+            improving = self.stack[ss].adjusted_static > self.stack[ss - 4].adjusted_static;
+        }
+
+        if !is_root && !in_check {
             //- static null move pruning
             let margin = 0.max(70 * depth as i32);
             if !is_pv
@@ -619,7 +636,40 @@ impl Engine {
             let is_quiet = pos.is_quiet(&next_move.inner);
             move_count += 1;
 
-            let mut new_pos = self.make_move(pos, &next_move.inner, ss);
+            //- low depth pruning
+            if !is_pv && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
+                let lmr_depth =
+                    (depth - self.heuristic.get_lmr(move_count, depth) - !improving as i8
+                        + (next_move.score / 10000) as i8)
+                        .clamp(1, depth + 1) as i32;
+
+                //- see pruning
+                let see_margin = if is_quiet {
+                    100 + 100 * lmr_depth * lmr_depth
+                } else {
+                    200 + 200 * lmr_depth
+                };
+                if !see::see_ge(pos, &next_move.inner, -see_margin) {
+                    continue;
+                }
+
+                //- history prunes
+                if is_quiet && next_move.score < -7000 * depth as i32 {
+                    movepick.skip_quiets();
+                    continue;
+                }
+
+                //- late move pruning
+                if move_count as i32 >= (3 + depth as i32 * depth as i32) / (2 - improving as i32) {
+                    movepick.skip_quiets();
+                }
+
+                // TODO: futility pruning
+            }
+
+            // TODO: singular extension
+
+            let new_pos = self.make_move(pos, &next_move.inner, ss);
             let new_depth = depth - 1;
             let mut score = 0;
 
@@ -653,7 +703,7 @@ impl Engine {
 
                 //- pv search
                 score = -self.negamax(
-                    &mut new_pos,
+                    &new_pos,
                     -(alpha + 1),
                     -alpha,
                     reduced_depth,
@@ -673,7 +723,7 @@ impl Engine {
 
                     if reduced_depth < adjusted_new_depth {
                         score = -self.negamax(
-                            &mut new_pos,
+                            &new_pos,
                             -(alpha + 1),
                             -alpha,
                             adjusted_new_depth,
@@ -685,7 +735,7 @@ impl Engine {
                 }
             } else if !is_pv || move_count > 1 {
                 score = -self.negamax(
-                    &mut new_pos,
+                    &new_pos,
                     -(alpha + 1),
                     -alpha,
                     new_depth,
@@ -696,7 +746,7 @@ impl Engine {
             }
 
             if is_pv && (move_count == 1 || score > alpha) {
-                score = -self.negamax(&mut new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
+                score = -self.negamax(&new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
             self.unmake_move(pos);
@@ -805,7 +855,7 @@ impl Engine {
         // history tracking
         let mut pos = startpos;
         for m in moves.iter() {
-            let key = pos.hash();
+            let key = pos.correct_hash();
             self.rep.add_history(key);
             pos.play_unchecked(*m);
         }
@@ -854,7 +904,7 @@ impl Engine {
             // asp window
             loop {
                 assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
-                let score = self.negamax(&mut pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
+                let score = self.negamax(&pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();
 
                 if self.timer.read().unwrap().stopped() {

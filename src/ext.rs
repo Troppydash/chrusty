@@ -104,6 +104,8 @@ pub trait ExtBoard {
     fn has_insufficient_material(&self) -> bool;
 
     fn has_non_pawns(&self, side: Color) -> bool;
+
+    fn correct_hash(&self) -> u64;
 }
 
 impl ExtBoard for Board {
@@ -246,6 +248,22 @@ impl ExtBoard for Board {
 
     fn has_non_pawns(&self, side: Color) -> bool {
         self.occupied() == (self.colored_pieces(side, King) | self.colored_pieces(side, Pawn))
+    }
+
+    fn correct_hash(&self) -> u64 {
+        // check if ep sq is legal
+        match self.ep_square() {
+            None => self.hash(),
+            Some(ep_square) => {
+                let origins = cozy_chess::get_pawn_attacks(ep_square, !self.side_to_move());
+                if (self.colored_pieces(self.side_to_move(), Piece::Pawn) & origins).is_empty() {
+                    // remove ep hash
+                    self.hash_without_ep()
+                } else {
+                    self.hash()
+                }
+            }
+        }
     }
 }
 

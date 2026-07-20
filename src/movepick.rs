@@ -105,6 +105,7 @@ pub struct Movepick {
     // internal //
     moves: DynamicScoredMoveList,
     stage: Stage,
+    skip_quiets: bool,
     // only used for [negamax] //
     captures_end: usize,
     bad_capture_len: usize,
@@ -120,6 +121,7 @@ impl Movepick {
             heuristic,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
+            skip_quiets: false,
             captures_end: 0,
             bad_capture_len: 0,
             bad_quiet_len: 0,
@@ -140,6 +142,7 @@ impl Movepick {
             heuristic,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
+            skip_quiets: false,
             captures_end: 0,
             bad_capture_len: 0,
             bad_quiet_len: 0,
@@ -284,6 +287,10 @@ impl Movepick {
         }
     }
 
+    pub fn skip_quiets(&mut self) {
+        self.skip_quiets = true;
+    }
+
     pub fn next_move(&mut self) -> ScoredMove {
         loop {
             match self.stage {
@@ -319,55 +326,59 @@ impl Movepick {
                     self.stage = Stage::QuietInit;
                 }
                 Stage::QuietInit => {
-                    self.generate_quiets();
+                    if !self.skip_quiets {
+                        self.generate_quiets();
 
-                    let mut i = self.moves.ptr;
-                    while i < self.moves.len() {
-                        assert!(self.pos.is_quiet(&self.moves.get(i).inner));
+                        let mut i = self.moves.ptr;
+                        while i < self.moves.len() {
+                            assert!(self.pos.is_quiet(&self.moves.get(i).inner));
 
-                        if self.pv == self.moves.get(i).inner {
-                            self.moves.swap_remove(i);
-                            continue;
-                        }
+                            if self.pv == self.moves.get(i).inner {
+                                self.moves.swap_remove(i);
+                                continue;
+                            }
 
-                        let heuristic = self.get_heuristic();
+                            let heuristic = self.get_heuristic();
 
-                        let killers = heuristic.get_killers(self.ply);
-                        if self.moves.get(i).inner == killers[0] {
-                            self.moves.get_mut(i).score = i32::MAX;
+                            let killers = heuristic.get_killers(self.ply);
+                            if self.moves.get(i).inner == killers[0] {
+                                self.moves.get_mut(i).score = i32::MAX;
+                                i += 1;
+                                continue;
+                            }
+                            if self.moves.get(i).inner == killers[1] {
+                                self.moves.get_mut(i).score = i32::MAX - 1;
+                                i += 1;
+                                continue;
+                            }
+
+                            let score = heuristic
+                                .get_main_history(&self.pos, &self.moves.get(i).inner)
+                                .get() as i32;
+
+                            self.moves.get_mut(i).score = score;
+
                             i += 1;
-                            continue;
                         }
-                        if self.moves.get(i).inner == killers[1] {
-                            self.moves.get_mut(i).score = i32::MAX - 1;
-                            i += 1;
-                            continue;
-                        }
-
-                        let score = heuristic
-                            .get_main_history(&self.pos, &self.moves.get(i).inner)
-                            .get() as i32;
-
-                        self.moves.get_mut(i).score = score;
-
-                        i += 1;
                     }
 
                     self.stage = Stage::GoodQuiet;
                 }
                 Stage::GoodQuiet => {
-                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
-                        if moves[i].score < BAD_QUIET_SCORE {
-                            moves.swap(i, self.captures_end + self.bad_quiet_len);
-                            self.bad_quiet_len += 1;
-                            return false;
+                    if !self.skip_quiets {
+                        let next_move = self.moves.pick(self.moves.len(), |moves, i| {
+                            if moves[i].score < BAD_QUIET_SCORE {
+                                moves.swap(i, self.captures_end + self.bad_quiet_len);
+                                self.bad_quiet_len += 1;
+                                return false;
+                            }
+
+                            return true;
+                        });
+
+                        if !next_move.is_null() {
+                            return next_move;
                         }
-
-                        return true;
-                    });
-
-                    if !next_move.is_null() {
-                        return next_move;
                     }
 
                     self.moves.shift(0);
@@ -383,11 +394,13 @@ impl Movepick {
                     self.stage = Stage::BadQuiet;
                 }
                 Stage::BadQuiet => {
-                    let next_move = self
-                        .moves
-                        .pick(self.bad_quiet_len + self.captures_end, |_moves, _i| true);
-                    if !next_move.is_null() {
-                        return next_move;
+                    if !self.skip_quiets {
+                        let next_move = self
+                            .moves
+                            .pick(self.bad_quiet_len + self.captures_end, |_moves, _i| true);
+                        if !next_move.is_null() {
+                            return next_move;
+                        }
                     }
                     return ScoredMove::NULL_MOVE;
                 }
