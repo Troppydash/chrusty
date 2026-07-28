@@ -19,7 +19,7 @@ use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
-pub const HL: usize = 1024;
+pub const HL: usize = 1536;
 pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const KINGS: usize = 10;
