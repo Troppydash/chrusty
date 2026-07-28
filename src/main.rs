@@ -6,6 +6,7 @@ mod ext;
 mod helpers;
 mod heuristic;
 mod movepick;
+mod nnue;
 mod param;
 mod pesto;
 mod rep;
@@ -15,8 +16,6 @@ mod tt;
 mod uci;
 
 fn main() {
-    pesto::init();
-
     let args: Vec<String> = env::args().collect();
     uci::start(args);
 }

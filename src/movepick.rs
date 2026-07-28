@@ -262,7 +262,7 @@ impl Movepick {
     fn score_captures(&mut self) {
         let mut i = 0;
         while i < self.moves.len() {
-            assert!(!self.pos.is_quiet(&self.moves.get(i).inner));
+            assert!(!self.pos.is_quiet(self.moves.get(i).inner));
             if self.pv == self.moves.get(i).inner {
                 self.moves.swap_remove(i);
                 continue;
@@ -271,11 +271,11 @@ impl Movepick {
             // mvv-lva
             let heuristic = self.get_heuristic();
             let mut score = heuristic
-                .get_capture_history(&self.pos, &self.moves.get(i).inner)
+                .get_capture_history(&self.pos, self.moves.get(i).inner)
                 .get() as i32;
 
             score += MVV_MULTIPLIER
-                * PIECE_VALUE[self.pos.get_captured(&self.moves.get(i).inner) as usize];
+                * PIECE_VALUE[self.pos.get_captured(self.moves.get(i).inner) as usize];
 
             if self.moves.get(i).inner.promotion.is_some() {
                 score += 10000;
@@ -309,7 +309,7 @@ impl Movepick {
                 Stage::GoodCapture => {
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         let m = moves[i];
-                        if !see::see_ge(&self.pos, &m.inner, -m.score / param::GOOD_CAPTURE_SEE_DIV)
+                        if !see::see_ge(&self.pos, m.inner, -m.score / param::GOOD_CAPTURE_SEE_DIV)
                         {
                             moves.swap(i, self.bad_capture_len);
                             self.bad_capture_len += 1;
@@ -331,7 +331,7 @@ impl Movepick {
 
                         let mut i = self.moves.ptr;
                         while i < self.moves.len() {
-                            assert!(self.pos.is_quiet(&self.moves.get(i).inner));
+                            assert!(self.pos.is_quiet(self.moves.get(i).inner));
 
                             if self.pv == self.moves.get(i).inner {
                                 self.moves.swap_remove(i);
@@ -353,7 +353,7 @@ impl Movepick {
                             }
 
                             let score = heuristic
-                                .get_main_history(&self.pos, &self.moves.get(i).inner)
+                                .get_main_history(&self.pos, self.moves.get(i).inner)
                                 .get() as i32;
 
                             self.moves.get_mut(i).score = score;
@@ -449,7 +449,7 @@ impl Movepick {
 
                     let mut i = self.moves.ptr;
                     while i < self.moves.len() {
-                        assert!(self.pos.is_quiet(&self.moves.get(i).inner));
+                        assert!(self.pos.is_quiet(self.moves.get(i).inner));
 
                         if self.pv == self.moves.get(i).inner {
                             self.moves.swap_remove(i);
@@ -471,7 +471,7 @@ impl Movepick {
                         }
 
                         let score = heuristic
-                            .get_main_history(&self.pos, &self.moves.get(i).inner)
+                            .get_main_history(&self.pos, self.moves.get(i).inner)
                             .get() as i32;
                         self.moves.get_mut(i).score = score;
 

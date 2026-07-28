@@ -8,8 +8,8 @@ use crate::{
     helpers::avg,
     heuristic::Heuristic,
     movepick::Movepick,
+    nnue::NNUE,
     param::*,
-    pesto,
     rep::RepTable,
     see,
     timer::Timer,
@@ -126,6 +126,7 @@ pub struct Engine {
     timer: Arc<RwLock<Timer>>,
     rep: RepTable,
     table: TablePtr,
+    nnue: NNUE,
 }
 
 impl Engine {
@@ -138,11 +139,13 @@ impl Engine {
             timer,
             rep: RepTable::new(),
             table,
+            nnue: NNUE::new(),
         }
     }
 
     pub fn newgame(&mut self) {
         self.heuristic.clear();
+        self.nnue.clear();
     }
 
     fn sort_root_moves(&mut self) {
@@ -156,7 +159,7 @@ impl Engine {
         self.root_moves.swap(0, best);
     }
 
-    fn make_move(&mut self, pos: &Board, m: &Move, ss: usize) -> Board {
+    fn make_move(&mut self, pos: &Board, m: Move, ss: usize) -> Board {
         self.rep.add(pos.correct_hash());
         self.stack[ss].m = m.clone();
 
@@ -164,18 +167,22 @@ impl Engine {
         if m.is_null() {
             new_pos.null_move().unwrap()
         } else {
-            new_pos.play_unchecked(*m);
+            self.nnue.make_move(pos, m);
+            new_pos.play_unchecked(m);
             new_pos
         }
     }
 
-    fn unmake_move(&mut self, pos: &Board) {
+    fn unmake_move(&mut self, pos: &Board, ss: usize) {
+        if !self.stack[ss].m.is_null() {
+            self.nnue.unmake_move();
+        }
         self.rep.remove(pos.correct_hash());
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
         let tempo = 20;
-        let eval = pesto::evaluate(pos);
+        let eval = self.nnue.evaluate(pos);
         return (eval + tempo).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
@@ -316,15 +323,15 @@ impl Engine {
 
             if !is_loss(best_score) {
                 //- delta pruning
-                if !pos.is_quiet(&next_move.inner)
+                if !pos.is_quiet(next_move.inner)
                     && !in_check
                     && futility_base as i32
-                        + PIECE_VALUE[pos.get_captured(&next_move.inner) as usize]
+                        + PIECE_VALUE[pos.get_captured(next_move.inner) as usize]
                         <= alpha as i32
-                    && !see::see_ge(pos, &next_move.inner, 0)
+                    && !see::see_ge(pos, next_move.inner, 0)
                 {
                     let futility_best_score = (futility_base as i32
-                        + PIECE_VALUE[pos.get_captured(&next_move.inner) as usize])
+                        + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])
                         .min(VALUE_EVAL as i32)
                         as i16;
                     best_score = best_score.max(futility_best_score);
@@ -334,14 +341,14 @@ impl Engine {
                 // TODO: futility pruning
 
                 //- see pruning
-                if !see::see_ge(pos, &next_move.inner, -50) {
+                if !see::see_ge(pos, next_move.inner, -50) {
                     continue;
                 }
             }
 
-            let new_pos = self.make_move(pos, &next_move.inner, ss);
+            let new_pos = self.make_move(pos, next_move.inner, ss);
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth, ss + 1, is_pv);
-            self.unmake_move(pos);
+            self.unmake_move(pos, ss);
 
             if score > best_score {
                 best_score = score;
@@ -363,7 +370,7 @@ impl Engine {
                     break;
                 }
 
-                if in_check && pos.is_quiet(&next_move.inner) {
+                if in_check && pos.is_quiet(next_move.inner) {
                     break;
                 }
             }
@@ -495,7 +502,7 @@ impl Engine {
         let is_tt_capture = if tt_data.pv.is_null() {
             false
         } else {
-            !pos.is_quiet(&tt_data.pv)
+            !pos.is_quiet(tt_data.pv)
         };
 
         //- always use pv of root_moves
@@ -591,7 +598,7 @@ impl Engine {
             {
                 let reduction = (6 + depth as i32 / 4) as i8;
                 let reduced_depth = i8::max(0, depth - reduction);
-                let new_pos = self.make_move(pos, &Move::NULL_MOVE, ss);
+                let new_pos = self.make_move(pos, Move::NULL_MOVE, ss);
                 let score = -self.negamax(
                     &new_pos,
                     -beta,
@@ -601,7 +608,7 @@ impl Engine {
                     false,
                     false,
                 );
-                self.unmake_move(pos);
+                self.unmake_move(pos, ss);
 
                 if self.timer.read().unwrap().stopped() {
                     return 0;
@@ -633,7 +640,7 @@ impl Engine {
                 break;
             }
 
-            let is_quiet = pos.is_quiet(&next_move.inner);
+            let is_quiet = pos.is_quiet(next_move.inner);
             move_count += 1;
 
             //- low depth pruning
@@ -649,7 +656,7 @@ impl Engine {
                 } else {
                     200 + 200 * lmr_depth
                 };
-                if !see::see_ge(pos, &next_move.inner, -see_margin) {
+                if !see::see_ge(pos, next_move.inner, -see_margin) {
                     continue;
                 }
 
@@ -669,7 +676,7 @@ impl Engine {
 
             // TODO: singular extension
 
-            let new_pos = self.make_move(pos, &next_move.inner, ss);
+            let new_pos = self.make_move(pos, next_move.inner, ss);
             let new_depth = depth - 1;
             let mut score = 0;
 
@@ -749,7 +756,7 @@ impl Engine {
                 score = -self.negamax(&new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
-            self.unmake_move(pos);
+            self.unmake_move(pos, ss);
 
             if self.timer.read().unwrap().stopped() {
                 return 0;
@@ -799,7 +806,7 @@ impl Engine {
             }
 
             if next_move.inner != best_move {
-                if pos.is_quiet(&next_move.inner) {
+                if pos.is_quiet(next_move.inner) {
                     quiets.push(next_move.inner);
                 } else {
                     captures.push(next_move.inner);
@@ -815,7 +822,7 @@ impl Engine {
             }
         } else if best_score >= beta {
             self.heuristic
-                .update_history(pos, depth, ply, &best_move, &captures, &quiets);
+                .update_history(pos, depth, ply, best_move, &captures, &quiets);
         }
 
         //- tt_pv propagation
@@ -859,6 +866,8 @@ impl Engine {
             self.rep.add_history(key);
             pos.play_unchecked(*m);
         }
+
+        self.nnue.init(&pos);
 
         // root moves
         let mut root_moves = vec![];

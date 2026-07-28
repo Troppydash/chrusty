@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
 use cozy_chess::{
-    Board,
+    BitBoard, Board,
     Color::{self, Black, White},
-    Move,
+    File, Move,
     Piece::{self, King, Pawn, Queen},
     Rank, Square,
 };
@@ -14,6 +14,31 @@ use crate::ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL};
 pub const MAX_MOVES: usize = 218;
 pub type ScoredMoveList = ArrayVec<ScoredMove, MAX_MOVES>;
 pub type MoveList = ArrayVec<Move, MAX_MOVES>;
+
+#[derive(Clone, Copy, Debug)]
+pub struct ColoredPiece {
+    pub color: Color,
+    pub piece: Piece,
+}
+
+impl ColoredPiece {
+    pub fn new(color: Color, piece: Piece) -> Self {
+        Self { color, piece }
+    }
+}
+
+pub trait BitBoardExt {
+    fn pop(&mut self) -> Square;
+}
+
+impl BitBoardExt for BitBoard {
+    fn pop(&mut self) -> Square {
+        assert!(self.0 != 0);
+        let index = self.0.trailing_zeros();
+        self.0 ^= 1u64 << index;
+        Square::ALL[index as usize]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MoveType {
@@ -88,15 +113,16 @@ pub trait ExtBoard {
     fn in_check(&self) -> bool;
     fn any_moves(&self) -> bool;
 
-    fn get_captured(&self, m: &Move) -> Piece;
-    fn is_quiet(&self, m: &Move) -> bool;
+    fn get_captured(&self, m: Move) -> Piece;
+    fn is_quiet(&self, m: Move) -> bool;
     fn ep_square(&self) -> Option<Square>;
-    fn is_ep(&self, m: &Move) -> bool;
-    fn is_castle(&self, m: &Move) -> bool;
+    fn ep_capture_square(&self) -> Option<Square>;
+    fn is_ep(&self, m: Move) -> bool;
+    fn is_castle(&self, m: Move) -> bool;
 
     fn get_legal_moves(&self) -> MoveList;
 
-    fn move_type(&self, m: &Move) -> MoveType;
+    fn move_type(&self, m: Move) -> MoveType;
 
     /// [piece_on] but None is 6
     fn piece_on_index(&self, sq: Square) -> usize;
@@ -106,6 +132,12 @@ pub trait ExtBoard {
     fn has_non_pawns(&self, side: Color) -> bool;
 
     fn correct_hash(&self) -> u64;
+
+    fn by_color(&self) -> [BitBoard; 2];
+    fn by_piece(&self) -> [BitBoard; 6];
+
+    fn color_piece_on(&self, square: Square) -> Option<ColoredPiece>;
+    fn castle_to(&self, m: Move) -> (Square, Square);
 }
 
 impl ExtBoard for Board {
@@ -117,7 +149,7 @@ impl ExtBoard for Board {
         self.generate_moves(|_m| true)
     }
 
-    fn get_captured(&self, m: &Move) -> Piece {
+    fn get_captured(&self, m: Move) -> Piece {
         // queen promotions treated as pawn capture
         match self.piece_on(m.to) {
             Some(piece) => piece,
@@ -140,7 +172,7 @@ impl ExtBoard for Board {
         ml
     }
 
-    fn is_quiet(&self, m: &Move) -> bool {
+    fn is_quiet(&self, m: Move) -> bool {
         // special moves are CASTLE, PROMOTION, ENPASSENT
         if self.is_ep(m) {
             return false;
@@ -167,15 +199,28 @@ impl ExtBoard for Board {
         }
     }
 
-    fn is_ep(&self, m: &Move) -> bool {
+    fn ep_capture_square(&self) -> Option<Square> {
+        match self.en_passant() {
+            Some(file) => {
+                let ep_rank = match self.side_to_move() {
+                    White => Rank::Fifth,
+                    Black => Rank::Fourth,
+                };
+                Some(Square::new(file, ep_rank))
+            }
+            None => None,
+        }
+    }
+
+    fn is_ep(&self, m: Move) -> bool {
         self.piece_on(m.from) == Some(Piece::Pawn) && self.ep_square() == Some(m.to)
     }
 
-    fn is_castle(&self, m: &Move) -> bool {
+    fn is_castle(&self, m: Move) -> bool {
         self.piece_on(m.to) == Some(Piece::Rook) && self.color_on(m.to) == Some(self.side_to_move())
     }
 
-    fn move_type(&self, m: &Move) -> MoveType {
+    fn move_type(&self, m: Move) -> MoveType {
         if m.is_null() {
             return NONE;
         }
@@ -263,6 +308,46 @@ impl ExtBoard for Board {
                     self.hash()
                 }
             }
+        }
+    }
+
+    fn by_color(&self) -> [BitBoard; 2] {
+        [self.colors(Color::White), self.colors(Color::Black)]
+    }
+
+    fn by_piece(&self) -> [BitBoard; 6] {
+        [
+            self.pieces(Piece::Pawn),
+            self.pieces(Piece::Knight),
+            self.pieces(Piece::Bishop),
+            self.pieces(Piece::Rook),
+            self.pieces(Piece::Queen),
+            self.pieces(Piece::King),
+        ]
+    }
+
+    fn color_piece_on(&self, square: Square) -> Option<ColoredPiece> {
+        self.color_on(square)
+            .zip(self.piece_on(square))
+            .map(|(color, piece)| ColoredPiece::new(color, piece))
+    }
+
+    /// (king, rook)
+    fn castle_to(&self, m: Move) -> (Square, Square) {
+        assert!(self.move_type(m) == MoveType::CASTLE);
+
+        if m.to > m.from {
+            // short
+            (
+                Square::new(File::G, m.from.rank()),
+                Square::new(File::F, m.from.rank()),
+            )
+        } else {
+            // long
+            (
+                Square::new(File::C, m.from.rank()),
+                Square::new(File::D, m.from.rank()),
+            )
         }
     }
 }

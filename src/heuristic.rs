@@ -77,15 +77,15 @@ impl Heuristic {
         self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]
     }
 
-    pub fn get_main_history(&self, pos: &Board, m: &Move) -> &MainHistory {
+    pub fn get_main_history(&self, pos: &Board, m: Move) -> &MainHistory {
         &self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
-    pub fn get_main_history_mut(&mut self, pos: &Board, m: &Move) -> &mut MainHistory {
+    pub fn get_main_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
         &mut self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
-    pub fn get_capture_history(&self, pos: &Board, m: &Move) -> &MainHistory {
+    pub fn get_capture_history(&self, pos: &Board, m: Move) -> &MainHistory {
         assert!(!pos.is_quiet(m));
 
         &self.capture_history
@@ -93,7 +93,7 @@ impl Heuristic {
             [m.to as usize][pos.get_captured(m) as usize]
     }
 
-    pub fn get_capture_history_mut(&mut self, pos: &Board, m: &Move) -> &mut MainHistory {
+    pub fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
         assert!(!pos.is_quiet(m));
 
         &mut self.capture_history
@@ -114,7 +114,7 @@ impl Heuristic {
         pos: &Board,
         depth: i8,
         ply: i8,
-        best_move: &Move,
+        best_move: Move,
         captures: &MoveList,
         quiets: &MoveList,
     ) {
@@ -128,21 +128,21 @@ impl Heuristic {
 
             for m in quiets.iter() {
                 assert!(!m.is_null());
-                self.get_main_history_mut(pos, m).add(-malus);
+                self.get_main_history_mut(pos, *m).add(-malus);
             }
 
             let killers = self.get_killers_mut(ply);
-            if &killers[0] != best_move {
+            if killers[0] != best_move {
                 killers[1] = killers[0];
             }
-            killers[0] = *best_move;
+            killers[0] = best_move;
         } else {
             self.get_capture_history_mut(pos, best_move).add(bonus);
         }
 
         for m in captures.iter() {
             assert!(!m.is_null());
-            self.get_capture_history_mut(pos, m).add(-malus);
+            self.get_capture_history_mut(pos, *m).add(-malus);
         }
     }
 }

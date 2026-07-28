@@ -22,3 +22,11 @@ To test sprt between two versions, run
 ./scripts/sprt.sh 1.0.1 1.0.0
 ```
 The sprt log files are in `./bench/logs/<new>_vs_<old>`.
+
+To freeze a version, make sure to update the `./scripts/ver.txt` file.
+
+To use a new nn, run
+```bash
+./scripts/nn.sh ./nets/<nnfile.bin>
+```
+which will sha256sum the content to `./nets/` and write to `./hash.nn`.

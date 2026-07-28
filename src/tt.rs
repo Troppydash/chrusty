@@ -53,7 +53,8 @@ pub struct Entry {
     depth: i8,
     static_score: i16,
     score: i16,
-    mask: u8, // pv|flag|age
+    // pv_node|flag|age
+    mask: u8,
 }
 
 impl Entry {

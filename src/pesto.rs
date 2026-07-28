@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use cozy_chess::{
     Board,
     Color::{Black, White},

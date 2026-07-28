@@ -31,7 +31,7 @@ fn get_attackers(pos: &Board, occ: BitBoard, to: Square) -> BitBoard {
     attackers
 }
 
-pub fn see_ge(pos: &Board, m: &Move, beta: i32) -> bool {
+pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
     if pos.move_type(m) != NORMAL {
         return true;
     }
