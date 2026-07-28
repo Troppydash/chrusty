@@ -1,3 +1,7 @@
+use std::arch::x86_64::*;
+use std::ops::Deref;
+use std::ops::DerefMut;
+
 /// Incremental NNUE
 ///
 /// [Simd] encaps simd operations
@@ -25,36 +29,64 @@ pub const QB: i32 = 128;
 pub const FT_SHIFT: usize = 9;
 pub const SCALE: i32 = 400;
 
-struct Simd;
-impl Simd {
+#[repr(C, align(64))]
+#[derive(Debug, Clone)]
+struct Aligned<T, const N: usize>([T; N]);
+impl<T: Copy + Default, const N: usize> Aligned<T, N> {
+    fn zeroed() -> Self {
+        Self([T::default(); N])
+    }
+}
+
+impl<T, const N: usize> Deref for Aligned<T, N> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T, const N: usize> DerefMut for Aligned<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+struct SimdOps;
+impl SimdOps {
     #[inline(always)]
-    fn fused_copy(out: &mut [i16; HL], in_vec: &[i16; HL]) {
-        out.copy_from_slice(in_vec);
+    fn fused_copy(out: &mut Aligned<i16, HL>, in_vec: &Aligned<i16, HL>) {
+        out.0.copy_from_slice(&in_vec.0);
     }
 
     #[inline(always)]
-    fn fused_add(out: &mut [i16; HL], add: &[i16; HL]) {
+    fn fused_add(out: &mut Aligned<i16, HL>, add: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] = out[i].wrapping_add(add[i]);
         }
     }
 
     #[inline(always)]
-    fn fused_sub(out: &mut [i16; HL], sub: &[i16; HL]) {
+    fn fused_sub(out: &mut Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] = out[i].wrapping_sub(sub[i]);
         }
     }
 
     #[inline(always)]
-    fn fused_add_sub(out: &mut [i16; HL], add: &[i16; HL], sub: &[i16; HL]) {
+    fn fused_add_sub(out: &mut Aligned<i16, HL>, add: &Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] = out[i].wrapping_add(add[i]).wrapping_sub(sub[i]);
         }
     }
 
     #[inline(always)]
-    fn fused_add_sub_base(out: &mut [i16; HL], base: &[i16; HL], add: &[i16; HL], sub: &[i16; HL]) {
+    fn fused_add_sub_base(
+        out: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        add: &Aligned<i16, HL>,
+        sub: &Aligned<i16, HL>,
+    ) {
         for i in 0..HL {
             out[i] = base[i].wrapping_add(add[i]).wrapping_sub(sub[i]);
         }
@@ -62,11 +94,11 @@ impl Simd {
 
     #[inline(always)]
     fn fused_add_sub_sub_base(
-        out: &mut [i16; HL],
-        base: &[i16; HL],
-        add: &[i16; HL],
-        sub1: &[i16; HL],
-        sub2: &[i16; HL],
+        out: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        add: &Aligned<i16, HL>,
+        sub1: &Aligned<i16, HL>,
+        sub2: &Aligned<i16, HL>,
     ) {
         for i in 0..HL {
             out[i] = base[i]
@@ -78,12 +110,12 @@ impl Simd {
 
     #[inline(always)]
     fn fused_add_add_sub_sub_base(
-        out: &mut [i16; HL],
-        base: &[i16; HL],
-        add1: &[i16; HL],
-        add2: &[i16; HL],
-        sub1: &[i16; HL],
-        sub2: &[i16; HL],
+        out: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        add1: &Aligned<i16, HL>,
+        add2: &Aligned<i16, HL>,
+        sub1: &Aligned<i16, HL>,
+        sub2: &Aligned<i16, HL>,
     ) {
         for i in 0..HL {
             out[i] = base[i]
@@ -97,15 +129,20 @@ impl Simd {
 
 #[repr(C, align(64))]
 struct RawNetwork {
+    // default output sizing is (outputs, inputs)
+    // not-transposed
     feature_weights: [[[i16; HL]; 768]; KINGS],
     feature_bias: [i16; HL],
 
+    // transposed
     l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
+    // transposed
     l2_weights: [[[f32; L1]; L2]; OUTPUTS],
     l2_bias: [[f32; L2]; OUTPUTS],
 
+    // transposed
     output_weights: [[f32; L2]; OUTPUTS],
     output_bias: [f32; OUTPUTS],
 }
@@ -130,13 +167,13 @@ impl RawNetwork {
 #[repr(C, align(64))]
 #[derive(Clone)]
 struct Network {
-    feature_weights: [[[i16; HL]; 768]; KINGS],
-    feature_bias: [i16; HL],
+    feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
+    feature_bias: Aligned<i16, HL>,
 
-    // [l1_weights] and [l2_weights] has inner component flipped
-    l1_weights: [[[i8; L1]; HL]; OUTPUTS],
+    l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
+    // [l2_weights] has inner component flipped
     l2_weights: [[[f32; L2]; L1]; OUTPUTS],
     l2_bias: [[f32; L2]; OUTPUTS],
 
@@ -171,14 +208,6 @@ impl Network {
         let mut net = unsafe { net.assume_init() };
 
         // also transpose weights
-        for i in 0..OUTPUTS {
-            for j in 0..L1 {
-                for k in 0..HL {
-                    net.l1_weights[i][k][j] = raw.l1_weights[i][j][k];
-                }
-            }
-        }
-
         for i in 0..OUTPUTS {
             for j in 0..L2 {
                 for k in 0..L1 {
@@ -223,7 +252,7 @@ impl Network {
         side: Color,
         piece: ColoredPiece,
         mut square: Square,
-    ) -> &[i16; HL] {
+    ) -> &Aligned<i16, HL> {
         if (king_sq as u16 & 0b100) != 0 {
             square = square.flip_file();
         }
@@ -233,10 +262,16 @@ impl Network {
         &self.feature_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
     }
 
-    fn apply_update(&self, next: &mut [i16; HL], base: &[i16; HL], update: &Update, side: Color) {
+    fn apply_update(
+        &self,
+        next: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        update: &Update,
+        side: Color,
+    ) {
         match update.update_type {
             UpdateType::Move => {
-                Simd::fused_add_sub_base(
+                SimdOps::fused_add_sub_base(
                     next,
                     base,
                     self.feature_lookup(
@@ -255,7 +290,7 @@ impl Network {
             }
 
             UpdateType::Capture => {
-                Simd::fused_add_sub_sub_base(
+                SimdOps::fused_add_sub_sub_base(
                     next,
                     base,
                     self.feature_lookup(
@@ -279,7 +314,7 @@ impl Network {
                 );
             }
             UpdateType::Castle => {
-                Simd::fused_add_add_sub_sub_base(
+                SimdOps::fused_add_add_sub_sub_base(
                     next,
                     base,
                     self.feature_lookup(
@@ -330,9 +365,9 @@ struct Update {
 }
 
 #[repr(C, align(64))]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Accumulator {
-    vals: [[i16; HL]; 2],
+    vals: [Aligned<i16, HL>; 2],
     is_clean: [bool; 2],
     up: Update,
 }
@@ -360,7 +395,7 @@ impl FinnyEntry {
         square: Square,
         network: &Network,
     ) {
-        Simd::fused_add(
+        SimdOps::fused_add(
             &mut self.acc.vals[side as usize],
             network.feature_lookup(king_sq, side, piece, square),
         );
@@ -374,7 +409,7 @@ impl FinnyEntry {
         square: Square,
         network: &Network,
     ) {
-        Simd::fused_sub(
+        SimdOps::fused_sub(
             &mut self.acc.vals[side as usize],
             network.feature_lookup(king_sq, side, piece, square),
         );
@@ -389,7 +424,7 @@ impl FinnyEntry {
         square_to: Square,
         network: &Network,
     ) {
-        Simd::fused_add_sub(
+        SimdOps::fused_add_sub(
             &mut self.acc.vals[side as usize],
             network.feature_lookup(king_sq, side, piece, square_to),
             network.feature_lookup(king_sq, side, piece, square_from),
@@ -447,8 +482,8 @@ impl NNUE {
         for is_mirrored in 0..2 {
             for bucket in 0..KINGS {
                 let entry = &mut self.finny.entries[is_mirrored][bucket];
-                Simd::fused_copy(&mut entry.acc.vals[0], &self.network.feature_bias);
-                Simd::fused_copy(&mut entry.acc.vals[1], &self.network.feature_bias);
+                SimdOps::fused_copy(&mut entry.acc.vals[0], &self.network.feature_bias);
+                SimdOps::fused_copy(&mut entry.acc.vals[1], &self.network.feature_bias);
             }
         }
     }
@@ -586,7 +621,7 @@ impl NNUE {
             }
         }
 
-        Simd::fused_copy(
+        SimdOps::fused_copy(
             &mut self.side[self.head].vals[side as usize],
             &entry.acc.vals[side as usize],
         );
@@ -642,46 +677,51 @@ impl NNUE {
     pub fn evaluate(&mut self, board: &Board) -> i32 {
         self.catchup(board);
         assert!(self.side[self.head].is_clean[0] && self.side[self.head].is_clean[1]);
-
         // we know that self.side[self.head].vals accumualators are ready
-        let stm = board.side_to_move() as usize;
-        let zero = 0i16;
-        let qa = QA as i16;
-        let zerof = 0.0f32;
-        let onef = 1.0f32;
+
+        unsafe { self.default_evaluate(board) }
+    }
+
+    pub fn default_evaluate(&self, board: &Board) -> i32 {
+        let stm: usize = board.side_to_move() as usize;
+        const ZERO: i16 = 0i16;
+        const ONE: i16 = QA as i16;
+        const ZEROF: f32 = 0.0f32;
+        const ONEF: f32 = 1.0f32;
         const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
 
         let bucket = Network::get_output_bucket(board);
 
         //- ft cleanup
-        let mut ft = [0u8; HL];
+        let mut ft = Aligned::<u8, HL>::zeroed();
         for side in 0..=1 {
-            let acc = &mut self.side[self.head].vals[stm ^ side];
+            let acc = &self.side[self.head].vals[stm ^ side];
             for i in 0..HL / 2 {
-                let x0 = acc[i].clamp(zero, qa);
-                let x1 = acc[i + HL / 2].clamp(zero, qa);
-                ft[side * HL / 2 + i] = ((x0 as i32 * x1 as i32) >> FT_SHIFT) as u8;
+                let x0 = acc[i].clamp(ZERO, ONE);
+                let x1 = acc[i + HL / 2].clamp(ZERO, ONE);
+                ft.0[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
             }
         }
 
         //- ft -> l1
-        let mut l1 = [0f32; L1];
-        let mut l1_sum = [0i32; L1];
+        let mut l1 = Aligned::<f32, L1>::zeroed();
+        let mut l1_sum = Aligned::<i32, L1>::zeroed();
+        // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
         for i in 0..HL {
             for j in 0..L1 {
-                l1_sum[j] += ft[i] as i32 * self.network.l1_weights[bucket][i][j] as i32;
+                l1_sum[j] +=
+                    (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
             }
         }
 
         for i in 0..L1 {
-            let s =
-                (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i]).clamp(zerof, onef);
-            l1[i] = s;
+            l1[i] =
+                (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i]).clamp(ZEROF, ONEF);
         }
 
         //- l1 -> l2
-        let mut l2 = [0f32; L2];
-        let mut l2_sum = [0f32; L2];
+        let mut l2 = Aligned::<f32, L2>::zeroed();
+        let mut l2_sum = Aligned::<f32, L2>::zeroed();
         for i in 0..L1 {
             for j in 0..L2 {
                 l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
@@ -689,7 +729,7 @@ impl NNUE {
         }
 
         for i in 0..L2 {
-            l2[i] = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(zerof, onef);
+            l2[i] = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
         }
 
         //- l2 -> output
@@ -700,6 +740,99 @@ impl NNUE {
 
         (output * SCALE as f32) as i32
     }
+
+    // #[target_feature(enable = "avx2", enable = "fma")]
+    // pub unsafe fn avx2_evaluate(&mut self, board: &Board) -> i32 {
+    //     let bucket = Network::get_output_bucket(board);
+    //     let stm = board.side_to_move() as usize;
+
+    //     unsafe {
+    //         let vecf_zero = _mm256_setzero_ps();
+    //         let vecf_one = _mm256_set1_ps(1.0);
+    //         let veci_zero = _mm256_setzero_si256();
+    //         let veci_one = _mm256_set1_epi16(QA as i16);
+
+    //         const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
+    //         const ZEROF: f32 = 0.0f32;
+    //         const ONEF: f32 = 1.0f32;
+
+    //         //- ft cleanup
+    //         let mut ft = Aligned::<u8, HL>::zeroed();
+    //         for them in 0..=1 {
+    //             let acc = &self.side[self.head].vals[stm ^ them];
+    //             let gap = HL / 2;
+    //             let offset = them * gap;
+
+    //             // Process 32 x i16 inputs -> outputs 32 x u8 bytes per iteration
+    //             for i in (0..gap).step_by(32) {
+    //                 let x0_a = _mm256_load_si256(acc.as_ptr().add(i) as *const __m256i);
+    //                 let x1_a = _mm256_load_si256(acc.as_ptr().add(i + gap) as *const __m256i);
+
+    //                 let x0_b = _mm256_load_si256(acc.as_ptr().add(i + 16) as *const __m256i);
+    //                 let x1_b = _mm256_load_si256(acc.as_ptr().add(i + 16 + gap) as *const __m256i);
+
+    //                 // Clamp [0, QA]
+    //                 let c0 = _mm256_min_epi16(_mm256_max_epi16(x0_a, veci_zero), veci_one);
+    //                 let c1 = _mm256_min_epi16(_mm256_max_epi16(x1_a, veci_zero), veci_one);
+
+    //                 let d0 = _mm256_min_epi16(_mm256_max_epi16(x0_b, veci_zero), veci_one);
+    //                 let d1 = _mm256_min_epi16(_mm256_max_epi16(x1_b, veci_zero), veci_one);
+
+    //                 let prod_a =
+    //                     _mm256_mulhi_epi16(_mm256_slli_epi16(c0, 16 - FT_SHIFT as i32), c1);
+    //                 let prod_b =
+    //                     _mm256_mulhi_epi16(_mm256_slli_epi16(d0, 16 - FT_SHIFT as i32), d1);
+
+    //                 // Pack 32 x i16 (64 bytes) -> 32 x u8 (32 bytes)
+    //                 let packed = _mm256_packus_epi16(prod_a, prod_b);
+
+    //                 // AVX2 packus interleaves 128-bit lanes (0, 1, 2, 3 -> 0, 2, 1, 3).
+    //                 // Permute brings bytes back into linear order.
+    //                 let permuted = _mm256_permute4x64_epi64(packed, 0b11_01_10_00);
+
+    //                 // ft.0.as_mut_ptr() is *mut u8. .add(offset + i) advances by (offset + i) bytes.
+    //                 _mm256_store_si256(ft.0.as_mut_ptr().add(offset + i) as *mut __m256i, permuted);
+    //             }
+    //         }
+
+    //         //- ft -> l1
+    //         let mut l1 = Aligned::<f32, L1>::zeroed();
+    //         let mut l1_sum = Aligned::<i32, L1>::zeroed();
+    //         // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
+    //         for i in 0..HL {
+    //             for j in 0..L1 {
+    //                 l1_sum.0[j] +=
+    //                     (ft.0[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
+    //             }
+    //         }
+
+    //         for i in 0..L1 {
+    //             l1.0[i] = (l1_sum.0[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i])
+    //                 .clamp(ZEROF, ONEF);
+    //         }
+
+    //         //- l1 -> l2
+    //         let mut l2 = Aligned::<f32, L2>::zeroed();
+    //         let mut l2_sum = Aligned::<f32, L2>::zeroed();
+    //         for i in 0..L1 {
+    //             for j in 0..L2 {
+    //                 l2_sum.0[j] += l1.0[i] * self.network.l2_weights[bucket][i][j];
+    //             }
+    //         }
+
+    //         for i in 0..L2 {
+    //             l2.0[i] = (l2_sum.0[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
+    //         }
+
+    //         //- l2 -> output
+    //         let mut output = self.network.output_bias[bucket];
+    //         for i in 0..L2 {
+    //             output += l2.0[i] * self.network.output_weights[bucket][i];
+    //         }
+
+    //         (output * SCALE as f32) as i32
+    //     }
+    // }
 }
 
 #[cfg(test)]
