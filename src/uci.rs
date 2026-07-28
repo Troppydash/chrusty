@@ -82,6 +82,15 @@ impl AsyncEngine {
         }
     }
 
+    fn wait(&mut self) {
+        let handle = std::mem::take(&mut self.handle); // self.handle = None
+        assert!(self.handle.is_none());
+
+        if let Some(handle) = handle {
+            handle.join().unwrap();
+        }
+    }
+
     fn resize_table(&mut self, size_in_mbytes: usize) {
         self.table.resize(size_in_mbytes);
     }
@@ -222,6 +231,9 @@ pub fn start(args: Vec<String>) {
                 async_engine.stop();
                 async_engine.start_timer(&search_limits);
                 async_engine.search(startpos.clone(), moves.clone());
+            }
+            "wait" => {
+                async_engine.wait();
             }
             "stop" => {
                 async_engine.stop();
