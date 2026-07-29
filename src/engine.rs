@@ -653,9 +653,9 @@ impl Engine {
 
                 //- see pruning
                 let see_margin = if is_quiet {
-                    100 + 100 * lmr_depth * lmr_depth
+                    50 + 50 * lmr_depth * lmr_depth
                 } else {
-                    200 + 200 * lmr_depth
+                    100 + 100 * lmr_depth
                 };
                 if !see::see_ge(pos, next_move.inner, -see_margin) {
                     continue;
@@ -672,6 +672,7 @@ impl Engine {
                     movepick.skip_quiets();
                 }
 
+                //- futility pruning
                 if is_quiet
                     && quiets.len() > 1
                     && lmr_depth < 12
@@ -683,7 +684,18 @@ impl Engine {
                     continue;
                 }
 
-                // TODO: capture futility pruning
+                //- capture futility pruning
+                if !is_quiet
+                    && lmr_depth < 12
+                    && !in_check
+                    && (self.stack[ss].adjusted_static as i32
+                        + 200
+                        + 200 * lmr_depth
+                        + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])
+                        < (alpha as i32)
+                {
+                    continue;
+                }
             }
 
             // TODO: singular extension
