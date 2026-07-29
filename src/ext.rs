@@ -292,7 +292,7 @@ impl ExtBoard for Board {
     }
 
     fn has_non_pawns(&self, side: Color) -> bool {
-        self.occupied() == (self.colored_pieces(side, King) | self.colored_pieces(side, Pawn))
+        self.colors(side) != (self.colored_pieces(side, King) | self.colored_pieces(side, Pawn))
     }
 
     fn correct_hash(&self) -> u64 {

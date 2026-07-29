@@ -644,11 +644,12 @@ impl Engine {
             move_count += 1;
 
             //- low depth pruning
-            if !is_pv && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
-                let lmr_depth =
-                    (depth - self.heuristic.get_lmr(move_count, depth) - !improving as i8
-                        + (next_move.score / 10000) as i8)
-                        .clamp(1, depth + 1) as i32;
+            if !is_root && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
+                let lmr_depth = (depth as i32
+                    - self.heuristic.get_lmr(move_count, depth) as i32
+                    - !improving as i32
+                    + (next_move.score / 10000) as i32)
+                    .clamp(1, depth as i32 + 1);
 
                 //- see pruning
                 let see_margin = if is_quiet {
@@ -671,7 +672,18 @@ impl Engine {
                     movepick.skip_quiets();
                 }
 
-                // TODO: futility pruning
+                if is_quiet
+                    && quiets.len() > 1
+                    && lmr_depth < 12
+                    && !in_check
+                    && (self.stack[ss].adjusted_static as i32 + 150 + 150 * lmr_depth)
+                        < (alpha as i32)
+                {
+                    movepick.skip_quiets();
+                    continue;
+                }
+
+                // TODO: capture futility pruning
             }
 
             // TODO: singular extension
