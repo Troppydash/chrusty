@@ -8,3 +8,5 @@ config.json
 nets/
 
 *.data
+
+scripts/test.sh

@@ -37,7 +37,7 @@ pub const UNSEARCH_DEPTH: i8 = -10;
 pub const UNINIT_DEPTH: i8 = -20;
 
 pub const ALL_PIECES: usize = 6;
-pub const PIECE_VALUE: [i32; ALL_PIECES + 1] = [100, 300, 300, 500, 900, 20000, 0];
+pub const PIECE_VALUE: [i32; ALL_PIECES + 1] = [100, 300, 300, 500, 900, 1000, 0];
 
 pub const MVV_MULTIPLIER: i32 = 8;
 pub const BAD_QUIET_SCORE: i32 = -15000;

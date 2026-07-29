@@ -308,8 +308,11 @@ impl Movepick {
             score += MVV_MULTIPLIER
                 * PIECE_VALUE[self.pos.get_captured(self.moves.get(i).inner) as usize];
 
-            if self.moves.get(i).inner.promotion.is_some() {
-                score += 10000;
+            score -= PIECE_VALUE[self.pos.piece_on(self.moves.get(i).inner.from).unwrap() as usize];
+            score += 1000;
+
+            if let Some(promotion) = self.moves.get(i).inner.promotion {
+                score += 10000 + PIECE_VALUE[promotion as usize];
             }
 
             self.moves.get_mut(i).score = score;
