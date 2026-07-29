@@ -709,14 +709,14 @@ impl NNUE {
         // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
         for i in 0..HL {
             for j in 0..L1 {
-                l1_sum[j] +=
-                    (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
+                l1_sum[j] += (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
             }
         }
 
         for i in 0..L1 {
-            l1[i] =
+            let s =
                 (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i]).clamp(ZEROF, ONEF);
+            l1[i] = s * s;
         }
 
         //- l1 -> l2
@@ -729,7 +729,8 @@ impl NNUE {
         }
 
         for i in 0..L2 {
-            l2[i] = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
+            let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
+            l2[i] = s * s;
         }
 
         //- l2 -> output

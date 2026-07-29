@@ -31,6 +31,11 @@ enum Stage {
     ECapture,
     EQuietInit,
     EQuiet,
+
+    // probcut
+    ProbcutPv,
+    ProbcutCaptureInit,
+    ProbcutCapture,
 }
 
 struct DynamicScoredMoveList {
@@ -101,11 +106,13 @@ pub struct Movepick {
     ply: i8,
     // this is needed to prevent a refcell which is expensive
     heuristic: *const Heuristic,
+    probcut_margin: i32,
 
     // internal //
     moves: DynamicScoredMoveList,
     stage: Stage,
     skip_quiets: bool,
+
     // only used for [negamax] //
     captures_end: usize,
     bad_capture_len: usize,
@@ -119,6 +126,7 @@ impl Movepick {
             pv,
             ply,
             heuristic,
+            probcut_margin: 0,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             skip_quiets: false,
@@ -140,8 +148,31 @@ impl Movepick {
             pv,
             ply,
             heuristic,
+            probcut_margin: 0,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
+            skip_quiets: false,
+            captures_end: 0,
+            bad_capture_len: 0,
+            bad_quiet_len: 0,
+        }
+    }
+
+    pub fn new_probcut(
+        pos: Board,
+        pv: Move,
+        ply: i8,
+        probcut_margin: i32,
+        heuristic: &Heuristic,
+    ) -> Self {
+        Self {
+            pos,
+            pv,
+            ply,
+            heuristic,
+            probcut_margin,
+            moves: DynamicScoredMoveList::new(),
+            stage: Stage::ProbcutPv,
             skip_quiets: false,
             captures_end: 0,
             bad_capture_len: 0,
@@ -482,6 +513,28 @@ impl Movepick {
                 }
                 Stage::EQuiet => {
                     let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                    if !next_move.is_null() {
+                        return next_move;
+                    }
+
+                    return ScoredMove::NULL_MOVE;
+                }
+                Stage::ProbcutPv => {
+                    self.stage = Stage::ProbcutCaptureInit;
+                    if !self.pv.is_null() {
+                        return ScoredMove::from_move(self.pv);
+                    }
+                }
+                Stage::ProbcutCaptureInit => {
+                    self.generate_captures();
+                    self.score_captures();
+                    self.stage = Stage::ECapture;
+                }
+                Stage::ProbcutCapture => {
+                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
+                        let m = moves[i];
+                        see::see_ge(&self.pos, m.inner, self.probcut_margin)
+                    });
                     if !next_move.is_null() {
                         return next_move;
                     }

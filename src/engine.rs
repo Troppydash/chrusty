@@ -338,8 +338,6 @@ impl Engine {
                     continue;
                 }
 
-                // TODO: futility pruning
-
                 //- see pruning
                 if !see::see_ge(pos, next_move.inner, -50) {
                     continue;
@@ -623,6 +621,10 @@ impl Engine {
             if (is_pv || cut_node) && depth >= (2 + 2 * cut_node as i8) && tt_data.pv.is_null() {
                 depth -= 1;
             }
+
+            //- probcut
+            let probcut_beta = beta as i32 + 300;
+            // TODO: make
         }
 
         let mut move_count = 0;
@@ -706,7 +708,7 @@ impl Engine {
 
             //- late move reduction
             if depth >= 2 && move_count > 1 + 2 * is_root as usize {
-                let mut reduction = self.heuristic.get_lmr(move_count, depth);
+                let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32;
 
                 // check extension
                 if new_pos.in_check() {
@@ -715,7 +717,7 @@ impl Engine {
 
                 // cutnode reduction
                 if cut_node {
-                    reduction += 2 - self.stack[ss].tt_pv as i8;
+                    reduction += 2 - self.stack[ss].tt_pv as i32;
                 }
 
                 // capture reduction
@@ -724,13 +726,14 @@ impl Engine {
                 }
 
                 // pv extension
-                reduction -= self.stack[ss].tt_pv as i8 + is_pv as i8;
+                reduction -= self.stack[ss].tt_pv as i32 + is_pv as i32;
 
                 // history adjustment
-                // let scaled_history_score = next_move.score / if is_quiet { 9000 } else { 8000 };
-                // reduction -= scaled_history_score as i8;
+                let scaled_history_score = next_move.score / if is_quiet { 11000 } else { 10000 };
+                reduction -= scaled_history_score as i32;
 
-                let reduced_depth = (new_depth - reduction).clamp(1, new_depth + 1);
+                let reduced_depth =
+                    (new_depth as i32 - reduction).clamp(1, new_depth as i32 + 1) as i8;
 
                 //- pv search
                 score = -self.negamax(
