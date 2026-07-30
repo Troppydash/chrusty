@@ -11,7 +11,7 @@ use crate::{
     nnue::NNUE,
     param::*,
     rep::RepTable,
-    see,
+    see::{self, see_ge},
     timer::Timer,
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
@@ -281,7 +281,7 @@ impl Engine {
 
                 writer.set(
                     key,
-                    &Move::NULL_MOVE,
+                    Move::NULL_MOVE,
                     ply,
                     UNSEARCH_DEPTH,
                     FLAG_NONE,
@@ -391,7 +391,7 @@ impl Engine {
 
         writer.set(
             key,
-            &best_move,
+            best_move,
             ply,
             QDEPTH,
             flag,
@@ -547,7 +547,7 @@ impl Engine {
 
             writer.set(
                 key,
-                &Move::NULL_MOVE,
+                Move::NULL_MOVE,
                 ply,
                 UNSEARCH_DEPTH,
                 FLAG_NONE,
@@ -623,8 +623,81 @@ impl Engine {
             }
 
             //- probcut
-            let probcut_beta = beta as i32 + 300;
-            // TODO: make
+            let probcut_beta = (beta as i32 + 200).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
+            if !is_pv
+                && depth >= PROBCUT_DEPTH_MIN
+                && !is_decisive(beta)
+                &&
+                    // also ignore when tt score is < probcut beta
+                 !(tt_data.hit
+                    && is_valid(tt_data.score)
+                    && ((tt_data.score as i32) < probcut_beta)
+                    && (tt_data.depth >= depth - 3))
+            {
+                let margin =
+                    (probcut_beta - self.stack[ss].adjusted_static as i32).clamp(-2000, 2000);
+
+                let mut tt_move = Move::NULL_MOVE;
+                if !tt_data.pv.is_null() && see_ge(pos, tt_data.pv, margin) {
+                    tt_move = tt_data.pv;
+                }
+
+                let mut movepick =
+                    Movepick::new_probcut(pos.clone(), tt_move, ply, margin, &self.heuristic);
+                let probcut_depth = depth - PROBCUT_DEPTH_REDUCTION;
+                assert!(probcut_depth > 0);
+
+                let probcut_beta = probcut_beta as i16;
+                loop {
+                    let next_move = movepick.next_move();
+                    if next_move.is_null() {
+                        break;
+                    }
+
+                    let new_pos = self.make_move(pos, next_move.inner, ss);
+                    let mut score = -self.qsearch(
+                        &new_pos,
+                        -probcut_beta,
+                        -probcut_beta + 1,
+                        QDEPTH,
+                        ss + 1,
+                        false,
+                    );
+                    if score >= probcut_beta {
+                        score = -self.negamax(
+                            &new_pos,
+                            -probcut_beta,
+                            -probcut_beta + 1,
+                            probcut_depth,
+                            ss + 1,
+                            false,
+                            !cut_node,
+                        );
+                    }
+                    self.unmake_move(pos, ss);
+
+                    if self.timer.read().unwrap().stopped() {
+                        return 0;
+                    }
+
+                    if score >= probcut_beta {
+                        writer.set(
+                            key,
+                            next_move.inner,
+                            ply,
+                            probcut_depth,
+                            FLAG_BETA,
+                            score,
+                            unadjusted_static,
+                            self.stack[ss].tt_pv,
+                            tt_age,
+                        );
+                        return (score as i32 - probcut_beta as i32 + beta as i32)
+                            .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32)
+                            as i16;
+                    }
+                }
+            }
         }
 
         let mut move_count = 0;
@@ -868,7 +941,7 @@ impl Engine {
         //- tt update
         writer.set(
             key,
-            &best_move,
+            best_move,
             ply,
             depth,
             flag,

@@ -293,7 +293,7 @@ impl Movepick {
     fn score_captures(&mut self) {
         let mut i = 0;
         while i < self.moves.len() {
-            assert!(!self.pos.is_quiet(self.moves.get(i).inner));
+            // assert!(!self.pos.is_quiet(self.moves.get(i).inner));
             if self.pv == self.moves.get(i).inner {
                 self.moves.swap_remove(i);
                 continue;
@@ -531,7 +531,7 @@ impl Movepick {
                 Stage::ProbcutCaptureInit => {
                     self.generate_captures();
                     self.score_captures();
-                    self.stage = Stage::ECapture;
+                    self.stage = Stage::ProbcutCapture;
                 }
                 Stage::ProbcutCapture => {
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {

@@ -43,6 +43,9 @@ pub const MVV_MULTIPLIER: i32 = 8;
 pub const BAD_QUIET_SCORE: i32 = -15000;
 pub const GOOD_CAPTURE_SEE_DIV: i32 = 25;
 
+pub const PROBCUT_DEPTH_MIN : i8 = 5;
+pub const PROBCUT_DEPTH_REDUCTION : i8 = 4;
+
 pub const LMR_MOVE_COUNT: usize = 96;
 pub const LMR_DEPTH: usize = MAX_DEPTH as usize;
 

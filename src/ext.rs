@@ -138,6 +138,8 @@ pub trait ExtBoard {
 
     fn color_piece_on(&self, square: Square) -> Option<ColoredPiece>;
     fn castle_to(&self, m: Move) -> (Square, Square);
+
+    fn opp_pinned(&self) -> BitBoard;
 }
 
 impl ExtBoard for Board {
@@ -349,6 +351,26 @@ impl ExtBoard for Board {
                 Square::new(File::D, m.from.rank()),
             )
         }
+    }
+
+    fn opp_pinned(&self) -> BitBoard {
+        let mut pinned = BitBoard::EMPTY;
+        let color = !self.side_to_move();
+        let our_king = self.king(color);
+        let their_attackers = self.colors(!color)
+            & ((cozy_chess::get_bishop_rays(our_king)
+                & (self.pieces(Piece::Bishop) | self.pieces(Piece::Queen)))
+                | (cozy_chess::get_rook_rays(our_king)
+                    & (self.pieces(Piece::Rook) | self.pieces(Piece::Queen))));
+
+        for square in their_attackers {
+            let between = cozy_chess::get_between_rays(square, our_king) & self.occupied();
+            if between.len() == 1 {
+                pinned |= between;
+            }
+        }
+
+        pinned
     }
 }
 

@@ -132,7 +132,7 @@ impl Entry {
     pub fn set(
         &mut self,
         key: u64,
-        pv: &Move,
+        pv: Move,
         ply: i8,
         depth: i8,
         flag: u8,
