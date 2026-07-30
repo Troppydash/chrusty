@@ -67,6 +67,7 @@ struct SearchStack {
     pv_list: PvList,
     adjusted_static: i16,
     tt_pv: bool,
+    excluded: Move,
 }
 
 impl SearchStack {
@@ -77,6 +78,7 @@ impl SearchStack {
             pv_list: PvList::new(),
             adjusted_static: VALUE_NONE,
             tt_pv: false,
+            excluded: Move::NULL_MOVE,
         }
     }
 
@@ -87,6 +89,7 @@ impl SearchStack {
             pv_list: PvList::new(),
             adjusted_static: VALUE_NONE,
             tt_pv: false,
+            excluded: Move::NULL_MOVE,
         }
     }
 }
@@ -489,14 +492,22 @@ impl Engine {
         let mut tt_data = reader.get(key, ply, depth, alpha, beta);
 
         //- tt parsing
-        self.stack[ss].tt_pv = is_pv || (tt_data.hit && tt_data.is_pv);
+        let excluded = self.stack[ss].excluded;
+        let has_excluded = !excluded.is_null();
+
+        self.stack[ss].tt_pv = if has_excluded {
+            self.stack[ss].tt_pv
+        } else {
+            is_pv || (tt_data.hit && tt_data.is_pv)
+        };
 
         // legality
-        tt_data.pv = if tt_data.hit && !tt_data.pv.is_null() && pos.is_legal(tt_data.pv) {
-            tt_data.pv
-        } else {
-            Move::NULL_MOVE
-        };
+        tt_data.pv =
+            if !has_excluded && tt_data.hit && !tt_data.pv.is_null() && pos.is_legal(tt_data.pv) {
+                tt_data.pv
+            } else {
+                Move::NULL_MOVE
+            };
         let is_tt_capture = if tt_data.pv.is_null() {
             false
         } else {
@@ -510,6 +521,7 @@ impl Engine {
 
         //- tt early return
         if !is_pv
+            && !has_excluded
             && tt_data.can_use
             && (cut_node == (tt_data.score >= beta))
             && tt_data.depth >= depth + (tt_data.score >= beta) as i8
@@ -524,10 +536,15 @@ impl Engine {
         let in_check = pos.in_check();
         if in_check {
             self.stack[ss].adjusted_static = VALUE_NONE;
+        } else if has_excluded {
+            unadjusted_static = self.stack[ss].adjusted_static;
+            self.nnue.catchup(pos);
         } else if tt_data.hit {
             unadjusted_static = tt_data.static_score;
             if !is_valid(unadjusted_static) {
                 unadjusted_static = self.evaluate(pos);
+            } else if is_pv {
+                self.nnue.catchup(pos);
             }
             self.stack[ss].adjusted_static = unadjusted_static;
 
@@ -588,6 +605,7 @@ impl Engine {
             //- null move pruning
             let has_non_pawns = pos.has_non_pawns(pos.side_to_move());
             if cut_node
+                && !has_excluded
                 && has_non_pawns
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(self.stack[ss].adjusted_static)
@@ -655,6 +673,10 @@ impl Engine {
                     let next_move = movepick.next_move();
                     if next_move.is_null() {
                         break;
+                    }
+
+                    if next_move.inner == excluded {
+                        continue;
                     }
 
                     move_count += 1;
@@ -730,6 +752,10 @@ impl Engine {
                 break;
             }
 
+            if next_move.inner == excluded {
+                continue;
+            }
+
             let is_quiet = pos.is_quiet(next_move.inner);
             move_count += 1;
 
@@ -788,10 +814,58 @@ impl Engine {
                 }
             }
 
-            // TODO: singular extension
+            //- singular extension
+            let mut extension = 0;
+            if !is_root
+                && !has_excluded
+                && tt_data.pv == next_move.inner
+                && is_valid(tt_data.score)
+                && !is_decisive(tt_data.score)
+                && (tt_data.flag == FLAG_EXACT || tt_data.flag == FLAG_BETA)
+                && tt_data.depth >= depth - 3
+                && depth >= 5
+            {
+                let to_beat = tt_data.score - depth as i16;
+                let reduced_depth = (depth - 1) / 2;
+                self.stack[ss].excluded = tt_data.pv;
+                let next_best_score = self.negamax(
+                    pos,
+                    to_beat - 1,
+                    to_beat,
+                    reduced_depth,
+                    ss,
+                    false,
+                    cut_node,
+                );
+                self.stack[ss].excluded = Move::NULL_MOVE;
+
+                if self.timer.read().unwrap().stopped() {
+                    return 0;
+                }
+
+                if next_best_score < to_beat {
+                    // extend
+                    if !is_pv && ((next_best_score as i32) < (to_beat as i32 - 30)) {
+                        if is_quiet && ((next_best_score as i32) < (to_beat as i32 - 300)) {
+                            extension = 3;
+                        } else {
+                            extension = 2;
+                        }
+                    } else {
+                        extension = 1;
+                    }
+                } else if to_beat >= beta {
+                    // multi cut
+                    return to_beat;
+                } else if tt_data.score >= beta {
+                    extension = -3 + self.stack[ss].tt_pv as i8;
+                } else if cut_node {
+                    extension = -2;
+                }
+            }
 
             let new_pos = self.make_move(pos, next_move.inner, ss);
-            let new_depth = depth - 1;
+            let new_depth = (depth + extension - 1).max(0);
             let mut score = 0;
 
             //- late move reduction
@@ -930,7 +1004,9 @@ impl Engine {
         }
 
         if move_count == 0 {
-            if in_check {
+            if has_excluded {
+                best_score = alpha;
+            } else if in_check {
                 best_score = lose_in(ply);
             } else {
                 best_score = VALUE_DRAW;
@@ -945,26 +1021,28 @@ impl Engine {
             self.stack[ss].tt_pv = self.stack[ss].tt_pv || self.stack[ss - 1].tt_pv;
         }
 
-        let flag = if best_score >= beta {
-            FLAG_BETA
-        } else if is_pv && !best_move.is_null() {
-            FLAG_EXACT
-        } else {
-            FLAG_ALPHA
-        };
+        if !has_excluded {
+            let flag = if best_score >= beta {
+                FLAG_BETA
+            } else if is_pv && !best_move.is_null() {
+                FLAG_EXACT
+            } else {
+                FLAG_ALPHA
+            };
 
-        //- tt update
-        writer.set(
-            key,
-            best_move,
-            ply,
-            depth,
-            flag,
-            best_score,
-            unadjusted_static,
-            self.stack[ss].tt_pv,
-            tt_age,
-        );
+            //- tt update
+            writer.set(
+                key,
+                best_move,
+                ply,
+                depth,
+                flag,
+                best_score,
+                unadjusted_static,
+                self.stack[ss].tt_pv,
+                tt_age,
+            );
+        }
 
         best_score
     }
