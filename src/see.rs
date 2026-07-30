@@ -10,7 +10,7 @@ use crate::{
 };
 
 fn to_bool(result: i32) -> bool {
-    assert!(result == 0 || result == 1);
+    debug_assert!(result == 0 || result == 1);
     return result == 1;
 }
 

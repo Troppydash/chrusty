@@ -177,7 +177,7 @@ impl Entry {
 }
 
 #[derive(Clone, Copy)]
-#[repr(align(32))]
+#[repr(C, align(32))]
 pub struct Bucket {
     values: [Entry; 3],
 }

@@ -156,7 +156,7 @@ impl ExtBoard for Board {
         match self.piece_on(m.to) {
             Some(piece) => piece,
             None => {
-                assert!(m.promotion == Some(Queen) || self.is_ep(m));
+                debug_assert!(m.promotion == Some(Queen) || self.is_ep(m));
                 Piece::Pawn
             }
         }
@@ -343,7 +343,7 @@ impl ExtBoard for Board {
 
     /// (king, rook)
     fn castle_to(&self, m: Move) -> (Square, Square) {
-        assert!(self.move_type(m) == MoveType::CASTLE);
+        debug_assert!(self.is_castle(m));
 
         if m.to > m.from {
             // short

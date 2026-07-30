@@ -86,7 +86,7 @@ impl Heuristic {
     }
 
     pub fn get_capture_history(&self, pos: &Board, m: Move) -> &MainHistory {
-        assert!(!pos.is_quiet(m));
+        debug_assert!(!pos.is_quiet(m));
 
         &self.capture_history
             [pos.piece_on(m.from).unwrap() as usize + 6 * pos.side_to_move() as usize]
@@ -94,7 +94,7 @@ impl Heuristic {
     }
 
     pub fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
-        assert!(!pos.is_quiet(m));
+        debug_assert!(!pos.is_quiet(m));
 
         &mut self.capture_history
             [pos.piece_on(m.from).unwrap() as usize + 6 * pos.side_to_move() as usize]

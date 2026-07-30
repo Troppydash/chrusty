@@ -649,11 +649,15 @@ impl Engine {
                 assert!(probcut_depth > 0);
 
                 let probcut_beta = probcut_beta as i16;
+                let mut move_count = 0;
+                let mut best_score = -VALUE_INF;
                 loop {
                     let next_move = movepick.next_move();
                     if next_move.is_null() {
                         break;
                     }
+
+                    move_count += 1;
 
                     let new_pos = self.make_move(pos, next_move.inner, ss);
                     let mut score = -self.qsearch(
@@ -697,6 +701,16 @@ impl Engine {
                             .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32)
                             as i16;
                     }
+
+                    best_score = best_score.max(score);
+                }
+
+                // fut prune
+                if move_count >= 3
+                    && !is_decisive(alpha)
+                    && (best_score as i32) < (alpha as i32 - 200 * 200 * depth as i32)
+                {
+                    return best_score;
                 }
             }
         }

@@ -2,7 +2,7 @@ const REP_SIZE: usize = 1 << 15;
 const UNSET: u64 = 1;
 
 #[derive(Clone, Copy)]
-#[repr(align(32))]
+#[repr(C, align(32))]
 struct RepEntry {
     keys: [u64; 3],
     counts: [bool; 3],
