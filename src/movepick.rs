@@ -107,6 +107,7 @@ pub struct Movepick {
     // this is needed to prevent a refcell which is expensive
     heuristic: *const Heuristic,
     probcut_margin: i32,
+    prev_move: Move,
 
     // internal //
     moves: DynamicScoredMoveList,
@@ -120,13 +121,20 @@ pub struct Movepick {
 }
 
 impl Movepick {
-    pub fn new_negamax(pos: Board, pv: Move, ply: i8, heuristic: &Heuristic) -> Self {
+    pub fn new_negamax(
+        pos: Board,
+        pv: Move,
+        ply: i8,
+        prev_move: Move,
+        heuristic: &Heuristic,
+    ) -> Self {
         Self {
             pos,
             pv,
             ply,
             heuristic,
             probcut_margin: 0,
+            prev_move,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             skip_quiets: false,
@@ -140,6 +148,7 @@ impl Movepick {
         pos: Board,
         pv: Move,
         ply: i8,
+        prev_move: Move,
         heuristic: &Heuristic,
         in_check: bool,
     ) -> Self {
@@ -149,6 +158,7 @@ impl Movepick {
             ply,
             heuristic,
             probcut_margin: 0,
+            prev_move,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             skip_quiets: false,
@@ -171,6 +181,7 @@ impl Movepick {
             ply,
             heuristic,
             probcut_margin,
+            prev_move: Move::NULL_MOVE,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
             skip_quiets: false,
@@ -321,6 +332,46 @@ impl Movepick {
         }
     }
 
+    fn score_quiets(&mut self) {
+        let counter = self.get_heuristic().get_counter(&self.pos, self.prev_move);
+
+        let mut i = self.moves.ptr;
+        while i < self.moves.len() {
+            debug_assert!(self.pos.is_quiet(self.moves.get(i).inner));
+
+            if self.pv == self.moves.get(i).inner {
+                self.moves.swap_remove(i);
+                continue;
+            }
+
+            let heuristic = self.get_heuristic();
+
+            let killers = heuristic.get_killers(self.ply);
+            if self.moves.get(i).inner == killers[0] {
+                self.moves.get_mut(i).score = i32::MAX;
+                i += 1;
+                continue;
+            }
+            if self.moves.get(i).inner == killers[1] {
+                self.moves.get_mut(i).score = i32::MAX - 1;
+                i += 1;
+                continue;
+            }
+
+            let mut score = heuristic
+                .get_main_history(&self.pos, self.moves.get(i).inner)
+                .get() as i32;
+
+            if self.moves.get(i).inner == counter {
+                score += 10000;
+            }
+
+            self.moves.get_mut(i).score = score;
+
+            i += 1;
+        }
+    }
+
     pub fn skip_quiets(&mut self) {
         self.skip_quiets = true;
     }
@@ -362,38 +413,7 @@ impl Movepick {
                 Stage::QuietInit => {
                     if !self.skip_quiets {
                         self.generate_quiets();
-
-                        let mut i = self.moves.ptr;
-                        while i < self.moves.len() {
-                            debug_assert!(self.pos.is_quiet(self.moves.get(i).inner));
-
-                            if self.pv == self.moves.get(i).inner {
-                                self.moves.swap_remove(i);
-                                continue;
-                            }
-
-                            let heuristic = self.get_heuristic();
-
-                            let killers = heuristic.get_killers(self.ply);
-                            if self.moves.get(i).inner == killers[0] {
-                                self.moves.get_mut(i).score = i32::MAX;
-                                i += 1;
-                                continue;
-                            }
-                            if self.moves.get(i).inner == killers[1] {
-                                self.moves.get_mut(i).score = i32::MAX - 1;
-                                i += 1;
-                                continue;
-                            }
-
-                            let score = heuristic
-                                .get_main_history(&self.pos, self.moves.get(i).inner)
-                                .get() as i32;
-
-                            self.moves.get_mut(i).score = score;
-
-                            i += 1;
-                        }
+                        self.score_quiets();
                     }
 
                     self.stage = Stage::GoodQuiet;
@@ -480,37 +500,7 @@ impl Movepick {
                 }
                 Stage::EQuietInit => {
                     self.generate_quiets();
-
-                    let mut i = self.moves.ptr;
-                    while i < self.moves.len() {
-                        debug_assert!(self.pos.is_quiet(self.moves.get(i).inner));
-
-                        if self.pv == self.moves.get(i).inner {
-                            self.moves.swap_remove(i);
-                            continue;
-                        }
-
-                        let heuristic = self.get_heuristic();
-
-                        let killers = heuristic.get_killers(self.ply);
-                        if self.moves.get(i).inner == killers[0] {
-                            self.moves.get_mut(i).score = i32::MAX;
-                            i += 1;
-                            continue;
-                        }
-                        if self.moves.get(i).inner == killers[1] {
-                            self.moves.get_mut(i).score = i32::MAX - 1;
-                            i += 1;
-                            continue;
-                        }
-
-                        let score = heuristic
-                            .get_main_history(&self.pos, self.moves.get(i).inner)
-                            .get() as i32;
-                        self.moves.get_mut(i).score = score;
-
-                        i += 1;
-                    }
+                    self.score_quiets();
 
                     self.stage = Stage::EQuiet;
                 }
@@ -565,8 +555,15 @@ mod tests {
 
         let heuristic = Heuristic::new();
         for mut mp in vec![
-            Movepick::new_negamax(pos.clone(), Move::NULL_MOVE, 0, &heuristic),
-            Movepick::new_qsearch(pos.clone(), Move::NULL_MOVE, 0, &heuristic, true),
+            Movepick::new_negamax(pos.clone(), Move::NULL_MOVE, 0, Move::NULL_MOVE, &heuristic),
+            Movepick::new_qsearch(
+                pos.clone(),
+                Move::NULL_MOVE,
+                0,
+                Move::NULL_MOVE,
+                &heuristic,
+                true,
+            ),
         ] {
             let mut mp_moves = vec![];
             loop {

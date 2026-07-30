@@ -314,8 +314,14 @@ impl Engine {
         //- negamax
         let mut move_count = 0;
         let mut best_move = Move::NULL_MOVE;
-        let mut movepick =
-            Movepick::new_qsearch(pos.clone(), tt_data.pv, ply, &self.heuristic, in_check);
+        let mut movepick = Movepick::new_qsearch(
+            pos.clone(),
+            tt_data.pv,
+            ply,
+            self.stack[ss - 1].m,
+            &self.heuristic,
+            in_check,
+        );
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -745,7 +751,13 @@ impl Engine {
         let mut captures = MoveList::new();
 
         //- negamax alphabeta search
-        let mut movepick = Movepick::new_negamax(pos.clone(), tt_data.pv, ply, &self.heuristic);
+        let mut movepick = Movepick::new_negamax(
+            pos.clone(),
+            tt_data.pv,
+            ply,
+            self.stack[ss - 1].m,
+            &self.heuristic,
+        );
         loop {
             let next_move = movepick.next_move();
             if next_move.is_null() {
@@ -1012,8 +1024,15 @@ impl Engine {
                 best_score = VALUE_DRAW;
             }
         } else if best_score >= beta {
-            self.heuristic
-                .update_history(pos, depth, ply, best_move, &captures, &quiets);
+            self.heuristic.update_history(
+                pos,
+                depth,
+                ply,
+                best_move,
+                self.stack[ss - 1].m,
+                &captures,
+                &quiets,
+            );
         }
 
         //- tt_pv propagation

@@ -38,6 +38,8 @@ pub struct Heuristic {
     capture_history: Box<[[[CaptureHistory; 6]; 64]; 12]>,
     // killer moves [ply][n]
     killer_moves: Box<[[Move; NUM_KILLERS]; MAX_DEPTH as usize]>,
+    // countermove [colored_piece][to]
+    counter: Box<[[Move; 64]; 12]>,
 }
 
 impl Heuristic {
@@ -57,12 +59,14 @@ impl Heuristic {
         let main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
         let capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
         let killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
+        let counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
 
         Self {
             lmr,
             main_history,
             capture_history,
             killer_moves,
+            counter,
         }
     }
 
@@ -70,6 +74,7 @@ impl Heuristic {
         self.main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
         self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
         self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
+        self.counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -88,17 +93,15 @@ impl Heuristic {
     pub fn get_capture_history(&self, pos: &Board, m: Move) -> &MainHistory {
         debug_assert!(!pos.is_quiet(m));
 
-        &self.capture_history
-            [pos.piece_on(m.from).unwrap() as usize + 6 * pos.side_to_move() as usize]
-            [m.to as usize][pos.get_captured(m) as usize]
+        &self.capture_history[pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
+            [pos.get_captured(m) as usize]
     }
 
     pub fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
         debug_assert!(!pos.is_quiet(m));
 
-        &mut self.capture_history
-            [pos.piece_on(m.from).unwrap() as usize + 6 * pos.side_to_move() as usize]
-            [m.to as usize][pos.get_captured(m) as usize]
+        &mut self.capture_history[pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
+            [pos.get_captured(m) as usize]
     }
 
     pub fn get_killers(&self, ply: i8) -> &[Move; NUM_KILLERS] {
@@ -109,12 +112,31 @@ impl Heuristic {
         &mut self.killer_moves[ply as usize]
     }
 
+    pub fn get_counter(&self, pos: &Board, prev_move: Move) -> Move {
+        if let Some(colored_piece) = pos.color_piece_on(prev_move.to) {
+            // [to] because previous move
+            self.counter[colored_piece.index()][prev_move.to as usize]
+        } else {
+            Move::NULL_MOVE
+        }
+    }
+
+    pub fn get_counter_mut(&mut self, pos: &Board, prev_move: Move) -> Option<&mut Move> {
+        if let Some(colored_piece) = pos.color_piece_on(prev_move.to) {
+            // [to] because previous move
+            Some(&mut self.counter[colored_piece.index()][prev_move.to as usize])
+        } else {
+            None
+        }
+    }
+
     pub fn update_history(
         &mut self,
         pos: &Board,
         depth: i8,
         ply: i8,
         best_move: Move,
+        prev_move: Move,
         captures: &MoveList,
         quiets: &MoveList,
     ) {
@@ -136,6 +158,10 @@ impl Heuristic {
                 killers[1] = killers[0];
             }
             killers[0] = best_move;
+
+            if let Some(counter) = self.get_counter_mut(pos, prev_move) {
+                *counter = best_move;
+            }
         } else {
             self.get_capture_history_mut(pos, best_move).add(bonus);
         }

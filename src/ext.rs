@@ -25,6 +25,10 @@ impl ColoredPiece {
     pub fn new(color: Color, piece: Piece) -> Self {
         Self { color, piece }
     }
+
+    pub fn index(&self) -> usize {
+        self.color as usize * 6 + self.piece as usize
+    }
 }
 
 pub trait BitBoardExt {
