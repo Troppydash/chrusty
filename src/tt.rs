@@ -1,4 +1,6 @@
-use std::ptr::null_mut;
+use std::{
+    alloc::{Layout, alloc_zeroed, dealloc}, arch::x86_64::{_MM_HINT_T0, _MM_HINT_T1, _mm_prefetch}, ptr::{NonNull, null_mut},
+};
 
 use cozy_chess::Move;
 
@@ -219,24 +221,53 @@ impl Bucket {
     }
 }
 
+const LARGE_PAGE: usize = 64;
+
 pub struct Table {
-    buckets: Box<[Bucket]>,
+    buckets: NonNull<Bucket>,
+    size: usize,
     age: u8,
 }
 
 impl Table {
+    fn get_layout(size: usize) -> Layout {
+        Layout::array::<Bucket>(size)
+            .unwrap()
+            .align_to(LARGE_PAGE)
+            .unwrap()
+    }
+
     pub fn new(size_in_mbytes: usize) -> Self {
-        let size = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
-        Self {
-            buckets: vec![Bucket::new(); size].into_boxed_slice(),
+        let size = (size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>()).max(1);
+        let layout = Self::get_layout(size);
+        let buckets = unsafe {
+            let ptr = alloc_zeroed(layout) as *mut Bucket;
+            NonNull::new(ptr).expect(&format!("Failed to allocate tt with {}M", size_in_mbytes))
+        };
+        let mut table = Self {
+            buckets,
+            size,
             age: 0,
+        };
+        table.clear();
+        table
+    }
+
+    fn index(&mut self, i: usize) -> &mut Bucket {
+        unsafe { &mut *self.buckets.as_ptr().add(i) }
+    }
+
+    fn dealloc(&mut self) {
+        let layout = Self::get_layout(self.size);
+        unsafe {
+            dealloc(self.buckets.as_ptr() as *mut u8, layout);
         }
     }
 
     pub fn clear(&mut self) {
         self.age = 0;
-        for bucket in self.buckets.iter_mut() {
-            bucket.clear();
+        for i in 0..self.size {
+            self.index(i).clear();
         }
     }
 
@@ -245,8 +276,16 @@ impl Table {
     }
 
     pub fn get(&mut self, key: u64) -> (Entry, &mut Entry) {
-        let index = ((key as u128 * self.buckets.len() as u128) >> 64) as usize;
-        self.buckets[index].get(key, self.age)
+        let index = ((key as u128 * self.size as u128) >> 64) as usize;
+        let age = self.age;
+        self.index(index).get(key, age)
+    }
+
+    pub fn prefetch(&self, key: u64) {
+        let index = ((key as u128 * self.size as u128) >> 64) as usize;
+        unsafe {
+            _mm_prefetch(self.buckets.as_ptr().add(index) as *const i8, _MM_HINT_T1);
+        }
     }
 
     pub fn get_age(&self) -> u8 {
@@ -254,9 +293,20 @@ impl Table {
     }
 
     pub fn resize(&mut self, size_in_mbytes: usize) {
-        let size = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
-        self.buckets = vec![Bucket::new(); size].into_boxed_slice();
+        self.dealloc();
+        self.size = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
+        let layout = Self::get_layout(self.size);
+        self.buckets = unsafe {
+            let ptr = alloc_zeroed(layout) as *mut Bucket;
+            NonNull::new(ptr).expect(&format!("Failed to allocate tt with {}M", size_in_mbytes))
+        };
         self.age = 0;
+    }
+}
+
+impl Drop for Table {
+    fn drop(&mut self) {
+        self.dealloc();
     }
 }
 

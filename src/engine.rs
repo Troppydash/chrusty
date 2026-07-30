@@ -621,6 +621,7 @@ impl Engine {
                 let reduction = (6 + depth as i32 / 4) as i8;
                 let reduced_depth = i8::max(0, depth - reduction);
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, ss);
+                self.table.get().prefetch(new_pos.correct_hash());
                 let score = -self.negamax(
                     &new_pos,
                     -beta,
@@ -688,6 +689,7 @@ impl Engine {
                     move_count += 1;
 
                     let new_pos = self.make_move(pos, next_move.inner, ss);
+                    self.table.get().prefetch(new_pos.correct_hash());
                     let mut score = -self.qsearch(
                         &new_pos,
                         -probcut_beta,
@@ -877,6 +879,7 @@ impl Engine {
             }
 
             let new_pos = self.make_move(pos, next_move.inner, ss);
+            self.table.get().prefetch(new_pos.correct_hash());
             let new_depth = (depth + extension - 1).max(0);
             let mut score = 0;
 
