@@ -354,6 +354,7 @@ impl Engine {
             }
 
             let new_pos = self.make_move(pos, next_move.inner, ss);
+            self.table.get().prefetch(new_pos.correct_hash());
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth, ss + 1, is_pv);
             self.unmake_move(pos, ss);
 
