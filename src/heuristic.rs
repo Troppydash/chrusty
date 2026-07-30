@@ -15,9 +15,9 @@ impl<const LIMIT: i16> History<LIMIT> {
         Self { value: 0 }
     }
 
-    fn add(&mut self, value: i16) {
-        let clamped = value.clamp(-LIMIT, LIMIT) as i32;
-        self.value = (value as i32 + clamped - value as i32 * clamped.abs() / LIMIT as i32) as i16;
+    fn add(&mut self, bonus: i16) {
+        let clamped = bonus.clamp(-LIMIT, LIMIT) as i32;
+        self.value = (self.value as i32 + clamped - self.value as i32 * clamped.abs() / LIMIT as i32) as i16;
     }
 
     pub fn get(&self) -> i16 {
@@ -28,6 +28,7 @@ impl<const LIMIT: i16> History<LIMIT> {
 type MainHistory = History<20000>;
 type CaptureHistory = History<20000>;
 pub const NUM_KILLERS: usize = 2;
+pub const LOW_PLY: usize = 6;
 
 pub struct Heuristic {
     // lmr[move_count][depth]
@@ -40,6 +41,8 @@ pub struct Heuristic {
     killer_moves: Box<[[Move; NUM_KILLERS]; MAX_DEPTH as usize]>,
     // countermove [colored_piece][to]
     counter: Box<[[Move; 64]; 12]>,
+    // lowply heuristic [ply][side][from][to]
+    low_ply: Box<[[[[MainHistory; 64]; 64]; 2]; LOW_PLY]>,
 }
 
 impl Heuristic {
@@ -48,7 +51,7 @@ impl Heuristic {
         for move_count in 0..LMR_MOVE_COUNT {
             for depth in 0..LMR_DEPTH {
                 if move_count <= 1 || depth <= 1 {
-                    lmr[move_count][depth] = 0;
+                    lmr[move_count][depth] = 1;
                 } else {
                     lmr[move_count][depth] =
                         (0.99 + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14) as i8;
@@ -60,6 +63,7 @@ impl Heuristic {
         let capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
         let killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
         let counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
+        let low_ply = Box::new([[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]);
 
         Self {
             lmr,
@@ -67,6 +71,7 @@ impl Heuristic {
             capture_history,
             killer_moves,
             counter,
+            low_ply,
         }
     }
 
@@ -75,6 +80,7 @@ impl Heuristic {
         self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
         self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
         self.counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
+        self.low_ply = Box::new([[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]);
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -86,7 +92,7 @@ impl Heuristic {
         &self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
-    pub fn get_main_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
+    fn get_main_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
         &mut self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
@@ -97,7 +103,7 @@ impl Heuristic {
             [pos.get_captured(m) as usize]
     }
 
-    pub fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
+    fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
         debug_assert!(!pos.is_quiet(m));
 
         &mut self.capture_history[pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
@@ -108,7 +114,7 @@ impl Heuristic {
         &self.killer_moves[ply as usize]
     }
 
-    pub fn get_killers_mut(&mut self, ply: i8) -> &mut [Move; NUM_KILLERS] {
+    fn get_killers_mut(&mut self, ply: i8) -> &mut [Move; NUM_KILLERS] {
         &mut self.killer_moves[ply as usize]
     }
 
@@ -119,6 +125,14 @@ impl Heuristic {
         } else {
             Move::NULL_MOVE
         }
+    }
+
+    pub fn get_low_ply(&self, pos: &Board, m: Move, ply: i8) -> &MainHistory {
+        &self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
+    }
+
+    fn get_low_ply_mut(&mut self, pos: &Board, m: Move, ply: i8) -> &mut MainHistory {
+        &mut self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
     pub fn get_counter_mut(&mut self, pos: &Board, prev_move: Move) -> Option<&mut Move> {
@@ -142,15 +156,22 @@ impl Heuristic {
     ) {
         assert!(!best_move.is_null(), "best move null in history update");
 
-        let bonus = i32::min(180 * depth as i32 - 100, 1000) as i16;
-        let malus = i32::min(180 * depth as i32 - 100, 1000) as i16;
+        let bonus = i32::min(180 * depth as i32 + 15, 2000) as i16;
+        let malus = i32::min(190 * depth as i32 - 30, 2000) as i16;
 
         if pos.is_quiet(best_move) {
             self.get_main_history_mut(pos, best_move).add(bonus);
+            if ply < LOW_PLY as i8 {
+                self.get_low_ply_mut(pos, best_move, ply).add(bonus);
+            }
 
             for m in quiets.iter() {
                 assert!(!m.is_null());
                 self.get_main_history_mut(pos, *m).add(-malus);
+
+                if ply < LOW_PLY as i8 {
+                    self.get_low_ply_mut(pos, *m, ply).add(-malus);
+                }
             }
 
             let killers = self.get_killers_mut(ply);

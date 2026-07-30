@@ -6,7 +6,7 @@ use cozy_chess::{
 
 use crate::{
     ext::{ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
-    heuristic::Heuristic,
+    heuristic::{Heuristic, LOW_PLY},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, PIECE_VALUE},
     see,
 };
@@ -364,6 +364,14 @@ impl Movepick {
 
             if self.moves.get(i).inner == counter {
                 score += 10000;
+            }
+
+            if self.ply < LOW_PLY as i8 {
+                score += LOW_PLY as i32
+                    * heuristic
+                        .get_low_ply(&self.pos, self.moves.get(i).inner, self.ply)
+                        .get() as i32
+                    / (1 + self.ply as i32);
             }
 
             self.moves.get_mut(i).score = score;
