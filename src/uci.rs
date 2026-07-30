@@ -222,8 +222,7 @@ pub fn start(args: Vec<String>) {
                         cozy_chess::Color::Black => (btime, binc),
                     };
 
-                    let opt_time = (time / 20 + inc / 2).max(10);
-                    let max_time = (time * 8 / 10).max(opt_time);
+                    let (opt_time, max_time) = Timer::plan(moves.len(), time, inc);
                     search_limits.opt_time = opt_time;
                     search_limits.max_time = max_time;
                 }

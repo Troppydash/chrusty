@@ -63,4 +63,18 @@ impl Timer {
     pub fn delta(&self) -> u128 {
         Self::now() - self.start
     }
+
+    /// Returns (opt_time, max_time)
+    pub fn plan(moves: usize, time: u128, inc: u128) -> (u128, u128) {
+        let overhead = 10;
+        let moves_left = 30;
+        let time_left = time + inc * (moves_left - 1) - overhead * (2 * moves_left);
+        let opt_scale = f64::min(
+            1.0 / (moves_left as f64),
+            0.21 * time as f64 / time_left as f64,
+        );
+        let opt_time = u128::max(10, (opt_scale * time_left as f64) as u128);
+        let max_time = u128::min(opt_time * 4, time * 80 / 100 - overhead).max(10);
+        (opt_time, max_time)
+    }
 }
