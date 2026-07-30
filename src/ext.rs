@@ -7,7 +7,7 @@ use cozy_chess::{
     Rank, Square,
 };
 
-use crate::ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL};
+use crate::ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL, PROMOTION};
 
 // these are stack allocated
 
@@ -188,6 +188,7 @@ impl ExtBoard for Board {
         self.piece_on(m.to).is_none() && m.promotion != Some(Piece::Queen)
     }
 
+    #[inline]
     fn ep_square(&self) -> Option<Square> {
         match self.en_passant() {
             Some(file) => {
@@ -214,10 +215,12 @@ impl ExtBoard for Board {
         }
     }
 
+    #[inline]
     fn is_ep(&self, m: Move) -> bool {
         self.piece_on(m.from) == Some(Piece::Pawn) && self.ep_square() == Some(m.to)
     }
 
+    #[inline]
     fn is_castle(&self, m: Move) -> bool {
         self.piece_on(m.to) == Some(Piece::Rook) && self.color_on(m.to) == Some(self.side_to_move())
     }
@@ -225,6 +228,10 @@ impl ExtBoard for Board {
     fn move_type(&self, m: Move) -> MoveType {
         if m.is_null() {
             return NONE;
+        }
+
+        if m.promotion.is_some() {
+            return PROMOTION;
         }
 
         if self.is_ep(m) {

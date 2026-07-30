@@ -16,5 +16,8 @@ cozy-chess = { version = "0.3.4" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.release-perf]
+inherits = "release"
 # enable debug symbols for perf
 debug = true

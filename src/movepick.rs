@@ -55,7 +55,7 @@ impl DynamicScoredMoveList {
     where
         F: FnMut(&mut ScoredMoveList, usize) -> bool,
     {
-        assert!(end <= self.moves.len());
+        debug_assert!(end <= self.moves.len());
         while self.ptr < end {
             let mut best_i = self.ptr;
             for i in (self.ptr + 1)..end {
@@ -293,7 +293,7 @@ impl Movepick {
     fn score_captures(&mut self) {
         let mut i = 0;
         while i < self.moves.len() {
-            // assert!(!self.pos.is_quiet(self.moves.get(i).inner));
+            debug_assert!(!self.pos.is_quiet(self.moves.get(i).inner));
             if self.pv == self.moves.get(i).inner {
                 self.moves.swap_remove(i);
                 continue;
@@ -365,7 +365,7 @@ impl Movepick {
 
                         let mut i = self.moves.ptr;
                         while i < self.moves.len() {
-                            assert!(self.pos.is_quiet(self.moves.get(i).inner));
+                            debug_assert!(self.pos.is_quiet(self.moves.get(i).inner));
 
                             if self.pv == self.moves.get(i).inner {
                                 self.moves.swap_remove(i);
@@ -483,7 +483,7 @@ impl Movepick {
 
                     let mut i = self.moves.ptr;
                     while i < self.moves.len() {
-                        assert!(self.pos.is_quiet(self.moves.get(i).inner));
+                        debug_assert!(self.pos.is_quiet(self.moves.get(i).inner));
 
                         if self.pv == self.moves.get(i).inner {
                             self.moves.swap_remove(i);

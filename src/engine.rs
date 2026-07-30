@@ -635,10 +635,11 @@ impl Engine {
                     && (tt_data.depth >= depth - 3))
             {
                 let margin =
-                    (probcut_beta - self.stack[ss].adjusted_static as i32).clamp(-2000, 2000);
+                    (probcut_beta - self.stack[ss].adjusted_static as i32).clamp(-2000, 2000) * 10
+                        / 16;
 
                 let mut tt_move = Move::NULL_MOVE;
-                if !tt_data.pv.is_null() && see_ge(pos, tt_data.pv, margin) {
+                if is_tt_capture && see_ge(pos, tt_data.pv, margin) {
                     tt_move = tt_data.pv;
                 }
 
