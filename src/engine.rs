@@ -1,9 +1,9 @@
 use std::sync::{Arc, RwLock};
 
-use arrayvec::ArrayVec;
 use cozy_chess::{Board, Move};
 
 use crate::{
+    cuckoo,
     ext::{ExtBoard, ExtMove, MoveList},
     helpers::avg,
     heuristic::Heuristic,
@@ -12,6 +12,7 @@ use crate::{
     param::*,
     rep::RepTable,
     see::{self, see_ge},
+    stack::{KeyStack, PvList, SearchStack},
     timer::Timer,
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
@@ -21,84 +22,6 @@ struct PawnKey {
 }
 
 impl PawnKey {}
-
-#[derive(Clone, Debug)]
-struct PvList {
-    moves: ArrayVec<Move, MAX_DEPTH_USIZE>,
-}
-
-impl PvList {
-    fn new() -> Self {
-        Self {
-            moves: ArrayVec::new(),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.moves.clear();
-    }
-
-    fn set(&mut self, m: &Move, other: &PvList) {
-        self.moves.clear();
-        self.moves.push(*m);
-
-        for m in other.moves.iter() {
-            self.moves.push(*m);
-        }
-    }
-
-    fn pv(&self) -> Move {
-        assert!(self.moves.len() > 0);
-        return self.moves[0];
-    }
-
-    fn get(&self, i: usize) -> Move {
-        assert!(i < self.moves.len());
-        return self.moves[i];
-    }
-
-    fn get_moves(&self) -> &ArrayVec<Move, MAX_DEPTH_USIZE> {
-        &self.moves
-    }
-
-    fn len(&self) -> usize {
-        self.moves.len()
-    }
-}
-
-#[derive(Clone, Debug)]
-struct SearchStack {
-    ply: i8,
-    m: Move,
-    pv_list: PvList,
-    adjusted_static: i16,
-    tt_pv: bool,
-    excluded: Move,
-}
-
-impl SearchStack {
-    pub fn new() -> Self {
-        Self {
-            ply: 0,
-            m: Move::NULL_MOVE,
-            pv_list: PvList::new(),
-            adjusted_static: VALUE_NONE,
-            tt_pv: false,
-            excluded: Move::NULL_MOVE,
-        }
-    }
-
-    pub fn new_ply(ply: i8) -> Self {
-        Self {
-            ply,
-            m: Move::NULL_MOVE,
-            pv_list: PvList::new(),
-            adjusted_static: VALUE_NONE,
-            tt_pv: false,
-            excluded: Move::NULL_MOVE,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct RootMove {
@@ -126,6 +49,7 @@ pub struct SearchResult {
 
 pub struct Engine {
     stack: Box<[SearchStack]>,
+    key_stack: KeyStack,
     // need to Box for movepick ptr
     heuristic: Box<Heuristic>,
     nodes: i64,
@@ -142,6 +66,7 @@ impl Engine {
     pub fn new(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
         Self {
             stack: vec![SearchStack::new(); SS_SIZE].into_boxed_slice(),
+            key_stack: KeyStack::new(),
             heuristic: Box::new(Heuristic::new()),
             nodes: 0,
             root_moves: vec![].into_boxed_slice(),
@@ -168,9 +93,10 @@ impl Engine {
         self.root_moves.swap(0, best);
     }
 
-    fn make_move(&mut self, pos: &Board, m: Move, ss: usize) -> Board {
-        self.rep.add(pos.correct_hash());
+    fn make_move(&mut self, pos: &Board, m: Move, key: u64, ss: usize) -> Board {
+        self.rep.add(key);
         self.stack[ss].m = m.clone();
+        self.key_stack.push(key);
 
         let mut new_pos = pos.clone();
         if m.is_null() {
@@ -182,11 +108,12 @@ impl Engine {
         }
     }
 
-    fn unmake_move(&mut self, pos: &Board, ss: usize) {
+    fn unmake_move(&mut self, pos: &Board, key: u64, ss: usize) {
         if !self.stack[ss].m.is_null() {
             self.nnue.unmake_move();
         }
-        self.rep.remove(pos.correct_hash());
+        self.rep.remove(key);
+        self.key_stack.pop();
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
@@ -241,6 +168,13 @@ impl Engine {
         beta = beta.min(win_in(ply + 1));
         if alpha >= beta {
             return alpha;
+        }
+
+        if alpha < 0 && cuckoo::is_upcoming_rep(pos, &self.key_stack, ply) {
+            alpha = 0;
+            if alpha >= beta {
+                return alpha;
+            }
         }
 
         //- tt
@@ -359,10 +293,10 @@ impl Engine {
                 }
             }
 
-            let new_pos = self.make_move(pos, next_move.inner, ss);
+            let new_pos = self.make_move(pos, next_move.inner, key, ss);
             self.table.get().prefetch(new_pos.correct_hash());
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth, ss + 1, is_pv);
-            self.unmake_move(pos, ss);
+            self.unmake_move(pos, key, ss);
 
             if score > best_score {
                 best_score = score;
@@ -486,14 +420,20 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
-            // mate score pruning
+            //- mate score pruning
             alpha = alpha.max(lose_in(ply));
             beta = beta.min(win_in(ply + 1));
             if alpha >= beta {
                 return alpha;
             }
 
-            // TODO: cuckoo table
+            //- cuckoo
+            if alpha < 0 && cuckoo::is_upcoming_rep(pos, &self.key_stack, ply) {
+                alpha = 0;
+                if alpha >= beta {
+                    return alpha;
+                }
+            }
         }
 
         //- tt
@@ -637,7 +577,7 @@ impl Engine {
             {
                 let reduction = (6 + depth as i32 / 4) as i8;
                 let reduced_depth = i8::max(0, depth - reduction);
-                let new_pos = self.make_move(pos, Move::NULL_MOVE, ss);
+                let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
                 self.table.get().prefetch(new_pos.correct_hash());
                 let score = -self.negamax(
                     &new_pos,
@@ -648,7 +588,7 @@ impl Engine {
                     false,
                     false,
                 );
-                self.unmake_move(pos, ss);
+                self.unmake_move(pos, key, ss);
 
                 if self.timer.read().unwrap().stopped() {
                     return 0;
@@ -705,7 +645,7 @@ impl Engine {
 
                     move_count += 1;
 
-                    let new_pos = self.make_move(pos, next_move.inner, ss);
+                    let new_pos = self.make_move(pos, next_move.inner, key, ss);
                     self.table.get().prefetch(new_pos.correct_hash());
                     let mut score = -self.qsearch(
                         &new_pos,
@@ -726,7 +666,7 @@ impl Engine {
                             !cut_node,
                         );
                     }
-                    self.unmake_move(pos, ss);
+                    self.unmake_move(pos, key, ss);
 
                     if self.timer.read().unwrap().stopped() {
                         return 0;
@@ -895,7 +835,7 @@ impl Engine {
                 }
             }
 
-            let new_pos = self.make_move(pos, next_move.inner, ss);
+            let new_pos = self.make_move(pos, next_move.inner, key, ss);
             self.table.get().prefetch(new_pos.correct_hash());
             let new_depth = (depth + extension - 1).max(0);
             let mut score = 0;
@@ -978,7 +918,7 @@ impl Engine {
                 score = -self.negamax(&new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
-            self.unmake_move(pos, ss);
+            self.unmake_move(pos, key, ss);
 
             if self.timer.read().unwrap().stopped() {
                 return 0;
@@ -1090,6 +1030,7 @@ impl Engine {
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
         self.nodes = 0;
         self.rep.clear();
+        self.key_stack.clear();
         self.table.get().next_search();
 
         // history tracking
@@ -1097,6 +1038,7 @@ impl Engine {
         for m in moves.iter() {
             let key = pos.correct_hash();
             self.rep.add_history(key);
+            self.key_stack.push(key);
             pos.play_unchecked(*m);
         }
 

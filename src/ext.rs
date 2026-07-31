@@ -427,3 +427,73 @@ impl ExtSquare for Square {
         ((9 * (*self as i32 ^ *other as i32)) & 8) == 0
     }
 }
+
+//- COPIED -//
+#[derive(Debug)]
+pub struct ColorZobristConstants {
+    pub pieces: [[u64; Square::NUM]; Piece::NUM],
+    pub castle_rights: [u64; File::NUM],
+}
+
+#[derive(Debug)]
+pub struct ZobristConstants {
+    pub color: [ColorZobristConstants; Color::NUM],
+    pub en_passant: [u64; File::NUM],
+    pub black_to_move: u64,
+}
+
+pub const ZOBRIST: ZobristConstants = {
+    // Simple Pcg64Mcg impl
+    let mut state = 0x7369787465656E2062797465206E756Du128 | 1;
+    macro_rules! rand {
+        () => {{
+            state = state.wrapping_mul(0x2360ED051FC65DA44385DF649FCCF645);
+            let rot = (state >> 122) as u32;
+            let xsl = (state >> 64) as u64 ^ state as u64;
+            xsl.rotate_right(rot)
+        }};
+    }
+
+    macro_rules! fill_array {
+        ($array:ident: $expr:expr) => {{
+            let mut i = 0;
+            while i < $array.len() {
+                $array[i] = $expr;
+                i += 1;
+            }
+        }};
+    }
+
+    macro_rules! color_zobrist_constant {
+        () => {{
+            let mut castle_rights = [0; File::NUM];
+            fill_array!(castle_rights: rand!());
+
+            let mut pieces = [[0; Square::NUM]; Piece::NUM];
+            fill_array!(pieces: {
+                let mut squares = [0; Square::NUM];
+                fill_array!(squares: rand!());
+                squares
+            });
+
+            ColorZobristConstants {
+                pieces,
+                castle_rights
+            }
+        }};
+    }
+
+    let mut en_passant = [0; File::NUM];
+    fill_array!(en_passant: rand!());
+
+    let white = color_zobrist_constant!();
+    let black = color_zobrist_constant!();
+
+    let black_to_move = rand!();
+
+    ZobristConstants {
+        color: [white, black],
+        en_passant,
+        black_to_move,
+    }
+};
