@@ -16,8 +16,8 @@ pub const DEFAULT_TT_SIZE: usize = 16;
 pub struct SearchLimits {
     pub max_depths: i8,
     pub max_nodes: i64,
-    pub max_time: u128,
-    pub opt_time: u128,
+    pub max_time: i64,
+    pub opt_time: i64,
 }
 
 impl SearchLimits {
@@ -182,31 +182,31 @@ pub fn start(args: Vec<String>) {
                             i += 2;
                         }
                         "movetime" => {
-                            let time = parts[i + 1].parse::<u128>().unwrap();
+                            let time = parts[i + 1].parse::<i64>().unwrap();
                             search_limits.opt_time = time;
                             search_limits.max_time = time;
                             i += 2;
                         }
                         "wtime" => {
                             is_competitive = true;
-                            wtime = parts[i + 1].parse::<u128>().unwrap();
+                            wtime = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
                         "winc" => {
                             is_competitive = true;
-                            winc = parts[i + 1].parse::<u128>().unwrap();
+                            winc = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
 
                         "btime" => {
                             is_competitive = true;
-                            btime = parts[i + 1].parse::<u128>().unwrap();
+                            btime = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
 
                         "binc" => {
                             is_competitive = true;
-                            binc = parts[i + 1].parse::<u128>().unwrap();
+                            binc = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
                         _ => {

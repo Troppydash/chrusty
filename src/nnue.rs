@@ -62,21 +62,21 @@ impl SimdOps {
     #[inline(always)]
     fn fused_add(out: &mut Aligned<i16, HL>, add: &Aligned<i16, HL>) {
         for i in 0..HL {
-            out[i] = out[i].wrapping_add(add[i]);
+            out[i] += add[i];
         }
     }
 
     #[inline(always)]
     fn fused_sub(out: &mut Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
-            out[i] = out[i].wrapping_sub(sub[i]);
+            out[i] -= sub[i];
         }
     }
 
     #[inline(always)]
     fn fused_add_sub(out: &mut Aligned<i16, HL>, add: &Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
-            out[i] = out[i].wrapping_add(add[i]).wrapping_sub(sub[i]);
+            out[i] += add[i] - sub[i];
         }
     }
 
@@ -88,7 +88,7 @@ impl SimdOps {
         sub: &Aligned<i16, HL>,
     ) {
         for i in 0..HL {
-            out[i] = base[i].wrapping_add(add[i]).wrapping_sub(sub[i]);
+            out[i] = base[i] + add[i] - sub[i];
         }
     }
 
@@ -101,10 +101,7 @@ impl SimdOps {
         sub2: &Aligned<i16, HL>,
     ) {
         for i in 0..HL {
-            out[i] = base[i]
-                .wrapping_add(add[i])
-                .wrapping_sub(sub1[i])
-                .wrapping_sub(sub2[i]);
+            out[i] = base[i] + add[i] - sub1[i] - sub2[i];
         }
     }
 
@@ -118,11 +115,7 @@ impl SimdOps {
         sub2: &Aligned<i16, HL>,
     ) {
         for i in 0..HL {
-            out[i] = base[i]
-                .wrapping_add(add1[i])
-                .wrapping_sub(sub1[i])
-                .wrapping_add(add2[i])
-                .wrapping_sub(sub2[i]);
+            out[i] = base[i] + add1[i] + add2[i] - sub1[i] - sub2[i];
         }
     }
 }
@@ -489,9 +482,9 @@ impl NNUE {
     }
 
     pub fn make_move(&mut self, board: &Board, m: Move) {
+        self.head += 1;
         assert!(self.head < MAX_DEPTH_USIZE);
 
-        self.head += 1;
         self.side[self.head].is_clean[0] = false;
         self.side[self.head].is_clean[1] = false;
 

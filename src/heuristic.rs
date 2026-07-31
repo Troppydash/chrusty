@@ -17,7 +17,8 @@ impl<const LIMIT: i16> History<LIMIT> {
 
     fn add(&mut self, bonus: i16) {
         let clamped = bonus.clamp(-LIMIT, LIMIT) as i32;
-        self.value = (self.value as i32 + clamped - self.value as i32 * clamped.abs() / LIMIT as i32) as i16;
+        self.value =
+            (self.value as i32 + clamped - self.value as i32 * clamped.abs() / LIMIT as i32) as i16;
     }
 
     pub fn get(&self) -> i16 {
@@ -119,11 +120,15 @@ impl Heuristic {
     }
 
     pub fn get_counter(&self, pos: &Board, prev_move: Move) -> Move {
+        if prev_move.is_null() {
+            return Move::NULL_MOVE;
+        }
+
         if let Some(colored_piece) = pos.color_piece_on(prev_move.to) {
             // [to] because previous move
-            self.counter[colored_piece.index()][prev_move.to as usize]
+            return self.counter[colored_piece.index()][prev_move.to as usize];
         } else {
-            Move::NULL_MOVE
+            return Move::NULL_MOVE;
         }
     }
 
@@ -136,11 +141,15 @@ impl Heuristic {
     }
 
     pub fn get_counter_mut(&mut self, pos: &Board, prev_move: Move) -> Option<&mut Move> {
+        if prev_move.is_null() {
+            return None;
+        }
+
         if let Some(colored_piece) = pos.color_piece_on(prev_move.to) {
             // [to] because previous move
-            Some(&mut self.counter[colored_piece.index()][prev_move.to as usize])
+            return Some(&mut self.counter[colored_piece.index()][prev_move.to as usize]);
         } else {
-            None
+            return None;
         }
     }
 

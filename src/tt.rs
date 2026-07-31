@@ -1,5 +1,7 @@
 use std::{
-    alloc::{Layout, alloc_zeroed, dealloc}, arch::x86_64::{_MM_HINT_T0, _MM_HINT_T1, _mm_prefetch}, ptr::{NonNull, null_mut},
+    alloc::{Layout, alloc_zeroed, dealloc},
+    arch::x86_64::{_MM_HINT_T0, _MM_HINT_T1, _mm_prefetch},
+    ptr::{NonNull, null_mut},
 };
 
 use cozy_chess::Move;
@@ -301,6 +303,7 @@ impl Table {
             NonNull::new(ptr).expect(&format!("Failed to allocate tt with {}M", size_in_mbytes))
         };
         self.age = 0;
+        self.clear();
     }
 }
 

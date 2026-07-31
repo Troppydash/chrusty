@@ -16,6 +16,14 @@ use crate::{
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
 
+struct PawnKey {
+    pawn: u64,
+}
+
+impl PawnKey {
+
+}
+
 #[derive(Clone, Debug)]
 struct PvList {
     moves: ArrayVec<Move, MAX_DEPTH_USIZE>,
@@ -779,7 +787,7 @@ impl Engine {
                 let lmr_depth = (depth as i32
                     - self.heuristic.get_lmr(move_count, depth) as i32
                     - !improving as i32
-                    + (next_move.score / 10000) as i32)
+                    + (next_move.get_score() / 10000) as i32)
                     .clamp(1, depth as i32 + 1);
 
                 //- see pruning
@@ -793,7 +801,7 @@ impl Engine {
                 }
 
                 //- history prunes
-                if is_quiet && next_move.score < -7000 * depth as i32 {
+                if is_quiet && next_move.get_score() < -7000 * depth as i32 {
                     movepick.skip_quiets();
                     continue;
                 }
@@ -907,7 +915,7 @@ impl Engine {
                 reduction -= self.stack[ss].tt_pv as i32 + is_pv as i32;
 
                 // history adjustment
-                let scaled_history_score = next_move.score / if is_quiet { 11000 } else { 10000 };
+                let scaled_history_score = next_move.get_score() / if is_quiet { 11000 } else { 10000 };
                 reduction -= scaled_history_score as i32;
 
                 let reduced_depth =

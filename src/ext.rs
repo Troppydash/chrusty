@@ -408,6 +408,10 @@ impl ScoredMove {
     pub fn is_null(&self) -> bool {
         self.inner.is_null()
     }
+
+    pub fn get_score(&self) -> i32 {
+        return self.score;
+    }
 }
 
 pub trait ExtSquare {

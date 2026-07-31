@@ -346,18 +346,6 @@ impl Movepick {
 
             let heuristic = self.get_heuristic();
 
-            let killers = heuristic.get_killers(self.ply);
-            if self.moves.get(i).inner == killers[0] {
-                self.moves.get_mut(i).score = i32::MAX;
-                i += 1;
-                continue;
-            }
-            if self.moves.get(i).inner == killers[1] {
-                self.moves.get_mut(i).score = i32::MAX - 1;
-                i += 1;
-                continue;
-            }
-
             let mut score = heuristic
                 .get_main_history(&self.pos, self.moves.get(i).inner)
                 .get() as i32;
@@ -372,6 +360,13 @@ impl Movepick {
                         .get_low_ply(&self.pos, self.moves.get(i).inner, self.ply)
                         .get() as i32
                     / (1 + self.ply as i32);
+            }
+
+            let killers = self.get_heuristic().get_killers(self.ply);
+            if self.moves.get(i).inner == killers[0] {
+                score += 20000;
+            } else if self.moves.get(i).inner == killers[1] {
+                score += 15000;
             }
 
             self.moves.get_mut(i).score = score;

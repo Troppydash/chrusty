@@ -4,13 +4,13 @@ use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 
 #[derive(Debug)]
 pub struct Timer {
-    start: u128,
-    duration: u128,
+    start: i64,
+    duration: i64,
     stopped: bool,
     // constants
     pub max_nodes: i64,
     pub max_depth: i8,
-    pub opt_time: u128,
+    pub opt_time: i64,
 }
 
 impl Timer {
@@ -25,14 +25,14 @@ impl Timer {
         }
     }
 
-    fn now() -> u128 {
+    fn now() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_millis()
+            .as_millis() as i64
     }
 
-    pub fn start(&mut self, duration: u128) {
+    pub fn start(&mut self, duration: i64) {
         self.start = Self::now();
         self.duration = duration;
         self.stopped = false;
@@ -56,16 +56,16 @@ impl Timer {
         self.stopped = true;
     }
 
-    pub fn test(&self, duration: u128) -> bool {
+    pub fn test(&self, duration: i64) -> bool {
         Self::now() >= self.start + duration
     }
 
-    pub fn delta(&self) -> u128 {
+    pub fn delta(&self) -> i64 {
         Self::now() - self.start
     }
 
     /// Returns (opt_time, max_time)
-    pub fn plan(moves: usize, time: u128, inc: u128) -> (u128, u128) {
+    pub fn plan(moves: usize, time: i64, inc: i64) -> (i64, i64) {
         let overhead = 10;
         let moves_left = 30;
         let time_left = time + inc * (moves_left - 1) - overhead * (2 * moves_left);
@@ -73,8 +73,8 @@ impl Timer {
             1.0 / (moves_left as f64),
             0.21 * time as f64 / time_left as f64,
         );
-        let opt_time = u128::max(10, (opt_scale * time_left as f64) as u128);
-        let max_time = u128::min(opt_time * 4, time * 80 / 100 - overhead).max(10);
+        let opt_time = i64::max(10, (opt_scale * time_left as f64) as i64);
+        let max_time = i64::min(opt_time * 4, time * 80 / 100 - overhead).max(10);
         (opt_time, max_time)
     }
 }
