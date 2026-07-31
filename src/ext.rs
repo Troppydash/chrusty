@@ -143,7 +143,7 @@ pub trait ExtBoard {
     fn color_piece_on(&self, square: Square) -> Option<ColoredPiece>;
     fn castle_to(&self, m: Move) -> (Square, Square);
 
-    fn opp_pinned(&self) -> BitBoard;
+    fn opp_pinned_checkers(&self) -> (BitBoard, BitBoard);
 }
 
 impl ExtBoard for Board {
@@ -364,8 +364,9 @@ impl ExtBoard for Board {
         }
     }
 
-    fn opp_pinned(&self) -> BitBoard {
+    fn opp_pinned_checkers(&self) -> (BitBoard, BitBoard) {
         let mut pinned = BitBoard::EMPTY;
+        let mut checkers = BitBoard::EMPTY;
         let color = !self.side_to_move();
         let our_king = self.king(color);
         let their_attackers = self.colors(!color)
@@ -376,12 +377,14 @@ impl ExtBoard for Board {
 
         for square in their_attackers {
             let between = cozy_chess::get_between_rays(square, our_king) & self.occupied();
-            if between.len() == 1 {
+            if between.len() == 0 {
+                checkers |= square.bitboard();
+            } else if between.len() == 1 {
                 pinned |= between;
             }
         }
 
-        pinned
+        return (pinned, checkers);
     }
 }
 

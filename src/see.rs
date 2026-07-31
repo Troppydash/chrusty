@@ -5,7 +5,7 @@ use cozy_chess::{
 };
 
 use crate::{
-    ext::{ExtBoard, MoveType::NORMAL},
+    ext::{BitBoardExt, ExtBoard, MoveType::NORMAL},
     param::PIECE_VALUE,
 };
 
@@ -44,7 +44,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
 
     // recapture test
     swap = PIECE_VALUE[pos.piece_on_index(m.from)] - swap;
-    if swap < 0 {
+    if swap <= 0 {
         return true;
     }
 
@@ -60,8 +60,12 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
     let mut attackers = get_attackers(pos, occ, m.to);
 
     let mut pinned = [BitBoard::EMPTY, BitBoard::EMPTY];
+    let mut checkers = [BitBoard::EMPTY, BitBoard::EMPTY];
+    let (opp_pinned, opp_checkers) = pos.opp_pinned_checkers();
     pinned[stm as usize] = pos.pinned() & pos.colors(stm);
-    pinned[!stm as usize] = pos.opp_pinned() & pos.colors(!stm);
+    pinned[!stm as usize] = opp_pinned & pos.colors(!stm);
+    // checkers[stm as usize] = pos.checkers();
+    // checkers[!stm as usize] = opp_checkers;
 
     let mut result = 1;
 
@@ -75,16 +79,14 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         }
 
         // remove pinned stm attackers
-        if !(pos.checkers() & pos.colors(!stm) & occ).is_empty() {
-            stm_attackers &= !pinned[stm as usize];
-            if stm_attackers.is_empty() {
-                break;
-            }
+        stm_attackers &= !pinned[stm as usize];
+        if stm_attackers.is_empty() {
+            break;
         }
 
         result ^= 1;
 
-        if let bb = stm_attackers & pawns
+        if let mut bb = stm_attackers & pawns
             && !bb.is_empty()
         {
             swap = PIECE_VALUE[Piece::Pawn as usize] - swap;
@@ -92,9 +94,9 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
                 break;
             }
 
-            occ ^= bb.next_square().unwrap().bitboard();
+            occ ^= bb.pop().bitboard();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
-        } else if let bb = stm_attackers & knights
+        } else if let mut bb = stm_attackers & knights
             && !bb.is_empty()
         {
             swap = PIECE_VALUE[Piece::Knight as usize] - swap;
@@ -102,8 +104,8 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
                 break;
             }
 
-            occ ^= bb.next_square().unwrap().bitboard();
-        } else if let bb = stm_attackers & bishops
+            occ ^= bb.pop().bitboard();
+        } else if let mut bb = stm_attackers & bishops
             && !bb.is_empty()
         {
             swap = PIECE_VALUE[Piece::Bishop as usize] - swap;
@@ -111,9 +113,9 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
                 break;
             }
 
-            occ ^= bb.next_square().unwrap().bitboard();
+            occ ^= bb.pop().bitboard();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
-        } else if let bb = stm_attackers & rooks
+        } else if let mut bb = stm_attackers & rooks
             && !bb.is_empty()
         {
             swap = PIECE_VALUE[Piece::Rook as usize] - swap;
@@ -121,7 +123,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
                 break;
             }
 
-            occ ^= bb.next_square().unwrap().bitboard();
+            occ ^= bb.pop().bitboard();
             attackers |= get_rook_moves(m.to, occ) & (rooks | queens);
         } else if let bb = stm_attackers & queens
             && !bb.is_empty()
@@ -136,7 +138,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
             attackers |= get_rook_moves(m.to, occ) & (rooks | queens);
         } else {
             // king
-            if (attackers & !pos.colors(stm)).is_empty() {
+            if (attackers & pos.colors(!stm)).is_empty() {
                 return to_bool(result);
             } else {
                 return !to_bool(result);
