@@ -1,4 +1,5 @@
 use std::arch::x86_64::*;
+use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
@@ -35,6 +36,10 @@ struct Aligned<T, const N: usize>([T; N]);
 impl<T: Copy + Default, const N: usize> Aligned<T, N> {
     fn zeroed() -> Self {
         Self([T::default(); N])
+    }
+
+    fn uninit() -> Self {
+        unsafe { Self(MaybeUninit::uninit().assume_init()) }
     }
 }
 
@@ -163,6 +168,7 @@ struct Network {
     feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
     feature_bias: Aligned<i16, HL>,
 
+    // l1_weights: [[[i8; 4 * L1]; HL / 4]; OUTPUTS],
     l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
@@ -199,6 +205,16 @@ impl Network {
             );
         }
         let mut net = unsafe { net.assume_init() };
+
+        // for bucket in 0..OUTPUTS {
+        //     for c in 0..(HL / 4) {
+        //         for j in 0..L1 {
+        //             for k in 0..4 {
+        //                 net.l1_weights[bucket][c][j * 4 + k] = raw.l1_weights[bucket][j][c * 4 + k];
+        //             }
+        //         }
+        //     }
+        // }
 
         // also transpose weights
         for i in 0..OUTPUTS {
@@ -675,65 +691,67 @@ impl NNUE {
         unsafe { self.avx2_evaluate(board) }
     }
 
-    pub fn default_evaluate(&self, board: &Board) -> i32 {
-        let stm: usize = board.side_to_move() as usize;
-        const ZERO: i16 = 0i16;
-        const ONE: i16 = QA as i16;
-        const ZEROF: f32 = 0.0f32;
-        const ONEF: f32 = 1.0f32;
-        const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
+    /*
+       pub fn default_evaluate(&self, board: &Board) -> i32 {
+           let stm: usize = board.side_to_move() as usize;
+           const ZERO: i16 = 0i16;
+           const ONE: i16 = QA as i16;
+           const ZEROF: f32 = 0.0f32;
+           const ONEF: f32 = 1.0f32;
+           const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
 
-        let bucket = Network::get_output_bucket(board);
+           let bucket = Network::get_output_bucket(board);
 
-        //- ft cleanup
-        let mut ft = Aligned::<u8, HL>::zeroed();
-        for side in 0..=1 {
-            let acc = &self.side[self.head].vals[stm ^ side];
-            for i in 0..HL / 2 {
-                let x0 = acc[i].clamp(ZERO, ONE);
-                let x1 = acc[i + HL / 2].clamp(ZERO, ONE);
-                ft.0[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
-            }
-        }
+           //- ft cleanup
+           let mut ft = Aligned::<u8, HL>::zeroed();
+           for side in 0..=1 {
+               let acc = &self.side[self.head].vals[stm ^ side];
+               for i in 0..HL / 2 {
+                   let x0 = acc[i].clamp(ZERO, ONE);
+                   let x1 = acc[i + HL / 2].clamp(ZERO, ONE);
+                   ft.0[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+               }
+           }
 
-        //- ft -> l1
-        let mut l1 = Aligned::<f32, L1>::zeroed();
-        let mut l1_sum = Aligned::<i32, L1>::zeroed();
-        // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
-        for i in 0..HL {
-            for j in 0..L1 {
-                l1_sum[j] += (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
-            }
-        }
+           //- ft -> l1
+           let mut l1 = Aligned::<f32, L1>::zeroed();
+           let mut l1_sum = Aligned::<i32, L1>::zeroed();
+           // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
+           for i in 0..HL {
+               for j in 0..L1 {
+                   l1_sum[j] += (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
+               }
+           }
 
-        for i in 0..L1 {
-            let s =
-                (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i]).clamp(ZEROF, ONEF);
-            l1[i] = s * s;
-        }
+           for i in 0..L1 {
+               let s =
+                   (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i]).clamp(ZEROF, ONEF);
+               l1[i] = s * s;
+           }
 
-        //- l1 -> l2
-        let mut l2 = Aligned::<f32, L2>::zeroed();
-        let mut l2_sum = Aligned::<f32, L2>::zeroed();
-        for i in 0..L1 {
-            for j in 0..L2 {
-                l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
-            }
-        }
+           //- l1 -> l2
+           let mut l2 = Aligned::<f32, L2>::zeroed();
+           let mut l2_sum = Aligned::<f32, L2>::zeroed();
+           for i in 0..L1 {
+               for j in 0..L2 {
+                   l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
+               }
+           }
 
-        for i in 0..L2 {
-            let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
-            l2[i] = s * s;
-        }
+           for i in 0..L2 {
+               let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
+               l2[i] = s * s;
+           }
 
-        //- l2 -> output
-        let mut output = self.network.output_bias[bucket];
-        for i in 0..L2 {
-            output += l2[i] * self.network.output_weights[bucket][i];
-        }
+           //- l2 -> output
+           let mut output = self.network.output_bias[bucket];
+           for i in 0..L2 {
+               output += l2[i] * self.network.output_weights[bucket][i];
+           }
 
-        (output * SCALE as f32) as i32
-    }
+           (output * SCALE as f32) as i32
+       }
+    */
 
     #[target_feature(enable = "avx2", enable = "fma")]
     pub unsafe fn avx2_evaluate(&mut self, board: &Board) -> i32 {
@@ -754,7 +772,7 @@ impl NNUE {
             const ONEF: f32 = 1.0f32;
 
             //- ft cleanup
-            let mut ft = Aligned::<u8, HL>::zeroed();
+            let mut ft = Aligned::<u8, HL>::uninit();
             for side in 0..=1 {
                 let acc = &self.side[self.head].vals[stm ^ side];
                 for i in 0..HL / 2 {
@@ -764,8 +782,46 @@ impl NNUE {
                 }
             }
 
+            // let mut idx: [u16; 384] = [0u16; HL / 4];
+            // let mut n = 0;
+            // for b in (0..HL).step_by(32) {
+            //     let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
+            //     let zmask =
+            //         _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(v, veci_zero)))
+            //             as u32;
+            //     let mut m = !zmask & 0xff;
+            //     while m != 0 {
+            //         idx[n] = (b / 4) as u16 + m.trailing_zeros() as u16;
+            //         n += 1;
+            //         m &= m - 1;
+            //     }
+            // }
+
+            // let mut acc = [_mm256_setzero_si256(); 4];
+            // let l1_weights = &self.network.l1_weights[bucket];
+            // for t in 0..n {
+            //     let c = idx[t] as usize;
+            //     let f = _mm256_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
+            //     let w = l1_weights[c].as_ptr() as *const __m256i;
+            //     for q in 0..4 {
+            //         acc[q] = _mm256_add_epi32(
+            //             acc[q],
+            //             _mm256_madd_epi16(
+            //                 _mm256_maddubs_epi16(f, _mm256_load_si256(w.add(q))),
+            //                 veci_ones,
+            //             ),
+            //         );
+            //     }
+            // }
+
+            // let mut l1 = Aligned::<f32, L1>::uninit();
+            // let mut l1_sum = Aligned::<i32, L1>::uninit();
+            // for i in (0..L1).step_by(8) {
+            //     _mm256_store_si256(l1_sum.as_mut_ptr().add(i) as *mut __m256i, acc[i / 8]);
+            // }
+
             //- ft -> l1
-            let mut l1 = Aligned::<f32, L1>::zeroed();
+            let mut l1 = Aligned::<f32, L1>::uninit();
             let mut l1_sum = Aligned::<i32, L1>::zeroed();
             let l1_weights = &self.network.l1_weights[bucket];
             for j in (0..L1).step_by(4) {
@@ -799,7 +855,7 @@ impl NNUE {
             }
 
             //- l1 -> l2
-            let mut l2 = Aligned::<f32, L2>::zeroed();
+            let mut l2 = Aligned::<f32, L2>::uninit();
             let mut l2_sum = Aligned::<f32, L2>::zeroed();
             for i in 0..L1 {
                 for j in 0..L2 {
