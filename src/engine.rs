@@ -20,9 +20,7 @@ struct PawnKey {
     pawn: u64,
 }
 
-impl PawnKey {
-
-}
+impl PawnKey {}
 
 #[derive(Clone, Debug)]
 struct PvList {
@@ -604,6 +602,16 @@ impl Engine {
         }
 
         if !is_root && !in_check {
+            //- razoring
+            if !is_pv
+                && is_valid(self.stack[ss].adjusted_static)
+                && !is_decisive(alpha)
+                && (self.stack[ss].adjusted_static as i32)
+                    < (alpha as i32 - 300 - 300 * depth as i32 * depth as i32)
+            {
+                return self.qsearch(pos, alpha, beta, 0, ss, false);
+            }
+
             //- static null move pruning
             let margin = 0.max(70 * depth as i32);
             if !is_pv
@@ -915,7 +923,8 @@ impl Engine {
                 reduction -= self.stack[ss].tt_pv as i32 + is_pv as i32;
 
                 // history adjustment
-                let scaled_history_score = next_move.get_score() / if is_quiet { 11000 } else { 10000 };
+                let scaled_history_score =
+                    next_move.get_score() / if is_quiet { 11000 } else { 10000 };
                 reduction -= scaled_history_score as i32;
 
                 let reduced_depth =
