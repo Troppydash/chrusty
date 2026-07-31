@@ -672,7 +672,7 @@ impl NNUE {
         assert!(self.side[self.head].is_clean[0] && self.side[self.head].is_clean[1]);
         // we know that self.side[self.head].vals accumualators are ready
 
-        unsafe { self.default_evaluate(board) }
+        unsafe { self.avx2_evaluate(board) }
     }
 
     pub fn default_evaluate(&self, board: &Board) -> i32 {
@@ -745,59 +745,51 @@ impl NNUE {
             let vecf_one = _mm256_set1_ps(1.0);
             let veci_zero = _mm256_setzero_si256();
             let veci_one = _mm256_set1_epi16(QA as i16);
+            let veci_ones = _mm256_set1_epi16(1);
 
             const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
+            const ZERO: i16 = 0i16;
+            const ONE: i16 = QA as i16;
             const ZEROF: f32 = 0.0f32;
             const ONEF: f32 = 1.0f32;
 
             //- ft cleanup
             let mut ft = Aligned::<u8, HL>::zeroed();
-            for them in 0..=1 {
-                let acc = &self.side[self.head].vals[stm ^ them];
-                let gap = HL / 2;
-                let offset = them * gap;
-
-                // Process 32 x i16 inputs -> outputs 32 x u8 bytes per iteration
-                for i in (0..gap).step_by(32) {
-                    let x0_a = _mm256_load_si256(acc.as_ptr().add(i) as *const __m256i);
-                    let x1_a = _mm256_load_si256(acc.as_ptr().add(i + gap) as *const __m256i);
-
-                    let x0_b = _mm256_load_si256(acc.as_ptr().add(i + 16) as *const __m256i);
-                    let x1_b = _mm256_load_si256(acc.as_ptr().add(i + 16 + gap) as *const __m256i);
-
-                    // Clamp [0, QA]
-                    let c0 = _mm256_min_epi16(_mm256_max_epi16(x0_a, veci_zero), veci_one);
-                    let c1 = _mm256_min_epi16(_mm256_max_epi16(x1_a, veci_zero), veci_one);
-
-                    let d0 = _mm256_min_epi16(_mm256_max_epi16(x0_b, veci_zero), veci_one);
-                    let d1 = _mm256_min_epi16(_mm256_max_epi16(x1_b, veci_zero), veci_one);
-
-                    let prod_a =
-                        _mm256_mulhi_epi16(_mm256_slli_epi16(c0, 16 - FT_SHIFT as i32), c1);
-                    let prod_b =
-                        _mm256_mulhi_epi16(_mm256_slli_epi16(d0, 16 - FT_SHIFT as i32), d1);
-
-                    // Pack 32 x i16 (64 bytes) -> 32 x u8 (32 bytes)
-                    let packed = _mm256_packus_epi16(prod_a, prod_b);
-
-                    // AVX2 packus interleaves 128-bit lanes (0, 1, 2, 3 -> 0, 2, 1, 3).
-                    // Permute brings bytes back into linear order.
-                    let permuted = _mm256_permute4x64_epi64(packed, 0b11_01_10_00);
-
-                    // ft.0.as_mut_ptr() is *mut u8. .add(offset + i) advances by (offset + i) bytes.
-                    _mm256_store_si256(ft.0.as_mut_ptr().add(offset + i) as *mut __m256i, permuted);
+            for side in 0..=1 {
+                let acc = &self.side[self.head].vals[stm ^ side];
+                for i in 0..HL / 2 {
+                    let x0 = acc[i].clamp(ZERO, ONE);
+                    let x1 = acc[i + HL / 2].clamp(ZERO, ONE);
+                    ft.0[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
                 }
             }
 
             //- ft -> l1
             let mut l1 = Aligned::<f32, L1>::zeroed();
             let mut l1_sum = Aligned::<i32, L1>::zeroed();
-            // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
-            for i in 0..HL {
-                for j in 0..L1 {
-                    l1_sum[j] +=
-                        (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
+            let l1_weights = &self.network.l1_weights[bucket];
+            for j in (0..L1).step_by(4) {
+                let mut acc = [_mm256_setzero_si256(); 4];
+                for i in (0..HL).step_by(32) {
+                    let f = _mm256_load_si256(ft.0.as_ptr().add(i) as *const __m256i);
+                    for k in 0..4 {
+                        let w =
+                            _mm256_load_si256(l1_weights[j + k].as_ptr().add(i) as *const __m256i);
+                        acc[k] = _mm256_add_epi32(
+                            acc[k],
+                            _mm256_madd_epi16(_mm256_maddubs_epi16(f, w), veci_ones),
+                        );
+                    }
                 }
+
+                let ab = _mm256_hadd_epi32(acc[0], acc[1]);
+                let cd = _mm256_hadd_epi32(acc[2], acc[3]);
+                let abcd = _mm256_hadd_epi32(ab, cd);
+                let s = _mm_add_epi32(
+                    _mm256_castsi256_si128(abcd),
+                    _mm256_extracti128_si256(abcd, 1),
+                );
+                _mm_store_si128(l1_sum.as_mut_ptr().add(j) as *mut __m128i, s);
             }
 
             for i in 0..L1 {

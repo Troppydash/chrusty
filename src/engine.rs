@@ -822,7 +822,7 @@ impl Engine {
                 //- futility pruning
                 if is_quiet
                     && quiets.len() > 1
-                    && lmr_depth < 12
+                    && lmr_depth < 14
                     && !in_check
                     && (self.stack[ss].adjusted_static as i32 + 150 + 150 * lmr_depth)
                         < (alpha as i32)
@@ -833,7 +833,7 @@ impl Engine {
 
                 //- capture futility pruning
                 if !is_quiet
-                    && lmr_depth < 12
+                    && lmr_depth < 14
                     && !in_check
                     && (self.stack[ss].adjusted_static as i32
                         + 200
@@ -946,7 +946,7 @@ impl Engine {
                     let mut adjusted_new_depth = new_depth;
                     if (score as i32) > (best_score as i32 + 50 + new_depth as i32 * 2) {
                         adjusted_new_depth += 1;
-                    } else if (score as i32) < (best_score as i32 - 50) {
+                    } else if (score as i32) < (best_score as i32 - 10) {
                         adjusted_new_depth -= 1;
                     }
 
