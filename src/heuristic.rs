@@ -2,8 +2,7 @@ use cozy_chess::{Board, Move};
 
 use crate::{
     ext::{ExtBoard, ExtMove, MoveList},
-    param::*,
-    stack::PawnKey,
+    param::*
 };
 
 #[derive(Clone, Copy, Debug)]

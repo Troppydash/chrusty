@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use cozy_chess::{Board, Move};
+use cozy_chess::{Board, Move, Piece};
 
 use crate::{
     cuckoo,
@@ -115,9 +115,19 @@ impl Engine {
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
-        let tempo = 20;
-        let eval = self.nnue.evaluate(pos);
-        return (eval + tempo).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
+        let phase = 2 * pos.pieces(Piece::Pawn).len()
+            + 3 * pos.pieces(Piece::Knight).len()
+            + 3 * pos.pieces(Piece::Bishop).len()
+            + 5 * pos.pieces(Piece::Rook).len()
+            + 12 * pos.pieces(Piece::Queen).len();
+
+        let tempo = 10;
+        let mut score = self.nnue.evaluate(pos);
+        score += tempo;
+
+        score = score * (200 + phase as i32) / 300;
+
+        return score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
     fn qsearch(
