@@ -67,14 +67,14 @@ impl Timer {
     /// Returns (opt_time, max_time)
     pub fn plan(moves: usize, time: i128, inc: i128) -> (i128, i128) {
         let overhead = 10;
-        let moves_left = 30;
+        let moves_left = 40;
         let time_left = time + inc * (moves_left - 1) - overhead * (2 * moves_left);
         let opt_scale = f64::min(
             1.0 / (moves_left as f64),
             0.21 * time as f64 / time_left as f64,
         );
         let opt_time = i128::max(10, (opt_scale * time_left as f64) as i128);
-        let max_time = i128::min(opt_time * 4, time * 80 / 100 - overhead).max(10);
+        let max_time = i128::min(opt_time * 6, time * 80 / 100 - overhead).max(10);
         (opt_time, max_time)
     }
 }

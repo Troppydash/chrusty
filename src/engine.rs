@@ -1076,6 +1076,10 @@ impl Engine {
             self.stack[SS_SIZE_PRE + i] = SearchStack::new_ply(i as i8);
         }
 
+        let mut instability = 0;
+        let mut last_best_move = Move::NULL_MOVE;
+        let mut last_best_score = VALUE_NONE;
+
         // iterative deepening
         let mut depth = 1;
         while depth < self.timer.read().unwrap().max_depth {
@@ -1148,12 +1152,28 @@ impl Engine {
                 break;
             }
 
+            let best = self.root_moves[0].pv_list.pv();
+            let best_score = self.root_moves[0].score;
+            let mut factors = 1.0;
+            if depth >= 8 {
+                if best != last_best_move {
+                    instability = (instability + 1).min(6);
+                }
+
+                let instability_factor = 0.95 + instability as f64 * 0.02;
+                let score_factor = 0.95 + (best_score - last_best_score) as f64 * -0.001;
+
+                factors *= instability_factor * score_factor;
+            }
+            last_best_move = best;
+            last_best_score = best_score;
+
             // opt exit
             if self
                 .timer
                 .read()
                 .unwrap()
-                .test(self.timer.read().unwrap().opt_time)
+                .test((self.timer.read().unwrap().opt_time as f64 * factors) as i128)
             {
                 break;
             }
