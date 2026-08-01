@@ -479,7 +479,7 @@ impl Engine {
             && (cut_node == (tt_data.score >= beta))
             && tt_data.depth >= depth + (tt_data.score >= beta) as i8
         {
-            if pos.halfmove_clock() < 80 {
+            if pos.halfmove_clock() < 90 {
                 return tt_data.score;
             }
         }
@@ -553,7 +553,7 @@ impl Engine {
             }
 
             //- static null move pruning
-            let margin = 0.max(70 * depth as i32);
+            let margin = 0.max(70 * (depth - !improving as i8) as i32);
             if !is_pv
                 && is_valid(self.stack[ss].adjusted_static)
                 && !is_loss(beta)
@@ -856,6 +856,10 @@ impl Engine {
 
                 // capture reduction
                 if is_tt_capture {
+                    reduction += 1;
+                }
+
+                if !improving {
                     reduction += 1;
                 }
 
