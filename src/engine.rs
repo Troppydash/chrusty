@@ -146,7 +146,7 @@ impl Engine {
         assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
 
         //- prevent high depths
-        if ply > MAX_DEPTH - 4 {
+        if ply > MAX_DEPTH - 4 || depth < -20 {
             if pos.in_check() {
                 return VALUE_DRAW;
             }
@@ -266,6 +266,7 @@ impl Engine {
             pos.clone(),
             tt_data.pv,
             ply,
+            depth,
             self.stack[ss - 1].m,
             self.pawn_key.get(),
             &self.heuristic,
@@ -304,7 +305,7 @@ impl Engine {
 
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
             self.table.get().prefetch(new_pos.correct_hash());
-            let score = -self.qsearch(&new_pos, -beta, -alpha, depth, ss + 1, is_pv);
+            let score = -self.qsearch(&new_pos, -beta, -alpha, depth - 1, ss + 1, is_pv);
             self.unmake_move(pos, key, ss);
 
             if score > best_score {
@@ -634,8 +635,14 @@ impl Engine {
                     tt_move = tt_data.pv;
                 }
 
-                let mut movepick =
-                    Movepick::new_probcut(pos.clone(), tt_move, ply, margin, &self.heuristic);
+                let mut movepick = Movepick::new_probcut(
+                    pos.clone(),
+                    tt_move,
+                    ply,
+                    depth,
+                    margin,
+                    &self.heuristic,
+                );
                 let probcut_depth = depth - PROBCUT_DEPTH_REDUCTION;
                 assert!(probcut_depth > 0);
 
@@ -723,6 +730,7 @@ impl Engine {
             pos.clone(),
             tt_data.pv,
             ply,
+            depth,
             self.stack[ss - 1].m,
             self.pawn_key.get(),
             &self.heuristic,

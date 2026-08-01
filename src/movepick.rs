@@ -25,7 +25,8 @@ enum Stage {
     QPv,
     QCaptureInit,
     QCapture,
-    // TODO: get quiet checks
+    QQuietCheckInit,
+    QQuietCheck,
 
     EPv,
     ECaptureInit,
@@ -105,6 +106,7 @@ pub struct Movepick {
     pos: Board,
     pv: Move,
     ply: i8,
+    depth: i8,
     // this is needed to prevent a refcell which is expensive
     heuristic: *const Heuristic,
     probcut_margin: i32,
@@ -127,6 +129,7 @@ impl Movepick {
         pos: Board,
         pv: Move,
         ply: i8,
+        depth: i8,
         prev_move: Move,
         pawn_key: u64,
         heuristic: &Heuristic,
@@ -135,6 +138,7 @@ impl Movepick {
             pos,
             pv,
             ply,
+            depth,
             heuristic,
             probcut_margin: 0,
             prev_move,
@@ -152,6 +156,7 @@ impl Movepick {
         pos: Board,
         pv: Move,
         ply: i8,
+        depth: i8,
         prev_move: Move,
         pawn_key: u64,
         heuristic: &Heuristic,
@@ -161,6 +166,7 @@ impl Movepick {
             pos,
             pv,
             ply,
+            depth,
             heuristic,
             probcut_margin: 0,
             prev_move,
@@ -178,6 +184,7 @@ impl Movepick {
         pos: Board,
         pv: Move,
         ply: i8,
+        depth: i8,
         probcut_margin: i32,
         heuristic: &Heuristic,
     ) -> Self {
@@ -185,6 +192,7 @@ impl Movepick {
             pos,
             pv,
             ply,
+            depth,
             heuristic,
             probcut_margin,
             prev_move: Move::NULL_MOVE,
@@ -306,6 +314,83 @@ impl Movepick {
 
             false
         });
+    }
+
+    fn generate_checks(&mut self) {
+        // just generate direct checks
+        let occ = self.pos.occupied();
+        let stm = self.pos.side_to_move();
+        let opp = self.pos.colors(!stm);
+        let opp_king = self.pos.king(!stm);
+        let pawn_attacks = cozy_chess::get_pawn_attacks(opp_king, !stm);
+        let knight_attacks = cozy_chess::get_knight_moves(opp_king);
+        let bishop_attacks = cozy_chess::get_bishop_moves(opp_king, occ);
+        let rook_attacks = cozy_chess::get_rook_moves(opp_king, occ);
+
+        // self.pos
+        //     .generate_moves_for(self.pos.pieces(Piece::Pawn), |moves| {
+        //         for t in moves.to & !opp & pawn_attacks {
+        //             self.moves.push(ScoredMove::from_move(Move {
+        //                 from: moves.from,
+        //                 to: t,
+        //                 promotion: None,
+        //             }));
+        //         }
+
+        //         false
+        //     });
+
+        self.pos
+            .generate_moves_for(self.pos.pieces(Piece::Knight), |moves| {
+                for t in moves.to & !opp & knight_attacks {
+                    self.moves.push(ScoredMove::from_move(Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: None,
+                    }));
+                }
+
+                false
+            });
+
+        self.pos
+            .generate_moves_for(self.pos.pieces(Piece::Bishop), |moves| {
+                for t in moves.to & !opp & bishop_attacks {
+                    self.moves.push(ScoredMove::from_move(Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: None,
+                    }));
+                }
+
+                false
+            });
+
+        self.pos
+            .generate_moves_for(self.pos.pieces(Piece::Rook), |moves| {
+                for t in moves.to & !opp & rook_attacks {
+                    self.moves.push(ScoredMove::from_move(Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: None,
+                    }));
+                }
+
+                false
+            });
+
+        self.pos
+            .generate_moves_for(self.pos.pieces(Piece::Queen), |moves| {
+                for t in moves.to & !opp & (bishop_attacks | rook_attacks) {
+                    self.moves.push(ScoredMove::from_move(Move {
+                        from: moves.from,
+                        to: t,
+                        promotion: None,
+                    }));
+                }
+
+                false
+            });
     }
 
     fn score_captures(&mut self) {
@@ -490,6 +575,23 @@ impl Movepick {
                         return next_move;
                     }
 
+                    if self.depth <= -5 {
+                        return ScoredMove::NULL_MOVE;
+                    }
+                    self.stage = Stage::QQuietCheckInit;
+                }
+                Stage::QQuietCheckInit => {
+                    self.generate_checks();
+                    self.score_quiets();
+                    self.stage = Stage::QQuietCheck;
+                }
+
+                Stage::QQuietCheck => {
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                    if !next_move.is_null() {
+                        return next_move;
+                    }
+
                     return ScoredMove::NULL_MOVE;
                 }
 
@@ -573,6 +675,7 @@ mod tests {
                 pos.clone(),
                 Move::NULL_MOVE,
                 0,
+                0,
                 Move::NULL_MOVE,
                 0,
                 &heuristic,
@@ -580,6 +683,7 @@ mod tests {
             Movepick::new_qsearch(
                 pos.clone(),
                 Move::NULL_MOVE,
+                0,
                 0,
                 Move::NULL_MOVE,
                 0,
