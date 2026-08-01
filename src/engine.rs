@@ -288,7 +288,7 @@ impl Engine {
                 }
 
                 //- see pruning
-                if !see::see_ge(pos, next_move.inner, -50) {
+                if !see::see_ge(pos, next_move.inner, 0) {
                     continue;
                 }
             }

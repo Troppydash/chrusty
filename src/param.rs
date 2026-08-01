@@ -40,7 +40,7 @@ pub const ALL_PIECES: usize = 6;
 pub const PIECE_VALUE: [i32; ALL_PIECES + 1] = [100, 370, 390, 610, 1200, 2000, 0];
 pub const MVV_MULTIPLIER: i32 = 8;
 pub const BAD_QUIET_SCORE: i32 = -15000;
-pub const GOOD_CAPTURE_SEE_DIV: i32 = 25;
+pub const GOOD_CAPTURE_SEE_DIV: i32 = 32;
 
 pub const PROBCUT_DEPTH_MIN: i8 = 5;
 pub const PROBCUT_DEPTH_REDUCTION: i8 = 4;

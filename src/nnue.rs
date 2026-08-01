@@ -812,13 +812,13 @@ impl NNUE {
                 base = _mm_add_epi16(base, lookup_inc);
             }
 
-            let mut acc = [_mm256_setzero_si256(); 4];
+            let mut acc = [_mm256_setzero_si256(); L1 / 8];
             let l1_weights = &self.network.l1_weights[bucket];
             for t in 0..n {
                 let c = idx[t] as usize;
                 let f = _mm256_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
                 let w = l1_weights[c].as_ptr() as *const __m256i;
-                for q in 0..4 {
+                for q in 0..(L1 / 8) {
                     acc[q] = _mm256_add_epi32(
                         acc[q],
                         _mm256_madd_epi16(
