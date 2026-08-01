@@ -25,6 +25,7 @@ enum Stage {
     QPv,
     QCaptureInit,
     QCapture,
+    // TODO: get quiet checks
 
     EPv,
     ECaptureInit,
@@ -326,7 +327,7 @@ impl Movepick {
                 * PIECE_VALUE[self.pos.get_captured(self.moves.get(i).inner) as usize];
 
             score -= PIECE_VALUE[self.pos.piece_on(self.moves.get(i).inner.from).unwrap() as usize];
-            score += 1000;
+            score += 1400;
 
             if let Some(promotion) = self.moves.get(i).inner.promotion {
                 score += 10000 + PIECE_VALUE[promotion as usize];

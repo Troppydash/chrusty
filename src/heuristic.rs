@@ -183,6 +183,7 @@ impl Heuristic {
         &mut self,
         pos: &Board,
         depth: i8,
+        div: i32,
         ply: i8,
         best_move: Move,
         prev_move: Move,
@@ -192,8 +193,8 @@ impl Heuristic {
     ) {
         assert!(!best_move.is_null(), "best move null in history update");
 
-        let bonus = i32::min(180 * depth as i32 + 15, 2000) as i16;
-        let malus = i32::min(190 * depth as i32 - 30, 2000) as i16;
+        let bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
+        let malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
 
         if pos.is_quiet(best_move) {
             self.get_main_history_mut(pos, best_move).add(bonus);

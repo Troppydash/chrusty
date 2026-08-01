@@ -835,9 +835,9 @@ impl Engine {
                     } else {
                         extension = 1;
                     }
-                } else if to_beat >= beta {
+                } else if next_best_score >= beta {
                     // multi cut
-                    return to_beat;
+                    return next_best_score;
                 } else if tt_data.score >= beta {
                     extension = -3 + self.stack[ss].tt_pv as i8;
                 } else if cut_node {
@@ -1002,6 +1002,19 @@ impl Engine {
             self.heuristic.update_history(
                 pos,
                 depth,
+                1,
+                ply,
+                best_move,
+                self.stack[ss - 1].m,
+                self.pawn_key.get(),
+                &captures,
+                &quiets,
+            );
+        } else if best_score > alpha {
+            self.heuristic.update_history(
+                pos,
+                depth,
+                4,
                 ply,
                 best_move,
                 self.stack[ss - 1].m,
