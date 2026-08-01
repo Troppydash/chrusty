@@ -210,7 +210,9 @@ impl Engine {
         let mut best_score = -VALUE_INF;
         let mut futility_base = -VALUE_INF;
         let in_check = pos.in_check();
+        self.stack[ss].conseq_checks = 0;
         if in_check {
+            self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
             best_score = -VALUE_INF;
         } else {
             if tt_data.hit {
@@ -218,7 +220,7 @@ impl Engine {
                 if !is_valid(unadjusted_static) {
                     unadjusted_static = self.evaluate(pos);
                 }
-                best_score = unadjusted_static;
+                best_score = self.static_correction(unadjusted_static, ss);
 
                 //- use tt score to improve static score
                 let can_improve_static =
@@ -228,7 +230,7 @@ impl Engine {
                 }
             } else {
                 unadjusted_static = self.evaluate(pos);
-                best_score = unadjusted_static;
+                best_score = self.static_correction(unadjusted_static, ss);
 
                 writer.set(
                     key,
@@ -497,7 +499,9 @@ impl Engine {
         //- adjusted/unadjusted evals
         let mut unadjusted_static = VALUE_NONE;
         let in_check = pos.in_check();
+        self.stack[ss].conseq_checks = 0;
         if in_check {
+            self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
             self.stack[ss].adjusted_static = VALUE_NONE;
         } else if has_excluded {
             unadjusted_static = self.stack[ss].adjusted_static;
@@ -509,7 +513,7 @@ impl Engine {
             } else if is_pv {
                 self.nnue.catchup(pos);
             }
-            self.stack[ss].adjusted_static = unadjusted_static;
+            self.stack[ss].adjusted_static = self.static_correction(unadjusted_static, ss);
 
             //- use tt score to improve static score
             let can_improve_static = get_can_use(
@@ -523,7 +527,7 @@ impl Engine {
             }
         } else {
             unadjusted_static = self.evaluate(pos);
-            self.stack[ss].adjusted_static = unadjusted_static;
+            self.stack[ss].adjusted_static = self.static_correction(unadjusted_static, ss);
 
             writer.set(
                 key,
@@ -863,7 +867,7 @@ impl Engine {
                 let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32;
 
                 // check extension
-                if new_pos.in_check() {
+                if self.stack[ss].conseq_checks < 4 && new_pos.in_check() {
                     reduction -= 1;
                 }
 
@@ -879,6 +883,10 @@ impl Engine {
 
                 if !improving {
                     reduction += 1;
+                }
+
+                if tt_data.depth >= depth {
+                    reduction -= 1;
                 }
 
                 // pv extension
@@ -1061,6 +1069,10 @@ impl Engine {
         }
 
         best_score
+    }
+
+    fn static_correction(&mut self, static_score: i16, ss: usize) -> i16 {
+        static_score
     }
 
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {

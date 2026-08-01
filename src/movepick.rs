@@ -322,23 +322,9 @@ impl Movepick {
         let stm = self.pos.side_to_move();
         let opp = self.pos.colors(!stm);
         let opp_king = self.pos.king(!stm);
-        let pawn_attacks = cozy_chess::get_pawn_attacks(opp_king, !stm);
         let knight_attacks = cozy_chess::get_knight_moves(opp_king);
         let bishop_attacks = cozy_chess::get_bishop_moves(opp_king, occ);
         let rook_attacks = cozy_chess::get_rook_moves(opp_king, occ);
-
-        // self.pos
-        //     .generate_moves_for(self.pos.pieces(Piece::Pawn), |moves| {
-        //         for t in moves.to & !opp & pawn_attacks {
-        //             self.moves.push(ScoredMove::from_move(Move {
-        //                 from: moves.from,
-        //                 to: t,
-        //                 promotion: None,
-        //             }));
-        //         }
-
-        //         false
-        //     });
 
         self.pos
             .generate_moves_for(self.pos.pieces(Piece::Knight), |moves| {
