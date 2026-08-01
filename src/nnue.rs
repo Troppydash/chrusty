@@ -168,8 +168,8 @@ struct Network {
     feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
     feature_bias: Aligned<i16, HL>,
 
-    // l1_weights: [[[i8; 4 * L1]; HL / 4]; OUTPUTS],
-    l1_weights: [[[i8; HL]; L1]; OUTPUTS],
+    l1_weights: [[[i8; 4 * L1]; HL / 4]; OUTPUTS],
+    // l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // [l2_weights] has inner component flipped
@@ -206,15 +206,15 @@ impl Network {
         }
         let mut net = unsafe { net.assume_init() };
 
-        // for bucket in 0..OUTPUTS {
-        //     for c in 0..(HL / 4) {
-        //         for j in 0..L1 {
-        //             for k in 0..4 {
-        //                 net.l1_weights[bucket][c][j * 4 + k] = raw.l1_weights[bucket][j][c * 4 + k];
-        //             }
-        //         }
-        //     }
-        // }
+        for bucket in 0..OUTPUTS {
+            for c in 0..(HL / 4) {
+                for j in 0..L1 {
+                    for k in 0..4 {
+                        net.l1_weights[bucket][c][j * 4 + k] = raw.l1_weights[bucket][j][c * 4 + k];
+                    }
+                }
+            }
+        }
 
         // also transpose weights
         for i in 0..OUTPUTS {
@@ -462,15 +462,30 @@ pub struct NNUE {
     side: Box<[Accumulator]>,
     head: usize,
     finny: FinnyTable,
+    nnz_table: [[u16; 8]; 256],
 }
 
 impl NNUE {
     pub fn new() -> Self {
+        // nnz_table[bits][i] = ith bit in bits offset
+        let mut nnz_table = [[0; 8]; 256];
+        for i in 0..256 {
+            let mut j = 0;
+            let mut bits = i as u8;
+            while bits > 0 {
+                let lsb = bits.trailing_zeros();
+                nnz_table[i][j] = lsb as u16;
+                bits &= bits - 1;
+                j += 1;
+            }
+        }
+
         let mut net = Self {
             network: Network::load(),
             side: vec![Accumulator::new(); MAX_DEPTH_USIZE].into_boxed_slice(),
             head: 0,
             finny: FinnyTable::new(),
+            nnz_table,
         };
 
         // explicit clear to init finny
@@ -782,71 +797,81 @@ impl NNUE {
                 }
             }
 
-            // let mut idx: [u16; 384] = [0u16; HL / 4];
-            // let mut n = 0;
-            // for b in (0..HL).step_by(32) {
-            //     let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
-            //     let zmask =
-            //         _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(v, veci_zero)))
-            //             as u32;
-            //     let mut m = !zmask & 0xff;
-            //     while m != 0 {
-            //         idx[n] = (b / 4) as u16 + m.trailing_zeros() as u16;
-            //         n += 1;
-            //         m &= m - 1;
-            //     }
-            // }
+            let mut idx = [0u16; HL / 4];
+            let mut base = _mm_setzero_si128();
+            let lookup_inc = _mm_set1_epi16(8);
+            let mut n = 0;
+            for b in (0..HL).step_by(32) {
+                let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
+                let zmask =
+                    _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(v, veci_zero)))
+                        as u32;
+                let slice = (!zmask & 0xff) as usize;
+                let indices = _mm_loadu_si128(self.nnz_table.as_ptr().add(slice) as *const __m128i);
+                _mm_storeu_si128(
+                    idx.as_mut_ptr().add(n) as *mut __m128i,
+                    _mm_add_epi16(base, indices),
+                );
+                n += slice.count_ones() as usize;
+                base = _mm_add_epi16(base, lookup_inc);
+                //     while m != 0 {
+                //         idx[n] = (b / 4) as u16 + m.trailing_zeros() as u16;
+                //         n += 1;
+                //         m &= m - 1;
+                //     }
+            }
+            // println!("{}", n);
 
-            // let mut acc = [_mm256_setzero_si256(); 4];
-            // let l1_weights = &self.network.l1_weights[bucket];
-            // for t in 0..n {
-            //     let c = idx[t] as usize;
-            //     let f = _mm256_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
-            //     let w = l1_weights[c].as_ptr() as *const __m256i;
-            //     for q in 0..4 {
-            //         acc[q] = _mm256_add_epi32(
-            //             acc[q],
-            //             _mm256_madd_epi16(
-            //                 _mm256_maddubs_epi16(f, _mm256_load_si256(w.add(q))),
-            //                 veci_ones,
-            //             ),
-            //         );
-            //     }
-            // }
+            let mut acc = [_mm256_setzero_si256(); 4];
+            let l1_weights = &self.network.l1_weights[bucket];
+            for t in 0..n {
+                let c = idx[t] as usize;
+                let f = _mm256_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
+                let w = l1_weights[c].as_ptr() as *const __m256i;
+                for q in 0..4 {
+                    acc[q] = _mm256_add_epi32(
+                        acc[q],
+                        _mm256_madd_epi16(
+                            _mm256_maddubs_epi16(f, _mm256_load_si256(w.add(q))),
+                            veci_ones,
+                        ),
+                    );
+                }
+            }
 
-            // let mut l1 = Aligned::<f32, L1>::uninit();
-            // let mut l1_sum = Aligned::<i32, L1>::uninit();
-            // for i in (0..L1).step_by(8) {
-            //     _mm256_store_si256(l1_sum.as_mut_ptr().add(i) as *mut __m256i, acc[i / 8]);
-            // }
+            let mut l1 = Aligned::<f32, L1>::uninit();
+            let mut l1_sum = Aligned::<i32, L1>::uninit();
+            for i in (0..L1).step_by(8) {
+                _mm256_store_si256(l1_sum.as_mut_ptr().add(i) as *mut __m256i, acc[i / 8]);
+            }
 
             //- ft -> l1
-            let mut l1 = Aligned::<f32, L1>::uninit();
-            let mut l1_sum = Aligned::<i32, L1>::zeroed();
-            let l1_weights = &self.network.l1_weights[bucket];
-            for j in (0..L1).step_by(4) {
-                let mut acc = [_mm256_setzero_si256(); 4];
-                for i in (0..HL).step_by(32) {
-                    let f = _mm256_load_si256(ft.0.as_ptr().add(i) as *const __m256i);
-                    for k in 0..4 {
-                        let w =
-                            _mm256_load_si256(l1_weights[j + k].as_ptr().add(i) as *const __m256i);
-                        acc[k] = _mm256_add_epi32(
-                            acc[k],
-                            _mm256_madd_epi16(_mm256_maddubs_epi16(f, w), veci_ones),
-                        );
-                    }
-                }
+            // let mut l1 = Aligned::<f32, L1>::uninit();
+            // let mut l1_sum = Aligned::<i32, L1>::zeroed();
+            // let l1_weights = &self.network.l1_weights[bucket];
+            // for j in (0..L1).step_by(4) {
+            //     let mut acc = [_mm256_setzero_si256(); 4];
+            //     for i in (0..HL).step_by(32) {
+            //         let f = _mm256_load_si256(ft.0.as_ptr().add(i) as *const __m256i);
+            //         for k in 0..4 {
+            //             let w =
+            //                 _mm256_load_si256(l1_weights[j + k].as_ptr().add(i) as *const __m256i);
+            //             acc[k] = _mm256_add_epi32(
+            //                 acc[k],
+            //                 _mm256_madd_epi16(_mm256_maddubs_epi16(f, w), veci_ones),
+            //             );
+            //         }
+            //     }
 
-                let ab = _mm256_hadd_epi32(acc[0], acc[1]);
-                let cd = _mm256_hadd_epi32(acc[2], acc[3]);
-                let abcd = _mm256_hadd_epi32(ab, cd);
-                let s = _mm_add_epi32(
-                    _mm256_castsi256_si128(abcd),
-                    _mm256_extracti128_si256(abcd, 1),
-                );
-                _mm_store_si128(l1_sum.as_mut_ptr().add(j) as *mut __m128i, s);
-            }
+            //     let ab = _mm256_hadd_epi32(acc[0], acc[1]);
+            //     let cd = _mm256_hadd_epi32(acc[2], acc[3]);
+            //     let abcd = _mm256_hadd_epi32(ab, cd);
+            //     let s = _mm_add_epi32(
+            //         _mm256_castsi256_si128(abcd),
+            //         _mm256_extracti128_si256(abcd, 1),
+            //     );
+            //     _mm_store_si128(l1_sum.as_mut_ptr().add(j) as *mut __m128i, s);
+            // }
 
             for i in 0..L1 {
                 let s = (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i])
