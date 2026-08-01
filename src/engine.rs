@@ -12,16 +12,10 @@ use crate::{
     param::*,
     rep::RepTable,
     see::{self, see_ge},
-    stack::{KeyStack, PvList, SearchStack},
+    stack::{KeyStack, PawnKey, PvList, SearchStack},
     timer::Timer,
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
-
-struct PawnKey {
-    pawn: u64,
-}
-
-impl PawnKey {}
 
 #[derive(Clone, Debug)]
 pub struct RootMove {
@@ -50,6 +44,7 @@ pub struct SearchResult {
 pub struct Engine {
     stack: Box<[SearchStack]>,
     key_stack: KeyStack,
+    pawn_key: PawnKey,
     // need to Box for movepick ptr
     heuristic: Box<Heuristic>,
     nodes: i64,
@@ -67,6 +62,7 @@ impl Engine {
         Self {
             stack: vec![SearchStack::new(); SS_SIZE].into_boxed_slice(),
             key_stack: KeyStack::new(),
+            pawn_key: PawnKey::new(),
             heuristic: Box::new(Heuristic::new()),
             nodes: 0,
             root_moves: vec![].into_boxed_slice(),
@@ -97,6 +93,7 @@ impl Engine {
         self.rep.add(key);
         self.stack[ss].m = m.clone();
         self.key_stack.push(key);
+        self.pawn_key.push(pos, m);
 
         let mut new_pos = pos.clone();
         if m.is_null() {
@@ -114,6 +111,7 @@ impl Engine {
         }
         self.rep.remove(key);
         self.key_stack.pop();
+        self.pawn_key.pop();
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
@@ -259,6 +257,7 @@ impl Engine {
             tt_data.pv,
             ply,
             self.stack[ss - 1].m,
+            self.pawn_key.get(),
             &self.heuristic,
             in_check,
         );
@@ -715,6 +714,7 @@ impl Engine {
             tt_data.pv,
             ply,
             self.stack[ss - 1].m,
+            self.pawn_key.get(),
             &self.heuristic,
         );
         loop {
@@ -995,6 +995,7 @@ impl Engine {
                 ply,
                 best_move,
                 self.stack[ss - 1].m,
+                self.pawn_key.get(),
                 &captures,
                 &quiets,
             );
@@ -1047,6 +1048,7 @@ impl Engine {
         }
 
         self.nnue.init(&pos);
+        self.pawn_key.init(&pos);
 
         // root moves
         let mut root_moves = vec![];

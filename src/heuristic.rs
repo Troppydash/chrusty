@@ -3,9 +3,10 @@ use cozy_chess::{Board, Move};
 use crate::{
     ext::{ExtBoard, ExtMove, MoveList},
     param::*,
+    stack::PawnKey,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct History<const LIMIT: i16> {
     value: i16,
 }
@@ -28,8 +29,10 @@ impl<const LIMIT: i16> History<LIMIT> {
 
 type MainHistory = History<20000>;
 type CaptureHistory = History<20000>;
+type PawnHistory = History<20000>;
 pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
+pub const PAWN_HASH: usize = 1 << 14;
 
 pub struct Heuristic {
     // lmr[move_count][depth]
@@ -44,6 +47,8 @@ pub struct Heuristic {
     counter: Box<[[Move; 64]; 12]>,
     // lowply heuristic [ply][side][from][to]
     low_ply: Box<[[[[MainHistory; 64]; 64]; 2]; LOW_PLY]>,
+    // pawn [hash][colored_piece][to]
+    pawn: Box<[[[PawnHistory; 64]; 12]; PAWN_HASH]>,
 }
 
 impl Heuristic {
@@ -64,7 +69,14 @@ impl Heuristic {
         let capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
         let killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
         let counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
-        let low_ply = Box::new([[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]);
+        let low_ply = vec![[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        let pawn = vec![[[PawnHistory::new(); 64]; 12]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
 
         Self {
             lmr,
@@ -73,6 +85,7 @@ impl Heuristic {
             killer_moves,
             counter,
             low_ply,
+            pawn,
         }
     }
 
@@ -82,6 +95,7 @@ impl Heuristic {
         self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
         self.counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
         self.low_ply = Box::new([[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]);
+        self.pawn = Box::new([[[PawnHistory::new(); 64]; 12]; PAWN_HASH]);
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -155,6 +169,16 @@ impl Heuristic {
         }
     }
 
+    fn get_pawn_mut(&mut self, pos: &Board, m: Move, pawn_key: u64) -> &mut PawnHistory {
+        &mut self.pawn[pawn_key as usize % PAWN_HASH][pos.color_piece_on(m.from).unwrap().index()]
+            [m.to as usize]
+    }
+
+    pub fn get_pawn(&self, pos: &Board, m: Move, pawn_key: u64) -> &PawnHistory {
+        &self.pawn[pawn_key as usize % PAWN_HASH][pos.color_piece_on(m.from).unwrap().index()]
+            [m.to as usize]
+    }
+
     pub fn update_history(
         &mut self,
         pos: &Board,
@@ -162,6 +186,7 @@ impl Heuristic {
         ply: i8,
         best_move: Move,
         prev_move: Move,
+        pawn_key: u64,
         captures: &MoveList,
         quiets: &MoveList,
     ) {
@@ -175,6 +200,7 @@ impl Heuristic {
             if ply < LOW_PLY as i8 {
                 self.get_low_ply_mut(pos, best_move, ply).add(bonus);
             }
+            self.get_pawn_mut(pos, best_move, pawn_key).add(bonus);
 
             for m in quiets.iter() {
                 assert!(!m.is_null());
@@ -183,6 +209,8 @@ impl Heuristic {
                 if ply < LOW_PLY as i8 {
                     self.get_low_ply_mut(pos, *m, ply).add(-malus);
                 }
+
+                self.get_pawn_mut(pos, *m, pawn_key).add(-malus);
             }
 
             let killers = self.get_killers_mut(ply);

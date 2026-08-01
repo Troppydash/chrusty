@@ -497,3 +497,7 @@ pub const ZOBRIST: ZobristConstants = {
         black_to_move,
     }
 };
+
+pub fn zobrist_pst(color: Color, piece: Piece, sq: Square) -> u64 {
+    ZOBRIST.color[color as usize].pieces[piece as usize][sq as usize]
+}

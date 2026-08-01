@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
-use cozy_chess::Move;
+use cozy_chess::{Board, Color, Move, Piece};
 
 use crate::{
-    ext::ExtMove,
+    ext::{BitBoardExt, ExtBoard, ExtMove, zobrist_pst},
     param::{MAX_DEPTH_USIZE, VALUE_NONE},
 };
 
@@ -106,5 +106,70 @@ impl KeyStack {
 
     pub fn clear(&mut self) {
         self.head = 0;
+    }
+}
+
+pub struct PawnKey {
+    pub pawns: [u64; MAX_DEPTH_USIZE],
+    pub size: usize,
+}
+
+impl PawnKey {
+    pub fn new() -> Self {
+        let pawns = [0; MAX_DEPTH_USIZE];
+        Self { pawns, size: 0 }
+    }
+
+    pub fn init(&mut self, board: &Board) {
+        let mut pawn = 0;
+        for color in [Color::White, Color::Black] {
+            let mut pawns = board.colored_pieces(color, Piece::Pawn);
+            while !pawns.is_empty() {
+                let sq = pawns.pop();
+                pawn ^= zobrist_pst(color, Piece::Pawn, sq);
+            }
+        }
+
+        self.pawns[0] = pawn;
+        self.size = 1;
+    }
+
+    pub fn push(&mut self, board: &Board, m: Move) {
+        if m.is_null() {
+            self.pawns[self.size] = self.pawns[self.size - 1];
+            self.size += 1;
+            return;
+        }
+
+        let mut next_pawn = self.pawns[self.size - 1];
+
+        let piece = board.piece_on(m.from).unwrap();
+        if piece == Piece::Pawn {
+            next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
+            next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.to);
+        }
+
+        if board.piece_on(m.to) == Some(Piece::Pawn) {
+            next_pawn ^= zobrist_pst(!board.side_to_move(), Piece::Pawn, m.to);
+        } else if board.is_ep(m) {
+            // enpassent
+            next_pawn ^= zobrist_pst(
+                !board.side_to_move(),
+                Piece::Pawn,
+                board.ep_square().unwrap(),
+            );
+        }
+
+        self.pawns[self.size] = next_pawn;
+        self.size += 1;
+    }
+
+    pub fn pop(&mut self) {
+        self.size -= 1;
+    }
+
+    pub fn get(&self) -> u64 {
+        assert!(self.size > 0);
+        self.pawns[self.size - 1]
     }
 }

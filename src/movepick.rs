@@ -108,6 +108,7 @@ pub struct Movepick {
     heuristic: *const Heuristic,
     probcut_margin: i32,
     prev_move: Move,
+    pawn_key: u64,
 
     // internal //
     moves: DynamicScoredMoveList,
@@ -126,6 +127,7 @@ impl Movepick {
         pv: Move,
         ply: i8,
         prev_move: Move,
+        pawn_key: u64,
         heuristic: &Heuristic,
     ) -> Self {
         Self {
@@ -135,6 +137,7 @@ impl Movepick {
             heuristic,
             probcut_margin: 0,
             prev_move,
+            pawn_key,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             skip_quiets: false,
@@ -149,6 +152,7 @@ impl Movepick {
         pv: Move,
         ply: i8,
         prev_move: Move,
+        pawn_key: u64,
         heuristic: &Heuristic,
         in_check: bool,
     ) -> Self {
@@ -159,6 +163,7 @@ impl Movepick {
             heuristic,
             probcut_margin: 0,
             prev_move,
+            pawn_key,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             skip_quiets: false,
@@ -182,6 +187,7 @@ impl Movepick {
             heuristic,
             probcut_margin,
             prev_move: Move::NULL_MOVE,
+            pawn_key: 0,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
             skip_quiets: false,
@@ -361,6 +367,10 @@ impl Movepick {
                         .get() as i32
                     / (1 + self.ply as i32);
             }
+
+            score += heuristic
+                .get_pawn(&self.pos, self.moves.get(i).inner, self.pawn_key)
+                .get() as i32;
 
             let killers = self.get_heuristic().get_killers(self.ply);
             if self.moves.get(i).inner == killers[0] {
@@ -558,12 +568,20 @@ mod tests {
 
         let heuristic = Heuristic::new();
         for mut mp in vec![
-            Movepick::new_negamax(pos.clone(), Move::NULL_MOVE, 0, Move::NULL_MOVE, &heuristic),
+            Movepick::new_negamax(
+                pos.clone(),
+                Move::NULL_MOVE,
+                0,
+                Move::NULL_MOVE,
+                0,
+                &heuristic,
+            ),
             Movepick::new_qsearch(
                 pos.clone(),
                 Move::NULL_MOVE,
                 0,
                 Move::NULL_MOVE,
+                0,
                 &heuristic,
                 true,
             ),
