@@ -1066,6 +1066,10 @@ impl Engine {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
+            if self.root_moves.len() == 1 && depth >= 3 {
+                break;
+            }
+
             let average_score = self.root_moves[0].average_score;
             let mut window = if is_valid(average_score) {
                 // need to wrap to prevent overflow
@@ -1085,10 +1089,14 @@ impl Engine {
                     (VALUE_INF as i32).min(self.root_moves[0].score as i32 + window as i32) as i16;
             }
 
+            let mut fail_highs = 0;
+
             // asp window
             loop {
                 assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
-                let score = self.negamax(&pos, alpha, beta, depth, SS_SIZE_PRE, true, false);
+                let reduced_depth = (depth - fail_highs).max(1);
+                let score =
+                    self.negamax(&pos, alpha, beta, reduced_depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();
 
                 if self.timer.read().unwrap().stopped() {
@@ -1098,8 +1106,14 @@ impl Engine {
                 if score <= alpha {
                     beta = avg(alpha, beta);
                     alpha = (-VALUE_INF as i32).max(score as i32 - window as i32) as i16;
+
+                    fail_highs = 0;
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
+
+                    if score < 2000 {
+                        fail_highs += 1;
+                    }
                 } else {
                     break;
                 }

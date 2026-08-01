@@ -133,10 +133,12 @@ impl Heuristic {
     }
 
     pub fn get_low_ply(&self, pos: &Board, m: Move, ply: i8) -> &MainHistory {
+        assert!((ply as usize) < LOW_PLY);
         &self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
     fn get_low_ply_mut(&mut self, pos: &Board, m: Move, ply: i8) -> &mut MainHistory {
+        assert!((ply as usize) < LOW_PLY);
         &mut self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 

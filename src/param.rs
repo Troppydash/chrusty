@@ -5,7 +5,7 @@ pub const VALUE_INF: i16 = 32700;
 pub const VALUE_CHECKMATE: i16 = VALUE_INF - (MAX_DEPTH as i16) - 1;
 pub const VALUE_EVAL: i16 = VALUE_CHECKMATE - 1;
 pub const VALUE_DRAW: i16 = 0;
-pub const MAX_TIME: i64 = 1_000_000_000_000_000;
+pub const MAX_TIME: i128 = 1_000_000_000_000_000;
 pub const MAX_NODES: i64 = 1_000_000_000_000_000;
 
 pub fn is_decisive(value: i16) -> bool {
@@ -51,7 +51,7 @@ pub const LMR_DEPTH: usize = MAX_DEPTH as usize;
 pub const SS_SIZE_PRE: usize = 10 as usize;
 pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 
-pub const ASP_WINDOW: i16 = 15;
+pub const ASP_WINDOW: i16 = 8;
 pub const ASP_WINDOW_SCORE_SCALE: i16 = 13000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 4;
 pub const ASP_WINDOW_MAX_SIZE: i16 = 4000;
