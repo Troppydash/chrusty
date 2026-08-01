@@ -774,10 +774,7 @@ impl NNUE {
         let stm = board.side_to_move() as usize;
 
         unsafe {
-            let vecf_zero = _mm256_setzero_ps();
-            let vecf_one = _mm256_set1_ps(1.0);
             let veci_zero = _mm256_setzero_si256();
-            let veci_one = _mm256_set1_epi16(QA as i16);
             let veci_ones = _mm256_set1_epi16(1);
 
             const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
@@ -803,24 +800,17 @@ impl NNUE {
             let mut n = 0;
             for b in (0..HL).step_by(32) {
                 let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
-                let zmask =
-                    _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpeq_epi32(v, veci_zero)))
-                        as u32;
-                let slice = (!zmask & 0xff) as usize;
-                let indices = _mm_loadu_si128(self.nnz_table.as_ptr().add(slice) as *const __m128i);
+                let slice =
+                    _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(v, veci_zero))) as u8;
+                let indices =
+                    _mm_loadu_si128(self.nnz_table.as_ptr().add(slice as usize) as *const __m128i);
                 _mm_storeu_si128(
                     idx.as_mut_ptr().add(n) as *mut __m128i,
                     _mm_add_epi16(base, indices),
                 );
                 n += slice.count_ones() as usize;
                 base = _mm_add_epi16(base, lookup_inc);
-                //     while m != 0 {
-                //         idx[n] = (b / 4) as u16 + m.trailing_zeros() as u16;
-                //         n += 1;
-                //         m &= m - 1;
-                //     }
             }
-            // println!("{}", n);
 
             let mut acc = [_mm256_setzero_si256(); 4];
             let l1_weights = &self.network.l1_weights[bucket];
