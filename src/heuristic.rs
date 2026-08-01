@@ -2,7 +2,7 @@ use cozy_chess::{Board, Move};
 
 use crate::{
     ext::{ExtBoard, ExtMove, MoveList},
-    param::*
+    param::*,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +29,7 @@ impl<const LIMIT: i16> History<LIMIT> {
 type MainHistory = History<20000>;
 type CaptureHistory = History<20000>;
 type PawnHistory = History<20000>;
+// TODO: type PawnCorr = History<10000>;
 pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
 pub const PAWN_HASH: usize = 1 << 14;

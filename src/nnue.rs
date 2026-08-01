@@ -706,77 +706,12 @@ impl NNUE {
         unsafe { self.avx2_evaluate(board) }
     }
 
-    /*
-       pub fn default_evaluate(&self, board: &Board) -> i32 {
-           let stm: usize = board.side_to_move() as usize;
-           const ZERO: i16 = 0i16;
-           const ONE: i16 = QA as i16;
-           const ZEROF: f32 = 0.0f32;
-           const ONEF: f32 = 1.0f32;
-           const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
-
-           let bucket = Network::get_output_bucket(board);
-
-           //- ft cleanup
-           let mut ft = Aligned::<u8, HL>::zeroed();
-           for side in 0..=1 {
-               let acc = &self.side[self.head].vals[stm ^ side];
-               for i in 0..HL / 2 {
-                   let x0 = acc[i].clamp(ZERO, ONE);
-                   let x1 = acc[i + HL / 2].clamp(ZERO, ONE);
-                   ft.0[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
-               }
-           }
-
-           //- ft -> l1
-           let mut l1 = Aligned::<f32, L1>::zeroed();
-           let mut l1_sum = Aligned::<i32, L1>::zeroed();
-           // this order HL -> L1 looks bad but the compiler unrolled the inner L1 so it is faster
-           for i in 0..HL {
-               for j in 0..L1 {
-                   l1_sum[j] += (ft[i] as i16 * self.network.l1_weights[bucket][j][i] as i16) as i32;
-               }
-           }
-
-           for i in 0..L1 {
-               let s =
-                   (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i]).clamp(ZEROF, ONEF);
-               l1[i] = s * s;
-           }
-
-           //- l1 -> l2
-           let mut l2 = Aligned::<f32, L2>::zeroed();
-           let mut l2_sum = Aligned::<f32, L2>::zeroed();
-           for i in 0..L1 {
-               for j in 0..L2 {
-                   l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
-               }
-           }
-
-           for i in 0..L2 {
-               let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
-               l2[i] = s * s;
-           }
-
-           //- l2 -> output
-           let mut output = self.network.output_bias[bucket];
-           for i in 0..L2 {
-               output += l2[i] * self.network.output_weights[bucket][i];
-           }
-
-           (output * SCALE as f32) as i32
-       }
-    */
-
     #[target_feature(enable = "avx2", enable = "fma")]
     pub unsafe fn avx2_evaluate(&mut self, board: &Board) -> i32 {
         let bucket = Network::get_output_bucket(board);
         let stm = board.side_to_move() as usize;
 
         unsafe {
-            let veci_zero = _mm256_setzero_si256();
-            let veci_ones = _mm256_set1_epi16(1);
-
             const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
             const ZERO: i16 = 0i16;
             const ONE: i16 = QA as i16;
@@ -800,8 +735,10 @@ impl NNUE {
             let mut n = 0;
             for b in (0..HL).step_by(32) {
                 let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
-                let slice =
-                    _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(v, veci_zero))) as u8;
+                let slice = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+                    v,
+                    _mm256_setzero_si256(),
+                ))) as u8;
                 let indices =
                     _mm_loadu_si128(self.nnz_table.as_ptr().add(slice as usize) as *const __m128i);
                 _mm_storeu_si128(
@@ -812,57 +749,26 @@ impl NNUE {
                 base = _mm_add_epi16(base, lookup_inc);
             }
 
-            let mut acc = [_mm256_setzero_si256(); L1 / 8];
+            // TODO: copy the dpbusd
+            let mut l1_sum = Aligned::<i32, L1>::zeroed();
             let l1_weights = &self.network.l1_weights[bucket];
             for t in 0..n {
                 let c = idx[t] as usize;
                 let f = _mm256_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
                 let w = l1_weights[c].as_ptr() as *const __m256i;
-                for q in 0..(L1 / 8) {
-                    acc[q] = _mm256_add_epi32(
-                        acc[q],
+                for q in (0..L1).step_by(8) {
+                    let value = _mm256_add_epi32(
+                        _mm256_load_si256(l1_sum.as_ptr().add(q) as _),
                         _mm256_madd_epi16(
-                            _mm256_maddubs_epi16(f, _mm256_load_si256(w.add(q))),
-                            veci_ones,
+                            _mm256_maddubs_epi16(f, _mm256_load_si256(w.add(q / 8))),
+                            _mm256_set1_epi16(1),
                         ),
                     );
+                    _mm256_store_si256(l1_sum.as_mut_ptr().add(q) as _, value);
                 }
             }
 
             let mut l1 = Aligned::<f32, L1>::uninit();
-            let mut l1_sum = Aligned::<i32, L1>::uninit();
-            for i in (0..L1).step_by(8) {
-                _mm256_store_si256(l1_sum.as_mut_ptr().add(i) as *mut __m256i, acc[i / 8]);
-            }
-
-            //- ft -> l1
-            // let mut l1 = Aligned::<f32, L1>::uninit();
-            // let mut l1_sum = Aligned::<i32, L1>::zeroed();
-            // let l1_weights = &self.network.l1_weights[bucket];
-            // for j in (0..L1).step_by(4) {
-            //     let mut acc = [_mm256_setzero_si256(); 4];
-            //     for i in (0..HL).step_by(32) {
-            //         let f = _mm256_load_si256(ft.0.as_ptr().add(i) as *const __m256i);
-            //         for k in 0..4 {
-            //             let w =
-            //                 _mm256_load_si256(l1_weights[j + k].as_ptr().add(i) as *const __m256i);
-            //             acc[k] = _mm256_add_epi32(
-            //                 acc[k],
-            //                 _mm256_madd_epi16(_mm256_maddubs_epi16(f, w), veci_ones),
-            //             );
-            //         }
-            //     }
-
-            //     let ab = _mm256_hadd_epi32(acc[0], acc[1]);
-            //     let cd = _mm256_hadd_epi32(acc[2], acc[3]);
-            //     let abcd = _mm256_hadd_epi32(ab, cd);
-            //     let s = _mm_add_epi32(
-            //         _mm256_castsi256_si128(abcd),
-            //         _mm256_extracti128_si256(abcd, 1),
-            //     );
-            //     _mm_store_si128(l1_sum.as_mut_ptr().add(j) as *mut __m128i, s);
-            // }
-
             for i in 0..L1 {
                 let s = (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i])
                     .clamp(ZEROF, ONEF);
