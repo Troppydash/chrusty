@@ -121,7 +121,7 @@ impl Engine {
             + 5 * pos.pieces(Piece::Rook).len()
             + 12 * pos.pieces(Piece::Queen).len();
 
-        let tempo = 10;
+        let tempo = if pos.in_check() { -5 } else { 5 };
         let mut score = self.nnue.evaluate(pos);
         score += tempo;
 
@@ -1146,10 +1146,7 @@ impl Engine {
 
             let average_score = self.root_moves[0].average_score;
             let mut window = if is_valid(average_score) {
-                // need to wrap to prevent overflow
-                let base = ASP_WINDOW as i32
-                    + (average_score as i32 * average_score as i32 / ASP_WINDOW_SCORE_SCALE as i32);
-                base.min(ASP_WINDOW_MAX_SIZE as i32) as i16
+                ASP_WINDOW + (average_score as i32 * average_score as i32 / ASP_WINDOW_SCORE_SCALE)
             } else {
                 ASP_WINDOW
             };
@@ -1194,11 +1191,6 @@ impl Engine {
 
                 // need [ASP_WINDOW_MAX_SIZE] to be small enough to prevent overflow
                 window += window / ASP_WINDOW_SCALE;
-                if window > ASP_WINDOW_MAX_SIZE {
-                    window = ASP_WINDOW_MAX_SIZE;
-                    alpha = -VALUE_INF;
-                    beta = VALUE_INF;
-                }
             }
 
             // force exit
