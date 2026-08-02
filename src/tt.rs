@@ -223,7 +223,7 @@ impl Bucket {
     }
 }
 
-const LARGE_PAGE: usize = 64;
+const LARGE_PAGE: usize = 4096;
 
 pub struct Table {
     buckets: NonNull<Bucket>,
@@ -286,7 +286,7 @@ impl Table {
     pub fn prefetch(&self, key: u64) {
         let index = ((key as u128 * self.size as u128) >> 64) as usize;
         unsafe {
-            _mm_prefetch(self.buckets.as_ptr().add(index) as *const i8, _MM_HINT_T1);
+            _mm_prefetch(self.buckets.as_ptr().add(index) as *const i8, _MM_HINT_T0);
         }
     }
 
