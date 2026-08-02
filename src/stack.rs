@@ -58,6 +58,7 @@ pub struct SearchStack {
     pub tt_pv: bool,
     pub excluded: Move,
     pub conseq_checks: i32,
+    pub verify_null: bool,
 }
 
 impl SearchStack {
@@ -70,6 +71,7 @@ impl SearchStack {
             tt_pv: false,
             excluded: Move::NULL_MOVE,
             conseq_checks: 0,
+            verify_null: false,
         }
     }
 
@@ -82,6 +84,7 @@ impl SearchStack {
             tt_pv: false,
             excluded: Move::NULL_MOVE,
             conseq_checks: 0,
+            verify_null: false,
         }
     }
 }

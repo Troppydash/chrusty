@@ -587,10 +587,13 @@ impl Engine {
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(self.stack[ss].adjusted_static)
                 && !is_loss(beta)
-                && self.stack[ss].adjusted_static as i32 >= beta as i32 + 200 - 50 * depth as i32
+                && self.stack[ss].adjusted_static as i32
+                    >= beta as i32 + 200 - 30 * depth as i32 - 50 * improving as i32
             {
-                let reduction = (6 + depth as i32 / 4) as i8;
-                let reduced_depth = i8::max(0, depth - reduction);
+                let reduction = (6 + depth as i32 / 4)
+                    + ((self.stack[ss].adjusted_static - beta) as i32 / 300).clamp(0, 3)
+                    + is_tt_capture as i32;
+                let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
                 self.table.get().prefetch(new_pos.correct_hash());
                 let score = -self.negamax(
@@ -609,7 +612,25 @@ impl Engine {
                 }
 
                 if score >= beta {
-                    return score;
+                    if depth >= 16 {
+                        self.stack[ss].verify_null = true;
+                        let verify_score =
+                            self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, cut_node);
+                        self.stack[ss].verify_null = false;
+
+                        if self.timer.read().unwrap().stopped() {
+                            return 0;
+                        }
+                        if verify_score >= beta {
+                            return verify_score;
+                        }
+
+                        if reduced_depth > tt_data.depth {
+                            self.stack[ss].adjusted_static = verify_score;
+                        }
+                    } else {
+                        return score;
+                    }
                 }
             }
 
@@ -894,7 +915,7 @@ impl Engine {
 
                 // history adjustment
                 let scaled_history_score =
-                    next_move.get_score() / if is_quiet { 11000 } else { 10000 };
+                    next_move.get_score() / if is_quiet { 13000 } else { 13000 };
                 reduction -= scaled_history_score as i32;
 
                 let reduced_depth =
