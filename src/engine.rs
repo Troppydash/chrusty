@@ -1051,7 +1051,7 @@ impl Engine {
             self.heuristic.update_history(
                 pos,
                 depth,
-                4,
+                2,
                 ply,
                 best_move,
                 self.stack[ss - 1].m,

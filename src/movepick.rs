@@ -388,17 +388,15 @@ impl Movepick {
                 continue;
             }
 
+            let m = self.moves.get(i).inner;
+
             // mvv-lva
             let heuristic = self.get_heuristic();
-            let mut score = heuristic
-                .get_capture_history(&self.pos, self.moves.get(i).inner)
-                .get() as i32;
+            let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
 
-            score += MVV_MULTIPLIER
-                * PIECE_VALUE[self.pos.get_captured(self.moves.get(i).inner) as usize];
+            score += MVV_MULTIPLIER * PIECE_VALUE[self.pos.get_captured(m) as usize];
 
-            score -= PIECE_VALUE[self.pos.piece_on(self.moves.get(i).inner.from).unwrap() as usize];
-            score += 1400;
+            score -= PIECE_VALUE[self.pos.piece_on(m.from).unwrap() as usize] / 8;
 
             if let Some(promotion) = self.moves.get(i).inner.promotion {
                 score += 10000 + PIECE_VALUE[promotion as usize];
