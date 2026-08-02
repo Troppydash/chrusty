@@ -50,8 +50,11 @@ pub struct Heuristic {
     low_ply: Box<[[[[MainHistory; 64]; 64]; 2]; LOW_PLY]>,
     // pawn [hash][colored_piece][to]
     pawn: Box<[[[PawnHistory; 64]; 12]; PAWN_HASH]>,
-    // pawn corrhist
+    // pawn corrhist [hash][stm]
     pawn_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
+    // colored pawn corrhist [hash][stm]
+    white_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
+    black_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
 }
 
 impl Heuristic {
@@ -86,6 +89,16 @@ impl Heuristic {
             .try_into()
             .unwrap();
 
+        let white_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+
+        let black_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+
         Self {
             lmr,
             main_history,
@@ -95,6 +108,8 @@ impl Heuristic {
             low_ply,
             pawn,
             pawn_corrhist,
+            white_corrhist,
+            black_corrhist,
         }
     }
 
@@ -112,6 +127,14 @@ impl Heuristic {
             .try_into()
             .unwrap();
         self.pawn_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        self.white_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        self.black_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
             .into_boxed_slice()
             .try_into()
             .unwrap();
@@ -200,6 +223,14 @@ impl Heuristic {
 
     pub fn get_pawn_corrhist(&mut self, pos: &Board, pawn_key: u64) -> &mut PawnCorr {
         &mut self.pawn_corrhist[pawn_key as usize % PAWN_HASH][pos.side_to_move() as usize]
+    }
+
+    pub fn get_white_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
+        &mut self.white_corrhist[key as usize % PAWN_HASH][pos.side_to_move() as usize]
+    }
+
+    pub fn get_black_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
+        &mut self.black_corrhist[key as usize % PAWN_HASH][pos.side_to_move() as usize]
     }
 
     pub fn update_history(

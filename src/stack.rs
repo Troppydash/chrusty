@@ -117,46 +117,74 @@ impl KeyStack {
 
 pub struct PawnKey {
     pub pawns: [u64; MAX_DEPTH_USIZE],
+    pub colored: [[u64; 2]; MAX_DEPTH_USIZE],
     pub size: usize,
 }
 
 impl PawnKey {
     pub fn new() -> Self {
         let pawns = [0; MAX_DEPTH_USIZE];
-        Self { pawns, size: 0 }
+        let colored = [[0; 2]; MAX_DEPTH_USIZE];
+        Self {
+            pawns,
+            colored,
+            size: 0,
+        }
     }
 
     pub fn init(&mut self, board: &Board) {
         let mut pawn = 0;
+        let mut colored = [0; 2];
         for color in [Color::White, Color::Black] {
             let mut pawns = board.colored_pieces(color, Piece::Pawn);
             while !pawns.is_empty() {
                 let sq = pawns.pop();
                 pawn ^= zobrist_pst(color, Piece::Pawn, sq);
             }
+
+            let mut pieces = board.colors(color) & !board.colored_pieces(color, Piece::Pawn);
+            while !pieces.is_empty() {
+                let sq = pieces.pop();
+                colored[color as usize] ^= zobrist_pst(color, board.piece_on(sq).unwrap(), sq);
+            }
         }
 
         self.pawns[0] = pawn;
+        self.colored[0] = colored;
         self.size = 1;
     }
 
     pub fn push(&mut self, board: &Board, m: Move) {
         if m.is_null() {
             self.pawns[self.size] = self.pawns[self.size - 1];
+            self.colored[self.size] = self.colored[self.size - 1];
             self.size += 1;
             return;
         }
 
         let mut next_pawn = self.pawns[self.size - 1];
+        let mut next_colored = self.colored[self.size - 1];
 
         let piece = board.piece_on(m.from).unwrap();
+        let target = board.piece_on(m.to);
+
         if piece == Piece::Pawn {
             next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
             next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.to);
+        } else {
+            next_colored[board.side_to_move() as usize] ^=
+                zobrist_pst(board.side_to_move(), piece, m.from);
+            next_colored[board.side_to_move() as usize] ^=
+                zobrist_pst(board.side_to_move(), piece, m.to);
         }
 
-        if board.piece_on(m.to) == Some(Piece::Pawn) {
-            next_pawn ^= zobrist_pst(!board.side_to_move(), Piece::Pawn, m.to);
+        if let Some(target) = target {
+            if target == Piece::Pawn {
+                next_pawn ^= zobrist_pst(!board.side_to_move(), Piece::Pawn, m.to);
+            } else {
+                next_colored[!board.side_to_move() as usize] ^=
+                    zobrist_pst(!board.side_to_move(), target, m.to);
+            }
         } else if board.is_ep(m) {
             // enpassent
             next_pawn ^= zobrist_pst(
@@ -167,6 +195,7 @@ impl PawnKey {
         }
 
         self.pawns[self.size] = next_pawn;
+        self.colored[self.size] = next_colored;
         self.size += 1;
     }
 
@@ -177,5 +206,10 @@ impl PawnKey {
     pub fn get(&self) -> u64 {
         assert!(self.size > 0);
         self.pawns[self.size - 1]
+    }
+
+    pub fn get_colored(&self) -> [u64; 2] {
+        assert!(self.size > 0);
+        self.colored[self.size - 1]
     }
 }

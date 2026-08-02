@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    os::linux::raw::stat,
+    sync::{Arc, RwLock},
+};
 
 use cozy_chess::{Board, Move, Piece};
 
@@ -1105,6 +1108,14 @@ impl Engine {
             self.heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
                 .add(bonus as i16);
+
+            let [white, black] = self.pawn_key.get_colored();
+            self.heuristic
+                .get_white_corrhist(pos, white)
+                .add(bonus as i16);
+            self.heuristic
+                .get_black_corrhist(pos, black)
+                .add(bonus as i16);
         }
 
         best_score
@@ -1113,14 +1124,17 @@ impl Engine {
     fn static_correction(&mut self, pos: &Board, static_score: i16, ss: usize) -> i16 {
         let mut static_score =
             ((static_score as i32 * (200 - pos.halfmove_clock() as i32)) / 200) as i16;
-        let value = 24
+        static_score += 24
             * self
                 .heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
                 .get()
             / 512;
 
-        static_score += value;
+        let [white, black] = self.pawn_key.get_colored();
+        static_score += 16 * self.heuristic.get_white_corrhist(pos, white).get() / 512;
+        static_score += 16 * self.heuristic.get_black_corrhist(pos, black).get() / 512;
+
         static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
     }
 
