@@ -1,8 +1,8 @@
 use arrayvec::ArrayVec;
-use cozy_chess::{Board, Color, Move, Piece};
+use cozy_chess::{BitBoard, Board, Color, Move, Piece};
 
 use crate::{
-    ext::{BitBoardExt, ExtBoard, ExtMove, zobrist_pst},
+    ext::{BitBoardExt, ExtBoard, ExtMove, MoveType, zobrist_pst},
     param::{MAX_DEPTH_USIZE, VALUE_NONE},
 };
 
@@ -116,8 +116,11 @@ impl KeyStack {
 }
 
 pub struct PawnKey {
+    // TODO: merge
     pub pawns: [u64; MAX_DEPTH_USIZE],
     pub colored: [[u64; 2]; MAX_DEPTH_USIZE],
+    pub major: [u64; MAX_DEPTH_USIZE],
+    pub minor: [u64; MAX_DEPTH_USIZE],
     pub size: usize,
 }
 
@@ -125,9 +128,13 @@ impl PawnKey {
     pub fn new() -> Self {
         let pawns = [0; MAX_DEPTH_USIZE];
         let colored = [[0; 2]; MAX_DEPTH_USIZE];
+        let major = [0; MAX_DEPTH_USIZE];
+        let minor = [0; MAX_DEPTH_USIZE];
         Self {
             pawns,
             colored,
+            major,
+            minor,
             size: 0,
         }
     }
@@ -149,53 +156,131 @@ impl PawnKey {
             }
         }
 
+        let mut major = 0;
+        let mut minor = 0;
+        for sq in board.pieces(Piece::King) | board.pieces(Piece::Queen) | board.pieces(Piece::Rook)
+        {
+            major ^= zobrist_pst(board.color_on(sq).unwrap(), board.piece_on(sq).unwrap(), sq);
+        }
+        for sq in
+            board.pieces(Piece::Pawn) | board.pieces(Piece::Bishop) | board.pieces(Piece::Knight)
+        {
+            minor ^= zobrist_pst(board.color_on(sq).unwrap(), board.piece_on(sq).unwrap(), sq);
+        }
+
         self.pawns[0] = pawn;
         self.colored[0] = colored;
+        self.major[0] = major;
+        self.minor[0] = minor;
         self.size = 1;
     }
 
     pub fn push(&mut self, board: &Board, m: Move) {
-        if m.is_null() {
-            self.pawns[self.size] = self.pawns[self.size - 1];
-            self.colored[self.size] = self.colored[self.size - 1];
-            self.size += 1;
-            return;
-        }
-
         let mut next_pawn = self.pawns[self.size - 1];
         let mut next_colored = self.colored[self.size - 1];
+        let mut next_major = self.major[self.size - 1];
+        let mut next_minor = self.minor[self.size - 1];
 
-        let piece = board.piece_on(m.from).unwrap();
-        let target = board.piece_on(m.to);
+        match board.move_type(m) {
+            MoveType::CASTLE => {
+                // king takes rook
+                let (king_to, rook_to) = board.castle_to(m);
 
-        if piece == Piece::Pawn {
-            next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
-            next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.to);
-        } else {
-            next_colored[board.side_to_move() as usize] ^=
-                zobrist_pst(board.side_to_move(), piece, m.from);
-            next_colored[board.side_to_move() as usize] ^=
-                zobrist_pst(board.side_to_move(), piece, m.to);
-        }
+                next_colored[board.side_to_move() as usize] ^=
+                    zobrist_pst(board.side_to_move(), Piece::King, m.from);
+                next_colored[board.side_to_move() as usize] ^=
+                    zobrist_pst(board.side_to_move(), Piece::King, king_to);
 
-        if let Some(target) = target {
-            if target == Piece::Pawn {
-                next_pawn ^= zobrist_pst(!board.side_to_move(), Piece::Pawn, m.to);
-            } else {
-                next_colored[!board.side_to_move() as usize] ^=
-                    zobrist_pst(!board.side_to_move(), target, m.to);
+                next_colored[board.side_to_move() as usize] ^=
+                    zobrist_pst(board.side_to_move(), Piece::Rook, m.to);
+                next_colored[board.side_to_move() as usize] ^=
+                    zobrist_pst(board.side_to_move(), Piece::Rook, rook_to);
+
+                next_major ^= zobrist_pst(board.side_to_move(), Piece::King, m.from);
+                next_major ^= zobrist_pst(board.side_to_move(), Piece::King, king_to);
+                next_major ^= zobrist_pst(board.side_to_move(), Piece::Rook, m.to);
+                next_major ^= zobrist_pst(board.side_to_move(), Piece::Rook, rook_to);
             }
-        } else if board.is_ep(m) {
-            // enpassent
-            next_pawn ^= zobrist_pst(
-                !board.side_to_move(),
-                Piece::Pawn,
-                board.ep_square().unwrap(),
-            );
+            MoveType::PROMOTION => {
+                next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
+
+                next_minor ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
+                next_colored[board.side_to_move() as usize] ^=
+                    zobrist_pst(board.side_to_move(), m.promotion.unwrap(), m.to);
+
+                if matches!(
+                    m.promotion.unwrap(),
+                    Piece::Pawn | Piece::Bishop | Piece::Knight
+                ) {
+                    next_minor ^= zobrist_pst(board.side_to_move(), m.promotion.unwrap(), m.to);
+                } else {
+                    next_major ^= zobrist_pst(board.side_to_move(), m.promotion.unwrap(), m.to);
+                }
+            }
+            MoveType::ENPASSENT => {
+                next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
+                next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.to);
+
+                next_minor ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
+                next_minor ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.to);
+
+                next_pawn ^= zobrist_pst(
+                    !board.side_to_move(),
+                    Piece::Pawn,
+                    board.ep_square().unwrap(),
+                );
+
+                next_minor ^= zobrist_pst(
+                    !board.side_to_move(),
+                    Piece::Pawn,
+                    board.ep_square().unwrap(),
+                );
+            }
+
+            MoveType::NORMAL => {
+                let piece = board.piece_on(m.from).unwrap();
+                let target = board.piece_on(m.to);
+
+                if piece == Piece::Pawn {
+                    next_pawn ^= zobrist_pst(board.side_to_move(), piece, m.from);
+                    next_pawn ^= zobrist_pst(board.side_to_move(), piece, m.to);
+                } else {
+                    next_colored[board.side_to_move() as usize] ^=
+                        zobrist_pst(board.side_to_move(), piece, m.from);
+                    next_colored[board.side_to_move() as usize] ^=
+                        zobrist_pst(board.side_to_move(), piece, m.to);
+                }
+
+                if matches!(piece, Piece::Pawn | Piece::Bishop | Piece::Knight) {
+                    next_minor ^= zobrist_pst(board.side_to_move(), piece, m.from);
+                    next_minor ^= zobrist_pst(board.side_to_move(), piece, m.to);
+                } else {
+                    next_major ^= zobrist_pst(board.side_to_move(), piece, m.from);
+                    next_major ^= zobrist_pst(board.side_to_move(), piece, m.to);
+                }
+
+                if let Some(target) = target {
+                    if target == Piece::Pawn {
+                        next_pawn ^= zobrist_pst(!board.side_to_move(), target, m.to);
+                    } else {
+                        next_colored[!board.side_to_move() as usize] ^=
+                            zobrist_pst(!board.side_to_move(), target, m.to);
+                    }
+
+                    if matches!(target, Piece::Pawn | Piece::Bishop | Piece::Knight) {
+                        next_minor ^= zobrist_pst(!board.side_to_move(), target, m.to);
+                    } else {
+                        next_major ^= zobrist_pst(!board.side_to_move(), target, m.to);
+                    }
+                }
+            }
+            MoveType::NONE => {}
         }
 
         self.pawns[self.size] = next_pawn;
         self.colored[self.size] = next_colored;
+        self.major[self.size] = next_major;
+        self.minor[self.size] = next_minor;
         self.size += 1;
     }
 
@@ -211,5 +296,55 @@ impl PawnKey {
     pub fn get_colored(&self) -> [u64; 2] {
         assert!(self.size > 0);
         self.colored[self.size - 1]
+    }
+
+    pub fn get_major(&self) -> u64 {
+        self.major[self.size - 1]
+    }
+
+    pub fn get_minor(&self) -> u64 {
+        self.minor[self.size - 1]
+    }
+
+    pub fn get_threats(&self, pos: &Board) -> u64 {
+        let mut threats = BitBoard::EMPTY;
+
+        let occ = pos.occupied();
+        let opp = pos.colors(!pos.side_to_move());
+        let mut pieces = pos.colors(pos.side_to_move());
+        while !pieces.is_empty() {
+            let sq = pieces.pop();
+            let p = pos.piece_on(sq).unwrap();
+            match p {
+                Piece::Pawn => {
+                    threats |= cozy_chess::get_pawn_attacks(sq, pos.side_to_move());
+                }
+                Piece::Knight => {
+                    threats |= cozy_chess::get_knight_moves(sq);
+                }
+                Piece::Bishop => {
+                    threats |= cozy_chess::get_bishop_moves(sq, occ);
+                }
+                Piece::Rook => {
+                    threats |= cozy_chess::get_rook_moves(sq, occ);
+                }
+                Piece::Queen => {
+                    threats |=
+                        cozy_chess::get_bishop_moves(sq, occ) | cozy_chess::get_rook_moves(sq, occ);
+                }
+                Piece::King => {
+                    threats |= cozy_chess::get_king_moves(sq);
+                }
+            }
+        }
+
+        let mut key = 0;
+        threats &= opp;
+        while !threats.is_empty() {
+            let sq = threats.pop();
+            key ^= zobrist_pst(!pos.side_to_move(), pos.piece_on(sq).unwrap(), sq);
+        }
+
+        key
     }
 }

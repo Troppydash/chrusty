@@ -1116,6 +1116,12 @@ impl Engine {
             self.heuristic
                 .get_black_corrhist(pos, black)
                 .add(bonus as i16);
+            self.heuristic
+                .get_major_corrhist(pos, self.pawn_key.get_major())
+                .add(bonus as i16);
+            self.heuristic
+                .get_minor_corrhist(pos, self.pawn_key.get_minor())
+                .add(bonus as i16);
         }
 
         best_score
@@ -1134,6 +1140,18 @@ impl Engine {
         let [white, black] = self.pawn_key.get_colored();
         static_score += 16 * self.heuristic.get_white_corrhist(pos, white).get() / 512;
         static_score += 16 * self.heuristic.get_black_corrhist(pos, black).get() / 512;
+        static_score += 16
+            * self
+                .heuristic
+                .get_major_corrhist(pos, self.pawn_key.get_major())
+                .get()
+            / 512;
+        // static_score += 8
+        //     * self
+        //         .heuristic
+        //         .get_minor_corrhist(pos, self.pawn_key.get_minor())
+        //         .get()
+        //     / 512;
 
         static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
     }
