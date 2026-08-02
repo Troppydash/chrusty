@@ -6,7 +6,7 @@ use crate::{
     cuckoo,
     ext::{ExtBoard, ExtMove, MoveList},
     helpers::avg,
-    heuristic::Heuristic,
+    heuristic::{CORR_LIMIT, Heuristic},
     movepick::Movepick,
     nnue::NNUE,
     param::*,
@@ -151,7 +151,8 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
-            return self.evaluate(pos);
+            let score = self.evaluate(pos);
+            return self.static_correction(pos, score, ss);
         }
 
         let key = pos.correct_hash();
@@ -220,7 +221,7 @@ impl Engine {
                 if !is_valid(unadjusted_static) {
                     unadjusted_static = self.evaluate(pos);
                 }
-                best_score = self.static_correction(unadjusted_static, ss);
+                best_score = self.static_correction(pos, unadjusted_static, ss);
 
                 //- use tt score to improve static score
                 let can_improve_static =
@@ -230,7 +231,7 @@ impl Engine {
                 }
             } else {
                 unadjusted_static = self.evaluate(pos);
-                best_score = self.static_correction(unadjusted_static, ss);
+                best_score = self.static_correction(pos, unadjusted_static, ss);
 
                 writer.set(
                     key,
@@ -402,7 +403,8 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
-            return self.evaluate(pos);
+            let score = self.evaluate(pos);
+            return self.static_correction(pos, score, ss);
         }
 
         self.nodes += 1;
@@ -513,7 +515,7 @@ impl Engine {
             } else if is_pv {
                 self.nnue.catchup(pos);
             }
-            self.stack[ss].adjusted_static = self.static_correction(unadjusted_static, ss);
+            self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
 
             //- use tt score to improve static score
             let can_improve_static = get_can_use(
@@ -527,7 +529,7 @@ impl Engine {
             }
         } else {
             unadjusted_static = self.evaluate(pos);
-            self.stack[ss].adjusted_static = self.static_correction(unadjusted_static, ss);
+            self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
 
             writer.set(
                 key,
@@ -1066,15 +1068,15 @@ impl Engine {
             self.stack[ss].tt_pv = self.stack[ss].tt_pv || self.stack[ss - 1].tt_pv;
         }
 
-        if !has_excluded {
-            let flag = if best_score >= beta {
-                FLAG_BETA
-            } else if is_pv && !best_move.is_null() {
-                FLAG_EXACT
-            } else {
-                FLAG_ALPHA
-            };
+        let flag = if best_score >= beta {
+            FLAG_BETA
+        } else if is_pv && !best_move.is_null() {
+            FLAG_EXACT
+        } else {
+            FLAG_ALPHA
+        };
 
+        if !has_excluded {
             //- tt update
             writer.set(
                 key,
@@ -1089,11 +1091,37 @@ impl Engine {
             );
         }
 
+        //- correction history
+        let adjusted_static = self.stack[ss].adjusted_static;
+        if !has_excluded
+            && is_valid(self.stack[ss].adjusted_static)
+            && !in_check
+            // pv not a capture
+            && !(!best_move.is_null() && !pos.is_quiet(best_move))
+            && (flag == FLAG_EXACT || (best_score >= adjusted_static && flag == FLAG_BETA) || (best_score < adjusted_static && flag == FLAG_ALPHA))
+        {
+            let bonus = ((best_score as i32 - adjusted_static as i32) * depth as i32 / 8)
+                .clamp((-CORR_LIMIT / 4) as i32, (CORR_LIMIT / 4) as i32);
+            self.heuristic
+                .get_pawn_corrhist(pos, self.pawn_key.get())
+                .add(bonus as i16);
+        }
+
         best_score
     }
 
-    fn static_correction(&mut self, static_score: i16, ss: usize) -> i16 {
-        static_score
+    fn static_correction(&mut self, pos: &Board, static_score: i16, ss: usize) -> i16 {
+        let mut static_score =
+            ((static_score as i32 * (200 - pos.halfmove_clock() as i32)) / 200) as i16;
+        let value = 24
+            * self
+                .heuristic
+                .get_pawn_corrhist(pos, self.pawn_key.get())
+                .get()
+            / 512;
+
+        static_score += value;
+        static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
     }
 
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
@@ -1206,8 +1234,8 @@ impl Engine {
                     instability = (instability + 1).min(6);
                 }
 
-                let instability_factor = 0.95 + instability as f64 * 0.02;
-                let score_factor = 0.95 + (best_score - last_best_score) as f64 * -0.001;
+                let instability_factor = 1.0 + instability as f64 * 0.01;
+                let score_factor = 1.0 + (best_score - last_best_score) as f64 * -0.001;
 
                 factors *= instability_factor * score_factor;
             }

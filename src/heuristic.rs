@@ -15,7 +15,7 @@ impl<const LIMIT: i16> History<LIMIT> {
         Self { value: 0 }
     }
 
-    fn add(&mut self, bonus: i16) {
+    pub fn add(&mut self, bonus: i16) {
         let clamped = bonus.clamp(-LIMIT, LIMIT) as i32;
         self.value =
             (self.value as i32 + clamped - self.value as i32 * clamped.abs() / LIMIT as i32) as i16;
@@ -26,10 +26,11 @@ impl<const LIMIT: i16> History<LIMIT> {
     }
 }
 
+pub const CORR_LIMIT: i16 = 1024;
 type MainHistory = History<20000>;
 type CaptureHistory = History<20000>;
 type PawnHistory = History<20000>;
-// TODO: type PawnCorr = History<10000>;
+type PawnCorr = History<CORR_LIMIT>;
 pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
 pub const PAWN_HASH: usize = 1 << 14;
@@ -49,6 +50,8 @@ pub struct Heuristic {
     low_ply: Box<[[[[MainHistory; 64]; 64]; 2]; LOW_PLY]>,
     // pawn [hash][colored_piece][to]
     pawn: Box<[[[PawnHistory; 64]; 12]; PAWN_HASH]>,
+    // pawn corrhist
+    pawn_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
 }
 
 impl Heuristic {
@@ -78,6 +81,11 @@ impl Heuristic {
             .try_into()
             .unwrap();
 
+        let pawn_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+
         Self {
             lmr,
             main_history,
@@ -86,6 +94,7 @@ impl Heuristic {
             counter,
             low_ply,
             pawn,
+            pawn_corrhist,
         }
     }
 
@@ -94,8 +103,18 @@ impl Heuristic {
         self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
         self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
         self.counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
-        self.low_ply = Box::new([[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]);
-        self.pawn = Box::new([[[PawnHistory::new(); 64]; 12]; PAWN_HASH]);
+        self.low_ply = vec![[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        self.pawn = vec![[[PawnHistory::new(); 64]; 12]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
+        self.pawn_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -177,6 +196,10 @@ impl Heuristic {
     pub fn get_pawn(&self, pos: &Board, m: Move, pawn_key: u64) -> &PawnHistory {
         &self.pawn[pawn_key as usize % PAWN_HASH][pos.color_piece_on(m.from).unwrap().index()]
             [m.to as usize]
+    }
+
+    pub fn get_pawn_corrhist(&mut self, pos: &Board, pawn_key: u64) -> &mut PawnCorr {
+        &mut self.pawn_corrhist[pawn_key as usize % PAWN_HASH][pos.side_to_move() as usize]
     }
 
     pub fn update_history(
