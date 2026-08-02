@@ -411,6 +411,13 @@ impl Movepick {
     }
 
     fn score_quiets(&mut self) {
+        let occ = self.pos.occupied();
+        let stm = self.pos.side_to_move();
+        let opp_king = self.pos.king(!stm);
+        let knight_attacks = cozy_chess::get_knight_moves(opp_king);
+        let bishop_attacks = cozy_chess::get_bishop_moves(opp_king, occ);
+        let rook_attacks = cozy_chess::get_rook_moves(opp_king, occ);
+
         let counter = self.get_heuristic().get_counter(&self.pos, self.prev_move);
 
         let mut i = self.moves.ptr;
@@ -423,10 +430,9 @@ impl Movepick {
             }
 
             let heuristic = self.get_heuristic();
+            let m = self.moves.get(i).inner;
 
-            let mut score = heuristic
-                .get_main_history(&self.pos, self.moves.get(i).inner)
-                .get() as i32;
+            let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
 
             if self.moves.get(i).inner == counter {
                 score += 10000;
@@ -434,20 +440,28 @@ impl Movepick {
 
             if self.ply < LOW_PLY as i8 {
                 score += LOW_PLY as i32
-                    * heuristic
-                        .get_low_ply(&self.pos, self.moves.get(i).inner, self.ply)
-                        .get() as i32
+                    * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
                     / (1 + self.ply as i32);
             }
 
-            score += heuristic
-                .get_pawn(&self.pos, self.moves.get(i).inner, self.pawn_key)
-                .get() as i32;
+            score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
+
+            let piece = self.pos.piece_on(m.from).unwrap();
+            let check = match piece {
+                Piece::Knight => !(m.to.bitboard() & knight_attacks).is_empty(),
+                Piece::Bishop => !(m.to.bitboard() & bishop_attacks).is_empty(),
+                Piece::Rook => !(m.to.bitboard() & rook_attacks).is_empty(),
+                Piece::Queen => !(m.to.bitboard() & (bishop_attacks | rook_attacks)).is_empty(),
+                _ => false,
+            };
+            if check {
+                score += 1000;
+            }
 
             let killers = self.get_heuristic().get_killers(self.ply);
-            if self.moves.get(i).inner == killers[0] {
+            if m == killers[0] {
                 score += 20000;
-            } else if self.moves.get(i).inner == killers[1] {
+            } else if m == killers[1] {
                 score += 15000;
             }
 
