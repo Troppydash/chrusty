@@ -788,7 +788,7 @@ impl Engine {
                 let lmr_depth = (depth as i32
                     - self.heuristic.get_lmr(move_count, depth) as i32
                     - !improving as i32
-                    + (next_move.get_score() / 10000) as i32)
+                    + (next_move.get_score() / if is_quiet { 9000 } else { 12000 }) as i32)
                     .clamp(1, depth as i32 + 1);
 
                 //- see pruning
@@ -925,7 +925,7 @@ impl Engine {
 
                 // history adjustment
                 let scaled_history_score =
-                    next_move.get_score() / if is_quiet { 13000 } else { 13000 };
+                    next_move.get_score() / if is_quiet { 9000 } else { 12000 };
                 reduction -= scaled_history_score as i32;
 
                 let reduced_depth =
