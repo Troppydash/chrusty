@@ -35,10 +35,11 @@ pub fn get_can_use(value: i16, flag: u8, alpha: i16, beta: i16) -> bool {
     return false;
 }
 
-fn key_matches(key: u64, hash: u16) -> bool {
-    key as u16 == hash
+fn key_matches(key: u64, hash: u64) -> bool {
+    key as u64 == hash
 }
 
+const NUM_ENTRIES: usize = 4;
 pub struct EntryValue {
     pub hit: bool,
     pub can_use: bool,
@@ -52,7 +53,7 @@ pub struct EntryValue {
 
 #[derive(Clone, Copy)]
 pub struct Entry {
-    hash: u16,
+    hash: u64,
     pv: u16,
     depth: i8,
     static_score: i16,
@@ -155,7 +156,7 @@ impl Entry {
             || depth + 4 + 2 * (is_pv as i8) > self.depth
             || age_diff >= 1
         {
-            self.hash = key as u16;
+            self.hash = key as u64;
             self.depth = depth;
             self.static_score = static_score;
 
@@ -181,21 +182,21 @@ impl Entry {
 }
 
 #[derive(Clone, Copy)]
-#[repr(C, align(32))]
+#[repr(C, align(64))]
 pub struct Bucket {
-    values: [Entry; 3],
+    values: [Entry; NUM_ENTRIES],
 }
 
 impl Bucket {
     fn new() -> Self {
         Self {
-            values: [Entry::new(); 3],
+            values: [Entry::new(); NUM_ENTRIES],
         }
     }
 
     /// Returns (reader, writer)
     fn get(&mut self, key: u64, age: u8) -> (Entry, &mut Entry) {
-        for i in 0..3 {
+        for i in 0..NUM_ENTRIES {
             if key_matches(key, self.values[i].hash) {
                 return (self.values[i].clone(), &mut self.values[i]);
             }
@@ -203,7 +204,7 @@ impl Bucket {
 
         // try to find least bad
         let mut best_slot = 0;
-        for i in 1..3 {
+        for i in 1..NUM_ENTRIES {
             let best_slot_score = self.values[best_slot].depth
                 - ((MAX_AGE + age - self.values[best_slot].get_age()) % MAX_AGE) as i8;
             let slot_score =
