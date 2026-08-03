@@ -18,8 +18,9 @@ fn get_attackers(pos: &Board, occ: BitBoard, to: Square) -> BitBoard {
     let queens = pos.pieces(Piece::Queen);
 
     let mut attackers = BitBoard::EMPTY;
-    attackers |= cozy_chess::get_bishop_moves(to, occ) & (occ & pos.pieces(Piece::Bishop) | queens);
-    attackers |= cozy_chess::get_rook_moves(to, occ) & (occ & pos.pieces(Piece::Rook) | queens);
+    attackers |=
+        cozy_chess::get_bishop_moves(to, occ) & (occ & (pos.pieces(Piece::Bishop) | queens));
+    attackers |= cozy_chess::get_rook_moves(to, occ) & (occ & (pos.pieces(Piece::Rook) | queens));
     attackers |= cozy_chess::get_knight_moves(to) & occ & pos.pieces(Piece::Knight);
     attackers |= cozy_chess::get_king_moves(to) & occ & pos.pieces(Piece::King);
 
@@ -64,8 +65,8 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
     let (opp_pinned, opp_checkers) = pos.opp_pinned_checkers();
     pinned[stm as usize] = pos.pinned() & pos.colors(stm);
     pinned[!stm as usize] = opp_pinned & pos.colors(!stm);
-    // checkers[stm as usize] = pos.checkers();
-    // checkers[!stm as usize] = opp_checkers;
+    checkers[stm as usize] = pos.checkers();
+    checkers[!stm as usize] = opp_checkers;
 
     let mut result = 1;
 
@@ -79,9 +80,11 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         }
 
         // remove pinned stm attackers
-        stm_attackers &= !pinned[stm as usize];
-        if stm_attackers.is_empty() {
-            break;
+        if !(checkers[stm as usize] & occ).is_empty() {
+            stm_attackers &= !pinned[stm as usize];
+            if stm_attackers.is_empty() {
+                break;
+            }
         }
 
         result ^= 1;

@@ -1149,12 +1149,12 @@ impl Engine {
                 .get_major_corrhist(pos, self.pawn_key.get_major())
                 .get()
             / 512;
-        // static_score += 8
-        //     * self
-        //         .heuristic
-        //         .get_minor_corrhist(pos, self.pawn_key.get_minor())
-        //         .get()
-        //     / 512;
+        static_score += 8
+            * self
+                .heuristic
+                .get_minor_corrhist(pos, self.pawn_key.get_minor())
+                .get()
+            / 512;
 
         static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
     }
@@ -1170,6 +1170,9 @@ impl Engine {
         for m in moves.iter() {
             let key = pos.correct_hash();
             self.rep.add_history(key);
+            if pos.halfmove_clock() == 0 {
+                self.key_stack.clear();
+            };
             self.key_stack.push(key);
             pos.play_unchecked(*m);
         }

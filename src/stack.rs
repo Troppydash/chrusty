@@ -90,14 +90,14 @@ impl SearchStack {
 }
 
 pub struct KeyStack {
-    pub keys: [u64; 1000],
+    pub keys: [u64; MAX_DEPTH_USIZE + 100 + 10],
     pub head: usize,
 }
 
 impl KeyStack {
     pub fn new() -> Self {
         Self {
-            keys: [0; 1000],
+            keys: [0; MAX_DEPTH_USIZE + 100 + 10],
             head: 0,
         }
     }
