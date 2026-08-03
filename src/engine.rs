@@ -262,7 +262,7 @@ impl Engine {
                 alpha = best_score;
             }
 
-            futility_base = best_score + 300;
+            futility_base = (best_score as i32 + 300).min(VALUE_EVAL as i32) as i16;
         }
 
         //- negamax
@@ -587,6 +587,7 @@ impl Engine {
             //- null move pruning
             let has_non_pawns = pos.has_non_pawns(pos.side_to_move());
             if cut_node
+                && !self.stack[ss].verify_null
                 && !has_excluded
                 && has_non_pawns
                 && !self.stack[ss - 1].m.is_null()
@@ -617,7 +618,7 @@ impl Engine {
                 }
 
                 if score >= beta {
-                    if depth >= 16 {
+                    if depth >= 18 {
                         self.stack[ss].verify_null = true;
                         let verify_score =
                             self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, cut_node);
@@ -739,12 +740,12 @@ impl Engine {
                 }
 
                 // fut prune
-                if move_count >= 3
-                    && !is_decisive(alpha)
-                    && (best_score as i32) < (alpha as i32 - 200 * 200 * depth as i32)
-                {
-                    return best_score;
-                }
+                // if move_count >= 3
+                //     && !is_decisive(alpha)
+                //     && (best_score as i32) < (alpha as i32 - 300 - 300 * depth as i32)
+                // {
+                //     return best_score;
+                // }
             }
         }
 
@@ -754,6 +755,7 @@ impl Engine {
 
         let mut quiets = MoveList::new();
         let mut captures = MoveList::new();
+        let old_alpha = alpha;
 
         //- negamax alphabeta search
         let mut movepick = Movepick::new_negamax(
@@ -1052,22 +1054,23 @@ impl Engine {
                 &captures,
                 &quiets,
             );
-        } else if best_score > alpha {
-            self.heuristic.update_history(
-                pos,
-                depth,
-                2,
-                ply,
-                best_move,
-                self.stack[ss - 1].m,
-                self.pawn_key.get(),
-                &captures,
-                &quiets,
-            );
         }
+        //  else if best_score > old_alpha {
+        //     self.heuristic.update_history(
+        //         pos,
+        //         depth,
+        //         4,
+        //         ply,
+        //         best_move,
+        //         self.stack[ss - 1].m,
+        //         self.pawn_key.get(),
+        //         &captures,
+        //         &quiets,
+        //     );
+        // }
 
         //- tt_pv propagation
-        if best_score <= alpha {
+        if best_score < old_alpha {
             self.stack[ss].tt_pv = self.stack[ss].tt_pv || self.stack[ss - 1].tt_pv;
         }
 
@@ -1267,7 +1270,7 @@ impl Engine {
                 }
 
                 let instability_factor = 1.0 + instability as f64 * 0.01;
-                let score_factor = 1.0 + (best_score - last_best_score) as f64 * -0.001;
+                let score_factor = 1.0 + (best_score as f64 - last_best_score as f64) * -0.001;
 
                 factors *= instability_factor * score_factor;
             }
