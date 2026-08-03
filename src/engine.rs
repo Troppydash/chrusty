@@ -51,6 +51,7 @@ pub struct Engine {
     // need to Box for movepick ptr
     heuristic: Box<Heuristic>,
     nodes: i64,
+    prev_score: Option<i16>,
     // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
@@ -68,6 +69,7 @@ impl Engine {
             pawn_key: PawnKey::new(),
             heuristic: Box::new(Heuristic::new()),
             nodes: 0,
+            prev_score: None,
             root_moves: vec![].into_boxed_slice(),
             timer,
             rep: RepTable::new(),
@@ -79,6 +81,7 @@ impl Engine {
     pub fn newgame(&mut self) {
         self.heuristic.clear();
         self.nnue.clear();
+        self.prev_score = None;
     }
 
     fn sort_root_moves(&mut self) {
@@ -1149,11 +1152,10 @@ impl Engine {
                 .get_major_corrhist(pos, self.pawn_key.get_major())
                 .get()
             / 512;
-        static_score += 8
-            * self
-                .heuristic
-                .get_minor_corrhist(pos, self.pawn_key.get_minor())
-                .get()
+        static_score += 8 * self
+            .heuristic
+            .get_minor_corrhist(pos, self.pawn_key.get_minor())
+            .get()
             / 512;
 
         static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
@@ -1267,7 +1269,7 @@ impl Engine {
             let best = self.root_moves[0].pv_list.pv();
             let best_score = self.root_moves[0].score;
             let mut factors = 1.0;
-            if depth >= 8 {
+            if depth >= 6 {
                 if best != last_best_move {
                     instability = (instability + 1).min(6);
                 }
@@ -1275,7 +1277,14 @@ impl Engine {
                 let instability_factor = 1.0 + instability as f64 * 0.01;
                 let score_factor = 1.0 + (best_score as f64 - last_best_score as f64) * -0.001;
 
-                factors *= instability_factor * score_factor;
+                let prev_score_factor = 1.0
+                    + if let Some(prev_score) = self.prev_score {
+                        (best_score as f64 - prev_score as f64) * -0.001
+                    } else {
+                        0.0
+                    };
+
+                factors *= instability_factor * score_factor * prev_score_factor;
             }
             last_best_move = best;
             last_best_score = best_score;
@@ -1335,6 +1344,8 @@ impl Engine {
         } else {
             println!("bestmove {} ", best_move.to_uci(&pos));
         }
+
+        self.prev_score = Some(result.root.score);
 
         result
     }
