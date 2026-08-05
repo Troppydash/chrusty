@@ -131,7 +131,7 @@ impl Engine {
         let mut score = self.nnue.evaluate(pos);
         score += tempo;
 
-        score = score * (200 + phase as i32) / 300;
+        // score = score * (200 + phase as i32) / 300;
 
         return score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
@@ -267,6 +267,7 @@ impl Engine {
 
             futility_base = (best_score as i32 + 300).min(VALUE_EVAL as i32) as i16;
         }
+        self.stack[ss].unadjusted_static = unadjusted_static;
 
         //- negamax
         let mut move_count = 0;
@@ -512,7 +513,7 @@ impl Engine {
             self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
             self.stack[ss].adjusted_static = VALUE_NONE;
         } else if has_excluded {
-            unadjusted_static = self.stack[ss].adjusted_static;
+            unadjusted_static = self.stack[ss].unadjusted_static;
             self.nnue.catchup(pos);
         } else if tt_data.hit {
             unadjusted_static = tt_data.static_score;
@@ -549,6 +550,7 @@ impl Engine {
                 tt_age,
             );
         }
+        self.stack[ss].unadjusted_static = unadjusted_static;
 
         let mut improving = false;
         if in_check {
@@ -569,9 +571,12 @@ impl Engine {
                 && is_valid(self.stack[ss].adjusted_static)
                 && !is_decisive(alpha)
                 && (self.stack[ss].adjusted_static as i32)
-                    < (alpha as i32 - 300 - 300 * depth as i32 * depth as i32)
+                    < (alpha as i32 - 400 - 400 * depth as i32 * depth as i32)
             {
-                return self.qsearch(pos, alpha, beta, 0, ss, false);
+                let score = self.qsearch(pos, alpha, beta, 0, ss, false);
+                if score < alpha {
+                    return score;
+                }
             }
 
             //- static null move pruning
@@ -596,11 +601,10 @@ impl Engine {
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(self.stack[ss].adjusted_static)
                 && !is_loss(beta)
-                && self.stack[ss].adjusted_static as i32
-                    >= beta as i32 + 200 - 30 * depth as i32 - 50 * improving as i32
+                && self.stack[ss].adjusted_static as i32 >= beta as i32 + 200 - 30 * depth as i32
             {
                 let reduction = (6 + depth as i32 / 4)
-                    + ((self.stack[ss].adjusted_static - beta) as i32 / 300).clamp(0, 3)
+                    + ((self.stack[ss].adjusted_static - beta) as i32 / 500).clamp(0, 3)
                     + is_tt_capture as i32;
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
@@ -621,25 +625,25 @@ impl Engine {
                 }
 
                 if score >= beta {
-                    if depth >= 18 {
-                        self.stack[ss].verify_null = true;
-                        let verify_score =
-                            self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, cut_node);
-                        self.stack[ss].verify_null = false;
+                    // if depth >= 18 {
+                    //     self.stack[ss].verify_null = true;
+                    //     let verify_score =
+                    //         self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, cut_node);
+                    //     self.stack[ss].verify_null = false;
 
-                        if self.timer.read().unwrap().stopped() {
-                            return 0;
-                        }
-                        if verify_score >= beta {
-                            return verify_score;
-                        }
+                    //     if self.timer.read().unwrap().stopped() {
+                    //         return 0;
+                    //     }
+                    //     if verify_score >= beta {
+                    //         return verify_score;
+                    //     }
 
-                        if reduced_depth > tt_data.depth {
-                            self.stack[ss].adjusted_static = verify_score;
-                        }
-                    } else {
-                        return score;
-                    }
+                    //     if reduced_depth > tt_data.depth {
+                    //         self.stack[ss].adjusted_static = verify_score;
+                    //     }
+                    // } else {
+                    return score;
+                    // }
                 }
             }
 
@@ -653,6 +657,7 @@ impl Engine {
             if !is_pv
                 && depth >= PROBCUT_DEPTH_MIN
                 && !is_decisive(beta)
+                && is_valid(self.stack[ss].adjusted_static)
                 &&
                     // also ignore when tt score is < probcut beta
                  !(tt_data.hit
@@ -890,7 +895,7 @@ impl Engine {
 
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
             self.table.get().prefetch(new_pos.correct_hash());
-            let new_depth = (depth + extension - 1).max(0);
+            let mut new_depth = (depth + extension - 1).max(0);
             let mut score = 0;
 
             //- late move reduction
@@ -944,19 +949,16 @@ impl Engine {
 
                 if score > alpha && reduced_depth < new_depth {
                     //- re-search adjustments
-                    let mut adjusted_new_depth = new_depth;
                     if (score as i32) > (best_score as i32 + 50 + new_depth as i32 * 2) {
-                        adjusted_new_depth += 1;
-                    } else if (score as i32) < (best_score as i32 - 10) {
-                        adjusted_new_depth -= 1;
+                        new_depth += 1;
                     }
 
-                    if reduced_depth < adjusted_new_depth {
+                    if reduced_depth < new_depth {
                         score = -self.negamax(
                             &new_pos,
                             -(alpha + 1),
                             -alpha,
-                            adjusted_new_depth,
+                            new_depth,
                             ss + 1,
                             false,
                             !cut_node,
