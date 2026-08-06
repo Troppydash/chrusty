@@ -220,7 +220,6 @@ impl Engine {
         self.stack[ss].conseq_checks = 0;
         if in_check {
             self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
-            best_score = -VALUE_INF;
         } else {
             if tt_data.hit {
                 unadjusted_static = tt_data.static_score;
@@ -267,7 +266,6 @@ impl Engine {
 
             futility_base = (best_score as i32 + 300).min(VALUE_EVAL as i32) as i16;
         }
-        self.stack[ss].unadjusted_static = unadjusted_static;
 
         //- negamax
         let mut move_count = 0;
@@ -507,13 +505,15 @@ impl Engine {
 
         //- adjusted/unadjusted evals
         let mut unadjusted_static = VALUE_NONE;
+        let mut tt_static = VALUE_NONE;
         let in_check = pos.in_check();
         self.stack[ss].conseq_checks = 0;
         if in_check {
             self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
             self.stack[ss].adjusted_static = VALUE_NONE;
         } else if has_excluded {
-            unadjusted_static = self.stack[ss].unadjusted_static;
+            unadjusted_static = self.stack[ss].adjusted_static;
+            tt_static = self.stack[ss].adjusted_static;
             self.nnue.catchup(pos);
         } else if tt_data.hit {
             unadjusted_static = tt_data.static_score;
@@ -523,6 +523,7 @@ impl Engine {
                 self.nnue.catchup(pos);
             }
             self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
+            tt_static = self.stack[ss].adjusted_static;
 
             //- use tt score to improve static score
             let can_improve_static = get_can_use(
@@ -532,11 +533,12 @@ impl Engine {
                 self.stack[ss].adjusted_static,
             );
             if is_valid(tt_data.score) && !is_decisive(tt_data.score) && can_improve_static {
-                self.stack[ss].adjusted_static = tt_data.score;
+                tt_static = tt_data.score;
             }
         } else {
             unadjusted_static = self.evaluate(pos);
             self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
+            tt_static = self.stack[ss].adjusted_static;
 
             writer.set(
                 key,
@@ -550,7 +552,6 @@ impl Engine {
                 tt_age,
             );
         }
-        self.stack[ss].unadjusted_static = unadjusted_static;
 
         let mut improving = false;
         if in_check {
@@ -566,12 +567,11 @@ impl Engine {
         }
 
         if !is_root && !in_check {
-            //- razoring, TODO:
+            //- razoring
             if !is_pv
-                && is_valid(self.stack[ss].adjusted_static)
+                && is_valid(tt_static)
                 && alpha < 2000
-                && (self.stack[ss].adjusted_static as i32)
-                    < (alpha as i32 - 400 * depth as i32 * depth as i32)
+                && (tt_static as i32) < (alpha as i32 - 400 * depth as i32 * depth as i32)
             {
                 let score = self.qsearch(pos, alpha, beta, 0, ss, false);
                 if score <= alpha {
@@ -582,14 +582,14 @@ impl Engine {
             //- static null move pruning
             let margin = 0.max(70 * (depth - !improving as i8) as i32);
             if !is_pv
-                && is_valid(self.stack[ss].adjusted_static)
+                && is_valid(tt_static)
                 && !is_loss(beta)
-                && !is_win(self.stack[ss].adjusted_static)
-                && self.stack[ss].adjusted_static as i32 - margin >= beta as i32
+                && !is_win(tt_static)
+                && tt_static as i32 - margin >= beta as i32
                 && depth <= 14
                 && (tt_data.pv.is_null() || is_tt_capture)
             {
-                return avg(beta, self.stack[ss].adjusted_static);
+                return avg(beta, tt_static);
             }
 
             //- null move pruning
@@ -599,12 +599,13 @@ impl Engine {
                 && !has_excluded
                 && has_non_pawns
                 && !self.stack[ss - 1].m.is_null()
-                && is_valid(self.stack[ss].adjusted_static)
+                && is_valid(tt_static)
                 && !is_loss(beta)
-                && self.stack[ss].adjusted_static as i32 >= beta as i32 + 200 - 30 * depth as i32
+                && tt_static as i32 >= beta as i32 + 200 - 30 * depth as i32
+                && self.stack[ss].adjusted_static >= beta
             {
                 let reduction = (6 + depth as i32 / 4)
-                    + ((self.stack[ss].adjusted_static - beta) as i32 / 500).clamp(0, 3)
+                    + ((tt_static - beta) as i32 / 500).clamp(0, 3)
                     + is_tt_capture as i32;
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
@@ -657,7 +658,7 @@ impl Engine {
             if !is_pv
                 && depth >= PROBCUT_DEPTH_MIN
                 && !is_decisive(beta)
-                && is_valid(self.stack[ss].adjusted_static)
+                && is_valid(tt_static)
                 &&
                     // also ignore when tt score is < probcut beta
                  !(tt_data.hit
@@ -665,9 +666,7 @@ impl Engine {
                     && ((tt_data.score as i32) < probcut_beta)
                     && (tt_data.depth >= depth - 3))
             {
-                let margin =
-                    (probcut_beta - self.stack[ss].adjusted_static as i32).clamp(-2000, 2000) * 10
-                        / 16;
+                let margin = (probcut_beta - tt_static as i32).clamp(-10000, 10000) * 10 / 16;
 
                 let mut tt_move = Move::NULL_MOVE;
                 if is_tt_capture && see_ge(pos, tt_data.pv, margin) {
@@ -728,17 +727,20 @@ impl Engine {
                     }
 
                     if score >= probcut_beta {
-                        writer.set(
-                            key,
-                            next_move.inner,
-                            ply,
-                            probcut_depth,
-                            FLAG_BETA,
-                            score,
-                            unadjusted_static,
-                            self.stack[ss].tt_pv,
-                            tt_age,
-                        );
+                        if !has_excluded {
+                            writer.set(
+                                key,
+                                next_move.inner,
+                                ply,
+                                probcut_depth,
+                                FLAG_BETA,
+                                score,
+                                unadjusted_static,
+                                self.stack[ss].tt_pv,
+                                tt_age,
+                            );
+                        }
+
                         return (score as i32 - probcut_beta as i32 + beta as i32)
                             .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32)
                             as i16;
@@ -822,8 +824,7 @@ impl Engine {
                     && quiets.len() > 1
                     && lmr_depth < 14
                     && !in_check
-                    && (self.stack[ss].adjusted_static as i32 + 150 + 150 * lmr_depth)
-                        < (alpha as i32)
+                    && (tt_static as i32 + 150 + 150 * lmr_depth) < (alpha as i32)
                 {
                     movepick.skip_quiets();
                     continue;
@@ -833,7 +834,7 @@ impl Engine {
                 if !is_quiet
                     && lmr_depth < 14
                     && !in_check
-                    && (self.stack[ss].adjusted_static as i32
+                    && (tt_static as i32
                         + 200
                         + 200 * lmr_depth
                         + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])

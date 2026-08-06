@@ -54,7 +54,6 @@ pub struct SearchStack {
     pub ply: i8,
     pub m: Move,
     pub pv_list: PvList,
-    pub unadjusted_static: i16,
     pub adjusted_static: i16,
     pub tt_pv: bool,
     pub excluded: Move,
@@ -68,7 +67,6 @@ impl SearchStack {
             ply: 0,
             m: Move::NULL_MOVE,
             pv_list: PvList::new(),
-            unadjusted_static: VALUE_NONE,
             adjusted_static: VALUE_NONE,
             tt_pv: false,
             excluded: Move::NULL_MOVE,
@@ -82,7 +80,6 @@ impl SearchStack {
             ply,
             m: Move::NULL_MOVE,
             pv_list: PvList::new(),
-            unadjusted_static: VALUE_NONE,
             adjusted_static: VALUE_NONE,
             tt_pv: false,
             excluded: Move::NULL_MOVE,
@@ -219,6 +216,17 @@ impl PawnKey {
                 } else {
                     next_major ^= zobrist_pst(board.side_to_move(), m.promotion.unwrap(), m.to);
                 }
+
+                if let Some(target) = board.piece_on(m.to) {
+                    next_colored[!board.side_to_move() as usize] ^=
+                        zobrist_pst(!board.side_to_move(), target, m.to);
+
+                    if matches!(target, Piece::Pawn | Piece::Bishop | Piece::Knight) {
+                        next_minor ^= zobrist_pst(!board.side_to_move(), target, m.to);
+                    } else {
+                        next_major ^= zobrist_pst(!board.side_to_move(), target, m.to);
+                    }
+                }
             }
             MoveType::ENPASSENT => {
                 next_pawn ^= zobrist_pst(board.side_to_move(), Piece::Pawn, m.from);
@@ -230,13 +238,13 @@ impl PawnKey {
                 next_pawn ^= zobrist_pst(
                     !board.side_to_move(),
                     Piece::Pawn,
-                    board.ep_square().unwrap(),
+                    board.ep_capture_square().unwrap(),
                 );
 
                 next_minor ^= zobrist_pst(
                     !board.side_to_move(),
                     Piece::Pawn,
-                    board.ep_square().unwrap(),
+                    board.ep_capture_square().unwrap(),
                 );
             }
 

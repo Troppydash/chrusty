@@ -192,6 +192,7 @@ impl ExtBoard for Board {
         self.piece_on(m.to).is_none() && m.promotion != Some(Piece::Queen)
     }
 
+    /// This is not the [ep_capture_square]
     #[inline]
     fn ep_square(&self) -> Option<Square> {
         match self.en_passant() {
