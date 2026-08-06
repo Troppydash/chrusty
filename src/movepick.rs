@@ -439,7 +439,7 @@ impl Movepick {
             if self.ply < LOW_PLY as i8 {
                 score += LOW_PLY as i32
                     * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
-                    / (1 + self.ply as i32);
+                    / (1 + self.ply as i32) / 4;
             }
 
             score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;

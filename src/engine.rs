@@ -626,25 +626,7 @@ impl Engine {
                 }
 
                 if score >= beta {
-                    // if depth >= 18 {
-                    //     self.stack[ss].verify_null = true;
-                    //     let verify_score =
-                    //         self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, cut_node);
-                    //     self.stack[ss].verify_null = false;
-
-                    //     if self.timer.read().unwrap().stopped() {
-                    //         return 0;
-                    //     }
-                    //     if verify_score >= beta {
-                    //         return verify_score;
-                    //     }
-
-                    //     if reduced_depth > tt_data.depth {
-                    //         self.stack[ss].adjusted_static = verify_score;
-                    //     }
-                    // } else {
                     return score;
-                    // }
                 }
             }
 
@@ -750,7 +732,7 @@ impl Engine {
                 }
 
                 // fut prune
-                // if move_count >= 3
+                // if move_count >= 5
                 //     && !is_decisive(alpha)
                 //     && (best_score as i32) < (alpha as i32 - 300 - 300 * depth as i32)
                 // {
@@ -1060,20 +1042,19 @@ impl Engine {
                 &captures,
                 &quiets,
             );
+        } else if !best_move.is_null() {
+            self.heuristic.update_history(
+                pos,
+                depth,
+                8,
+                ply,
+                best_move,
+                self.stack[ss - 1].m,
+                self.pawn_key.get(),
+                &captures,
+                &quiets,
+            );
         }
-        //  else if best_score > old_alpha {
-        //     self.heuristic.update_history(
-        //         pos,
-        //         depth,
-        //         4,
-        //         ply,
-        //         best_move,
-        //         self.stack[ss - 1].m,
-        //         self.pawn_key.get(),
-        //         &captures,
-        //         &quiets,
-        //     );
-        // }
 
         //- tt_pv propagation
         if best_score < old_alpha {
