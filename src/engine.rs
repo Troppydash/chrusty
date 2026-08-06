@@ -566,15 +566,15 @@ impl Engine {
         }
 
         if !is_root && !in_check {
-            //- razoring
+            //- razoring, TODO:
             if !is_pv
                 && is_valid(self.stack[ss].adjusted_static)
-                && !is_decisive(alpha)
+                && alpha < 2000
                 && (self.stack[ss].adjusted_static as i32)
-                    < (alpha as i32 - 400 - 400 * depth as i32 * depth as i32)
+                    < (alpha as i32 - 400 * depth as i32 * depth as i32)
             {
                 let score = self.qsearch(pos, alpha, beta, 0, ss, false);
-                if score < alpha {
+                if score <= alpha {
                     return score;
                 }
             }

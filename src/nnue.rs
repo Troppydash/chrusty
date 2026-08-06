@@ -20,7 +20,7 @@ use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
-pub const HL: usize = 2048;
+pub const HL: usize = 2560;
 pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const KINGS: usize = 10;
@@ -447,12 +447,12 @@ struct FinnyTable {
 }
 
 impl FinnyTable {
-    fn new() -> Self {
-        unsafe { mem::zeroed() }
+    fn new() -> Box<Self> {
+        unsafe { Box::new_zeroed().assume_init() }
     }
 
     fn clear(&mut self) {
-        self.entries = unsafe { mem::zeroed() };
+        self.entries = unsafe { *Box::new_zeroed().assume_init() };
     }
 }
 
@@ -461,7 +461,7 @@ pub struct NNUE {
     network: Box<Network>,
     side: Box<[Accumulator]>,
     head: usize,
-    finny: FinnyTable,
+    finny: Box<FinnyTable>,
     nnz_table: [[u16; 8]; 256],
 }
 
@@ -776,7 +776,7 @@ impl NNUE {
             }
 
             //- l1 -> l2
-            let mut l2 = Aligned::<f32, L2>::uninit();
+            // TODO: maybe flip?
             let mut l2_sum = Aligned::<f32, L2>::zeroed();
             for i in 0..L1 {
                 for j in 0..L2 {
@@ -784,6 +784,7 @@ impl NNUE {
                 }
             }
 
+            let mut l2 = Aligned::<f32, L2>::uninit();
             for i in 0..L2 {
                 let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
                 l2[i] = s * s;
@@ -943,5 +944,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_eval() {
+        let mut net = NNUE::new();
+        let board =
+            Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
+        net.init(&board);
+        let eval = net.evaluate(&board);
+        assert_eq!(eval, 0);
     }
 }
