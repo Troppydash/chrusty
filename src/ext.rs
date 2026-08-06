@@ -144,6 +144,8 @@ pub trait ExtBoard {
     fn castle_to(&self, m: Move) -> (Square, Square);
 
     fn opp_pinned_checkers(&self) -> (BitBoard, BitBoard);
+    fn opp_pinned_pinners(&self) -> (BitBoard, BitBoard);
+    fn pinners(&self) -> BitBoard;
 }
 
 impl ExtBoard for Board {
@@ -386,6 +388,49 @@ impl ExtBoard for Board {
         }
 
         return (pinned, checkers);
+    }
+
+    fn opp_pinned_pinners(&self) -> (BitBoard, BitBoard) {
+        // TODO: cache this
+        let mut pinned = BitBoard::EMPTY;
+        let mut pinners = BitBoard::EMPTY;
+        let color = !self.side_to_move();
+        let our_king = self.king(color);
+        let their_attackers = self.colors(!color)
+            & ((cozy_chess::get_bishop_rays(our_king)
+                & (self.pieces(Piece::Bishop) | self.pieces(Piece::Queen)))
+                | (cozy_chess::get_rook_rays(our_king)
+                    & (self.pieces(Piece::Rook) | self.pieces(Piece::Queen))));
+
+        for square in their_attackers {
+            let between = cozy_chess::get_between_rays(square, our_king) & self.occupied();
+            if between.len() == 1 {
+                pinned |= between;
+                pinners |= BitBoard::from(square);
+            }
+        }
+
+        return (pinned, pinners);
+    }
+
+    fn pinners(&self) -> BitBoard {
+        let mut pinners = BitBoard::EMPTY;
+        let color = self.side_to_move();
+        let our_king = self.king(color);
+        let their_attackers = self.colors(!color)
+            & ((cozy_chess::get_bishop_rays(our_king)
+                & (self.pieces(Piece::Bishop) | self.pieces(Piece::Queen)))
+                | (cozy_chess::get_rook_rays(our_king)
+                    & (self.pieces(Piece::Rook) | self.pieces(Piece::Queen))));
+
+        for square in their_attackers {
+            let between = cozy_chess::get_between_rays(square, our_king) & self.occupied();
+            if between.len() == 1 {
+                pinners |= BitBoard::from(square);
+            }
+        }
+
+        return pinners;
     }
 }
 
