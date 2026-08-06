@@ -507,6 +507,7 @@ impl Engine {
         let mut unadjusted_static = VALUE_NONE;
         let mut tt_static = VALUE_NONE;
         let in_check = pos.in_check();
+        let mut complexity = 0;
         self.stack[ss].conseq_checks = 0;
         if in_check {
             self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
@@ -524,6 +525,7 @@ impl Engine {
             }
             self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
             tt_static = self.stack[ss].adjusted_static;
+            complexity = (unadjusted_static as i32 - self.stack[ss].adjusted_static as i32).abs();
 
             //- use tt score to improve static score
             let can_improve_static = get_can_use(
@@ -539,6 +541,7 @@ impl Engine {
             unadjusted_static = self.evaluate(pos);
             self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
             tt_static = self.stack[ss].adjusted_static;
+            complexity = (unadjusted_static as i32 - self.stack[ss].adjusted_static as i32).abs();
 
             writer.set(
                 key,
@@ -907,6 +910,8 @@ impl Engine {
                 if tt_data.depth >= depth {
                     reduction -= 1;
                 }
+
+                reduction -= complexity / 400;
 
                 // pv extension
                 reduction -= self.stack[ss].tt_pv as i32 + is_pv as i32;
