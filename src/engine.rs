@@ -495,7 +495,7 @@ impl Engine {
         if !is_pv
             && !has_excluded
             && tt_data.can_use
-            && (cut_node == (tt_data.score >= beta))
+            && ((cut_node == (tt_data.score >= beta)) || depth > 5)
             && tt_data.depth >= depth + (tt_data.score >= beta) as i8
         {
             if pos.halfmove_clock() < 90 {
@@ -580,7 +580,7 @@ impl Engine {
             }
 
             //- static null move pruning
-            let margin = 0.max(70 * (depth - !improving as i8) as i32);
+            let margin = 0.max(70 * (depth - improving as i8) as i32);
             if !is_pv
                 && is_valid(tt_static)
                 && !is_loss(beta)
@@ -625,7 +625,7 @@ impl Engine {
                     return 0;
                 }
 
-                if score >= beta {
+                if score >= beta && !is_win(score) {
                     return score;
                 }
             }
@@ -896,7 +896,7 @@ impl Engine {
                 }
 
                 // capture reduction
-                if is_tt_capture {
+                if is_tt_capture && is_quiet {
                     reduction += 1;
                 }
 
@@ -1253,17 +1253,18 @@ impl Engine {
             let best = self.root_moves[0].pv_list.pv();
             let best_score = self.root_moves[0].score;
             let mut factors = 1.0;
-            if depth >= 6 {
-                if best != last_best_move {
+            {
+                if depth >= 6 && best != last_best_move {
                     instability = (instability + 1).min(6);
                 }
 
-                let instability_factor = 1.0 + instability as f64 * 0.01;
-                let score_factor = 1.0 + (best_score as f64 - last_best_score as f64) * -0.001;
+                let instability_factor = 1.0 + instability as f64 * 0.02;
+                let score_factor =
+                    1.0 + ((best_score as f64 - last_best_score as f64) * -0.001).clamp(-0.2, 0.4);
 
                 let prev_score_factor = 1.0
                     + if let Some(prev_score) = self.prev_score {
-                        (best_score as f64 - prev_score as f64) * -0.001
+                        ((best_score as f64 - prev_score as f64) * -0.001).clamp(-0.2, 0.4)
                     } else {
                         0.0
                     };
