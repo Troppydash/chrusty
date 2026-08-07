@@ -5,7 +5,10 @@ use cozy_chess::{
 };
 
 use crate::{
-    ext::{BitBoardExt, ExtBoard, MoveType::NORMAL},
+    ext::{
+        BitBoardExt, ExtBoard,
+        MoveType::{NORMAL, PROMOTION},
+    },
     param::PIECE_VALUE,
 };
 
@@ -33,7 +36,8 @@ fn get_attackers(pos: &Board, occ: BitBoard, to: Square) -> BitBoard {
 }
 
 pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
-    if pos.move_type(m) != NORMAL {
+    let mt = pos.move_type(m);
+    if mt != NORMAL {
         return true;
     }
 

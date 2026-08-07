@@ -128,6 +128,10 @@ impl Heuristic {
         }
     }
 
+    pub fn next_search(&mut self) {
+        self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
+    }
+
     pub fn clear(&mut self) {
         self.main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
         self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);

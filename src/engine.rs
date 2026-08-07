@@ -794,7 +794,7 @@ impl Engine {
                 }
 
                 //- history prunes
-                if is_quiet && next_move.get_score() < -7000 * depth as i32 {
+                if is_quiet && next_move.get_score() < -6000 * depth as i32 {
                     movepick.skip_quiets();
                     continue;
                 }
@@ -820,8 +820,8 @@ impl Engine {
                     && lmr_depth < 14
                     && !in_check
                     && (tt_static as i32
-                        + 200
-                        + 200 * lmr_depth
+                        + 150
+                        + 150 * lmr_depth
                         + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])
                         < (alpha as i32)
                 {
@@ -911,7 +911,7 @@ impl Engine {
                     reduction -= 1;
                 }
 
-                reduction -= complexity / 400;
+                reduction -= complexity / 100;
 
                 // pv extension
                 reduction -= self.stack[ss].tt_pv as i32 + is_pv as i32;
@@ -1123,8 +1123,7 @@ impl Engine {
     }
 
     fn static_correction(&mut self, pos: &Board, static_score: i16, ss: usize) -> i16 {
-        let mut static_score =
-            ((static_score as i32 * (200 - pos.halfmove_clock() as i32)) / 200) as i16;
+        let mut static_score = static_score;
         static_score += 24
             * self
                 .heuristic
@@ -1155,6 +1154,7 @@ impl Engine {
         self.rep.clear();
         self.key_stack.clear();
         self.table.get().next_search();
+        self.heuristic.next_search();
 
         // history tracking
         let mut pos = startpos;
