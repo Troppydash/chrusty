@@ -121,18 +121,7 @@ impl Engine {
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
-        let phase = 2 * pos.pieces(Piece::Pawn).len()
-            + 3 * pos.pieces(Piece::Knight).len()
-            + 3 * pos.pieces(Piece::Bishop).len()
-            + 5 * pos.pieces(Piece::Rook).len()
-            + 12 * pos.pieces(Piece::Queen).len();
-
-        let tempo = if pos.in_check() { -5 } else { 5 };
         let mut score = self.nnue.evaluate(pos);
-        score += tempo;
-
-        // score = score * (200 + phase as i32) / 300;
-
         return score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
@@ -780,7 +769,7 @@ impl Engine {
                 let lmr_depth = (depth as i32
                     - self.heuristic.get_lmr(move_count, depth) as i32
                     - !improving as i32
-                    + (next_move.get_score() / if is_quiet { 9000 } else { 12000 }) as i32)
+                    + (next_move.get_score() / if is_quiet { 9000 } else { 14000 }) as i32)
                     .clamp(1, depth as i32 + 1);
 
                 //- see pruning
@@ -918,7 +907,7 @@ impl Engine {
 
                 // history adjustment
                 let scaled_history_score =
-                    next_move.get_score() / if is_quiet { 9000 } else { 12000 };
+                    next_move.get_score() / if is_quiet { 9000 } else { 14000 };
                 reduction -= scaled_history_score as i32;
 
                 let reduced_depth =
@@ -1123,31 +1112,31 @@ impl Engine {
     }
 
     fn static_correction(&mut self, pos: &Board, static_score: i16, ss: usize) -> i16 {
-        let mut static_score = static_score;
-        static_score += 24
+        let mut static_score = static_score as i32;
+        static_score += 32
             * self
                 .heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
-                .get()
+                .get() as i32
             / 512;
 
         let [white, black] = self.pawn_key.get_colored();
-        static_score += 16 * self.heuristic.get_white_corrhist(pos, white).get() / 512;
-        static_score += 16 * self.heuristic.get_black_corrhist(pos, black).get() / 512;
-        static_score += 16
+        static_score += 24 * self.heuristic.get_white_corrhist(pos, white).get() as i32 / 512;
+        static_score += 24 * self.heuristic.get_black_corrhist(pos, black).get() as i32 / 512;
+        static_score += 24
             * self
                 .heuristic
                 .get_major_corrhist(pos, self.pawn_key.get_major())
-                .get()
+                .get() as i32
             / 512;
-        static_score += 16
+        static_score += 24
             * self
                 .heuristic
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
-                .get()
+                .get() as i32
             / 512;
 
-        static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
+        static_score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16
     }
 
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
