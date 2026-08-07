@@ -332,11 +332,11 @@ impl Engine {
 
             //- late move prune
             if !is_loss(best_score) {
-                if !in_check && move_count >= 3 {
+                if !in_check && move_count >= 4 {
                     break;
                 }
 
-                if in_check && pos.is_quiet(next_move.inner) {
+                if in_check && pos.is_quiet(next_move.inner) && move_count >= 2 {
                     break;
                 }
             }
@@ -1140,10 +1140,11 @@ impl Engine {
                 .get_major_corrhist(pos, self.pawn_key.get_major())
                 .get()
             / 512;
-        static_score += 8 * self
-            .heuristic
-            .get_minor_corrhist(pos, self.pawn_key.get_minor())
-            .get()
+        static_score += 16
+            * self
+                .heuristic
+                .get_minor_corrhist(pos, self.pawn_key.get_minor())
+                .get()
             / 512;
 
         static_score.clamp(-VALUE_EVAL, VALUE_EVAL)
@@ -1302,8 +1303,8 @@ impl Engine {
                 format!("cp {}", score)
             };
             print!(
-                "info depth {} nodes {} time {} score {} nps {} pv",
-                depth, self.nodes, delta, score_str, nps,
+                "info depth {} score {} nodes {} time {} nps {} pv",
+                depth, score_str, self.nodes, delta, nps,
             );
 
             let mut next_pos = pos.clone();
