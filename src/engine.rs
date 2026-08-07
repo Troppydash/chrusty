@@ -25,6 +25,7 @@ pub struct RootMove {
     pv_list: PvList,
     average_score: i16,
     score: i16,
+    nodes: i64,
 }
 
 impl RootMove {
@@ -35,6 +36,7 @@ impl RootMove {
             pv_list,
             average_score: VALUE_NONE,
             score: 0,
+            nodes: 0,
         }
     }
 }
@@ -763,6 +765,7 @@ impl Engine {
 
             let is_quiet = pos.is_quiet(next_move.inner);
             move_count += 1;
+            let old_nodes = self.nodes;
 
             //- low depth pruning
             if !is_root && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
@@ -971,6 +974,8 @@ impl Engine {
                     .iter_mut()
                     .find(|rm| rm.pv_list.pv() == next_move.inner)
                     .unwrap();
+
+                root_move.nodes += self.nodes - old_nodes;
                 root_move.average_score = if is_valid(root_move.average_score) {
                     avg(root_move.average_score, score)
                 } else {
@@ -1248,23 +1253,26 @@ impl Engine {
             let best = self.root_moves[0].pv_list.pv();
             let best_score = self.root_moves[0].score;
             let mut factors = 1.0;
-            {
+            if depth > 1 {
                 if depth >= 6 && best != last_best_move {
                     instability = (instability + 1).min(6);
                 }
 
-                let instability_factor = 1.0 + instability as f64 * 0.02;
+                let instability_factor = instability as f64 * 0.02;
                 let score_factor =
-                    1.0 + ((best_score as f64 - last_best_score as f64) * -0.001).clamp(-0.2, 0.4);
+                    ((best_score as f64 - last_best_score as f64) * -0.001).clamp(-0.2, 0.4);
 
-                let prev_score_factor = 1.0
-                    + if let Some(prev_score) = self.prev_score {
-                        ((best_score as f64 - prev_score as f64) * -0.001).clamp(-0.2, 0.4)
-                    } else {
-                        0.0
-                    };
+                let prev_score_factor = if let Some(prev_score) = self.prev_score {
+                    ((best_score as f64 - prev_score as f64) * -0.001).clamp(-0.2, 0.4)
+                } else {
+                    0.0
+                };
 
-                factors *= instability_factor * score_factor * prev_score_factor;
+                let nodes_factor = 0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64;
+                factors *= (1.0 + instability_factor)
+                    * (1.0 + score_factor)
+                    * (1.0 + prev_score_factor)
+                    * (1.0 + nodes_factor);
             }
             last_best_move = best;
             last_best_score = best_score;
