@@ -2,7 +2,7 @@ use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, Move, Piece};
 
 use crate::{
-    ext::{BitBoardExt, ExtBoard, ExtMove, MoveType, zobrist_pst},
+    ext::{BitBoardExt, ColoredPiece, ExtBoard, ExtMove, MoveType, zobrist_pst},
     param::{MAX_DEPTH_USIZE, VALUE_NONE},
 };
 
@@ -59,6 +59,7 @@ pub struct SearchStack {
     pub excluded: Move,
     pub conseq_checks: i32,
     pub verify_null: bool,
+    pub piece: Option<ColoredPiece>,
 }
 
 impl SearchStack {
@@ -72,6 +73,7 @@ impl SearchStack {
             excluded: Move::NULL_MOVE,
             conseq_checks: 0,
             verify_null: false,
+            piece: None,
         }
     }
 
@@ -85,6 +87,7 @@ impl SearchStack {
             excluded: Move::NULL_MOVE,
             conseq_checks: 0,
             verify_null: false,
+            piece: None,
         }
     }
 }
