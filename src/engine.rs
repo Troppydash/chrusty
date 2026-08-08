@@ -7,7 +7,7 @@ use cozy_chess::{Board, Move, Piece};
 
 use crate::{
     cuckoo,
-    ext::{ExtBoard, ExtMove, MoveList},
+    ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
     helpers::avg,
     heuristic::{CORR_LIMIT, Heuristic},
     movepick::Movepick,
@@ -107,6 +107,8 @@ impl Engine {
         if m.is_null() {
             new_pos.null_move().unwrap()
         } else {
+            self.stack[ss].piece = Some(pos.color_piece_on(m.from).unwrap());
+
             self.nnue.make_move(pos, m);
             new_pos.play_unchecked(m);
             new_pos
@@ -267,6 +269,7 @@ impl Engine {
             ply,
             depth,
             self.stack[ss - 1].m,
+            self.stack[ss - 1].piece,
             self.pawn_key.get(),
             &self.heuristic,
             in_check,
@@ -565,7 +568,7 @@ impl Engine {
             if !is_pv
                 && is_valid(tt_static)
                 && alpha < 2000
-                && (tt_static as i32) < (alpha as i32 - 400 * depth as i32 * depth as i32)
+                && (tt_static as i32) < (alpha as i32 - 300 * depth as i32 * depth as i32)
             {
                 let score = self.qsearch(pos, alpha, beta, 0, ss, false);
                 if score <= alpha {
@@ -750,6 +753,7 @@ impl Engine {
             ply,
             depth,
             self.stack[ss - 1].m,
+            self.stack[ss - 1].piece,
             self.pawn_key.get(),
             &self.heuristic,
         );
@@ -801,7 +805,7 @@ impl Engine {
                     && quiets.len() > 1
                     && lmr_depth < 14
                     && !in_check
-                    && (tt_static as i32 + 150 + 150 * lmr_depth) < (alpha as i32)
+                    && (tt_static as i32 + 200 + 200 * lmr_depth) < (alpha as i32)
                 {
                     movepick.skip_quiets();
                     continue;
@@ -812,8 +816,8 @@ impl Engine {
                     && lmr_depth < 14
                     && !in_check
                     && (tt_static as i32
-                        + 150
-                        + 150 * lmr_depth
+                        + 200
+                        + 200 * lmr_depth
                         + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])
                         < (alpha as i32)
                 {
@@ -852,7 +856,7 @@ impl Engine {
 
                 if next_best_score < to_beat {
                     // extend
-                    if !is_pv && ((next_best_score as i32) < (to_beat as i32 - 30)) {
+                    if !is_pv && ((next_best_score as i32) < (to_beat as i32 - 50)) {
                         if is_quiet && ((next_best_score as i32) < (to_beat as i32 - 300)) {
                             extension = 3;
                         } else {
@@ -1037,6 +1041,7 @@ impl Engine {
                 ply,
                 best_move,
                 self.stack[ss - 1].m,
+                self.stack[ss - 1].piece,
                 self.pawn_key.get(),
                 &captures,
                 &quiets,
@@ -1049,6 +1054,7 @@ impl Engine {
                 ply,
                 best_move,
                 self.stack[ss - 1].m,
+                self.stack[ss - 1].piece,
                 self.pawn_key.get(),
                 &captures,
                 &quiets,
@@ -1260,10 +1266,10 @@ impl Engine {
 
                 let instability_factor = instability as f64 * 0.02;
                 let score_factor =
-                    ((best_score as f64 - last_best_score as f64) * -0.001).clamp(-0.2, 0.4);
+                    ((best_score as f64 - last_best_score as f64) * -0.002).clamp(-0.2, 0.4);
 
                 let prev_score_factor = if let Some(prev_score) = self.prev_score {
-                    ((best_score as f64 - prev_score as f64) * -0.001).clamp(-0.2, 0.4)
+                    ((best_score as f64 - prev_score as f64) * -0.002).clamp(-0.2, 0.4)
                 } else {
                     0.0
                 };

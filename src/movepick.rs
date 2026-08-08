@@ -5,7 +5,7 @@ use cozy_chess::{
 };
 
 use crate::{
-    ext::{ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
+    ext::{ColoredPiece, ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
     heuristic::{Heuristic, LOW_PLY},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, PIECE_VALUE},
     see,
@@ -111,6 +111,7 @@ pub struct Movepick {
     heuristic: *const Heuristic,
     probcut_margin: i32,
     prev_move: Move,
+    prev_piece: Option<ColoredPiece>,
     pawn_key: u64,
 
     // internal //
@@ -131,6 +132,7 @@ impl Movepick {
         ply: i8,
         depth: i8,
         prev_move: Move,
+        prev_piece: Option<ColoredPiece>,
         pawn_key: u64,
         heuristic: &Heuristic,
     ) -> Self {
@@ -142,6 +144,7 @@ impl Movepick {
             heuristic,
             probcut_margin: 0,
             prev_move,
+            prev_piece,
             pawn_key,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
@@ -158,6 +161,7 @@ impl Movepick {
         ply: i8,
         depth: i8,
         prev_move: Move,
+        prev_piece: Option<ColoredPiece>,
         pawn_key: u64,
         heuristic: &Heuristic,
         in_check: bool,
@@ -170,6 +174,7 @@ impl Movepick {
             heuristic,
             probcut_margin: 0,
             prev_move,
+            prev_piece,
             pawn_key,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
@@ -196,6 +201,7 @@ impl Movepick {
             heuristic,
             probcut_margin,
             prev_move: Move::NULL_MOVE,
+            prev_piece: None,
             pawn_key: 0,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
@@ -416,7 +422,9 @@ impl Movepick {
         let bishop_attacks = cozy_chess::get_bishop_moves(opp_king, occ);
         let rook_attacks = cozy_chess::get_rook_moves(opp_king, occ);
 
-        let counter = self.get_heuristic().get_counter(&self.pos, self.prev_move);
+        let counter = self
+            .get_heuristic()
+            .get_counter(self.prev_move, self.prev_piece);
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -439,7 +447,8 @@ impl Movepick {
             if self.ply < LOW_PLY as i8 {
                 score += LOW_PLY as i32
                     * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
-                    / (1 + self.ply as i32) / 4;
+                    / (1 + self.ply as i32)
+                    / 4;
             }
 
             score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
@@ -675,6 +684,7 @@ mod tests {
                 0,
                 0,
                 Move::NULL_MOVE,
+                None,
                 0,
                 &heuristic,
             ),
@@ -684,6 +694,7 @@ mod tests {
                 0,
                 0,
                 Move::NULL_MOVE,
+                None,
                 0,
                 &heuristic,
                 true,

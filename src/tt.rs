@@ -65,8 +65,8 @@ pub struct Entry {
 impl Entry {
     fn new() -> Self {
         Self {
-            hash: 0,
-            pv: 0,
+            hash: 1,
+            pv: Move::NULL_MOVE_BITS,
             depth: UNINIT_DEPTH,
             static_score: VALUE_NONE,
             score: VALUE_NONE,
@@ -176,8 +176,12 @@ impl Entry {
     }
 
     fn clear(&mut self) {
-        self.hash = 0;
+        self.hash = 1;
         self.depth = UNINIT_DEPTH;
+        self.pv = Move::NULL_MOVE_BITS;
+        self.static_score = VALUE_NONE;
+        self.score = VALUE_NONE;
+        self.mask = 0;
     }
 }
 
@@ -297,7 +301,7 @@ impl Table {
 
     pub fn resize(&mut self, size_in_mbytes: usize) {
         self.dealloc();
-        self.size = size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>();
+        self.size = (size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>()).max(1);
         let layout = Self::get_layout(self.size);
         self.buckets = unsafe {
             let ptr = alloc_zeroed(layout) as *mut Bucket;

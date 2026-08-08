@@ -1,7 +1,7 @@
 use cozy_chess::{Board, Move};
 
 use crate::{
-    ext::{ExtBoard, ExtMove, MoveList},
+    ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
     param::*,
 };
 
@@ -34,6 +34,8 @@ type PawnCorr = History<CORR_LIMIT>;
 pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
 pub const PAWN_HASH: usize = 1 << 14;
+
+// TODO: cont hist
 
 pub struct Heuristic {
     // lmr[move_count][depth]
@@ -202,19 +204,6 @@ impl Heuristic {
         &mut self.killer_moves[ply as usize]
     }
 
-    pub fn get_counter(&self, pos: &Board, prev_move: Move) -> Move {
-        if prev_move.is_null() {
-            return Move::NULL_MOVE;
-        }
-
-        if let Some(colored_piece) = pos.color_piece_on(prev_move.to) {
-            // [to] because previous move
-            return self.counter[colored_piece.index()][prev_move.to as usize];
-        } else {
-            return Move::NULL_MOVE;
-        }
-    }
-
     pub fn get_low_ply(&self, pos: &Board, m: Move, ply: i8) -> &MainHistory {
         assert!((ply as usize) < LOW_PLY);
         &self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
@@ -225,12 +214,29 @@ impl Heuristic {
         &mut self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
-    pub fn get_counter_mut(&mut self, pos: &Board, prev_move: Move) -> Option<&mut Move> {
+    pub fn get_counter(&self, prev_move: Move, prev_piece: Option<ColoredPiece>) -> Move {
+        if prev_move.is_null() {
+            return Move::NULL_MOVE;
+        }
+
+        if let Some(colored_piece) = prev_piece {
+            // [to] because previous move
+            return self.counter[colored_piece.index()][prev_move.to as usize];
+        } else {
+            return Move::NULL_MOVE;
+        }
+    }
+
+    pub fn get_counter_mut(
+        &mut self,
+        prev_move: Move,
+        prev_piece: Option<ColoredPiece>,
+    ) -> Option<&mut Move> {
         if prev_move.is_null() {
             return None;
         }
 
-        if let Some(colored_piece) = pos.color_piece_on(prev_move.to) {
+        if let Some(colored_piece) = prev_piece {
             // [to] because previous move
             return Some(&mut self.counter[colored_piece.index()][prev_move.to as usize]);
         } else {
@@ -276,6 +282,7 @@ impl Heuristic {
         ply: i8,
         best_move: Move,
         prev_move: Move,
+        prev_piece: Option<ColoredPiece>,
         pawn_key: u64,
         captures: &MoveList,
         quiets: &MoveList,
@@ -309,7 +316,7 @@ impl Heuristic {
             }
             killers[0] = best_move;
 
-            if let Some(counter) = self.get_counter_mut(pos, prev_move) {
+            if let Some(counter) = self.get_counter_mut(prev_move, prev_piece) {
                 *counter = best_move;
             }
         } else {
