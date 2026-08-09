@@ -882,41 +882,42 @@ impl Engine {
 
             //- late move reduction
             if depth >= 2 && move_count > 1 + 2 * is_root as usize {
-                let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32;
+                let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32 * 1024;
 
                 // check extension
                 if self.stack[ss].conseq_checks < 4 && new_pos.in_check() {
-                    reduction -= 1;
+                    reduction -= 800;
                 }
 
                 // cutnode reduction
                 if cut_node {
-                    reduction += 2 - self.stack[ss].tt_pv as i32;
+                    reduction += (2 - self.stack[ss].tt_pv as i32) * 1200;
                 }
 
                 // capture reduction
                 if is_tt_capture && is_quiet {
-                    reduction += 1;
+                    reduction += 1024;
                 }
 
                 if !improving {
-                    reduction += 1;
+                    reduction += 1024;
                 }
 
                 if tt_data.depth >= depth {
-                    reduction -= 1;
+                    reduction -= 800;
                 }
 
-                reduction -= complexity / 100;
+                reduction -= complexity * 1024 / 100;
 
                 // pv extension
-                reduction -= self.stack[ss].tt_pv as i32 + is_pv as i32;
+                reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * 1024;
 
                 // history adjustment
                 let scaled_history_score =
-                    next_move.get_score() / if is_quiet { 9000 } else { 14000 };
+                    next_move.get_score() * 1024 / if is_quiet { 9000 } else { 14000 };
                 reduction -= scaled_history_score as i32;
 
+                reduction /= 1024;
                 let reduced_depth =
                     (new_depth as i32 - reduction).clamp(1, new_depth as i32 + 1) as i8;
 
