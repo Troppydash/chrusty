@@ -20,7 +20,7 @@ use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
-pub const HL_NO_PST: usize = 2048;
+pub const HL_NO_PST: usize = 2560;
 pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const KINGS: usize = 10;
@@ -29,8 +29,7 @@ pub const HL: usize = HL_NO_PST + OUTPUTS;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
 pub const FT_SHIFT: usize = 9;
-// TODO: fix
-pub const SCALE: i32 = 300;
+pub const SCALE: i32 = 400;
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -753,7 +752,7 @@ impl NNUE {
             //- ft cleanup
             let mut ft = Aligned::<u8, HL_NO_PST>::uninit();
             for side in 0..=1 {
-                let acc: &Aligned<i16, 2056> = &self.side[self.head].vals[stm ^ side];
+                let acc = &self.side[self.head].vals[stm ^ side];
                 for i in 0..HL_NO_PST / 2 {
                     let x0 = acc[i].clamp(ZERO, ONE);
                     let x1 = acc[i + HL_NO_PST / 2].clamp(ZERO, ONE);
