@@ -20,15 +20,17 @@ use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
-pub const HL: usize = 2560;
+pub const HL_NO_PST: usize = 2048;
 pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const KINGS: usize = 10;
 pub const OUTPUTS: usize = 8;
+pub const HL: usize = HL_NO_PST + OUTPUTS;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
 pub const FT_SHIFT: usize = 9;
-pub const SCALE: i32 = 400;
+// TODO: fix
+pub const SCALE: i32 = 300;
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -133,7 +135,7 @@ struct RawNetwork {
     feature_bias: [i16; HL],
 
     // transposed
-    l1_weights: [[[i8; HL]; L1]; OUTPUTS],
+    l1_weights: [[[i8; HL_NO_PST]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
@@ -148,9 +150,9 @@ struct RawNetwork {
 impl RawNetwork {
     fn load() -> Box<Self> {
         const DATA: &[u8] = include_bytes!(env!("EVAL_FILE"));
-        if DATA.len() != mem::size_of::<Network>() {
-            eprintln!("{} != {}", DATA.len(), mem::size_of::<Network>());
-            eprintln!("failed to load include_bytes network");
+        if DATA.len() != mem::size_of::<RawNetwork>() {
+            eprintln!("{} != {}", DATA.len(), mem::size_of::<RawNetwork>());
+            eprintln!("failed to load include_bytes raw network");
             std::process::exit(1);
         }
 
@@ -168,7 +170,7 @@ struct Network {
     feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
     feature_bias: Aligned<i16, HL>,
 
-    l1_weights: [[[i8; 4 * L1]; HL / 4]; OUTPUTS],
+    l1_weights: [[[i8; 4 * L1]; HL_NO_PST / 4]; OUTPUTS],
     // l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
@@ -195,24 +197,33 @@ impl Network {
     fn load() -> Box<Self> {
         let raw = RawNetwork::load();
 
-        let mut net = Box::<Self>::new_uninit();
+        let mut net = unsafe { Box::<Self>::new_uninit().assume_init() };
 
-        unsafe {
-            ptr::copy_nonoverlapping(
-                raw.as_ref() as *const RawNetwork as *const u8,
-                net.as_mut_ptr() as *mut u8,
-                mem::size_of::<RawNetwork>(),
-            );
+        for a in 0..KINGS {
+            for b in 0..768 {
+                for c in 0..HL {
+                    net.feature_weights[a][b][c] = raw.feature_weights[a][b][c];
+                }
+            }
         }
-        let mut net = unsafe { net.assume_init() };
+
+        for a in 0..HL {
+            net.feature_bias[a] = raw.feature_bias[a];
+        }
 
         for bucket in 0..OUTPUTS {
-            for c in 0..(HL / 4) {
+            for c in 0..(HL_NO_PST / 4) {
                 for j in 0..L1 {
                     for k in 0..4 {
                         net.l1_weights[bucket][c][j * 4 + k] = raw.l1_weights[bucket][j][c * 4 + k];
                     }
                 }
+            }
+        }
+
+        for a in 0..OUTPUTS {
+            for b in 0..L1 {
+                net.l1_bias[a][b] = raw.l1_bias[a][b];
             }
         }
 
@@ -223,6 +234,22 @@ impl Network {
                     net.l2_weights[i][k][j] = raw.l2_weights[i][j][k];
                 }
             }
+        }
+
+        for a in 0..OUTPUTS {
+            for b in 0..L2 {
+                net.l2_bias[a][b] = raw.l2_bias[a][b];
+            }
+        }
+
+        for a in 0..OUTPUTS {
+            for b in 0..L2 {
+                net.output_weights[a][b] = raw.output_weights[a][b];
+            }
+        }
+
+        for a in 0..OUTPUTS {
+            net.output_bias[a] = raw.output_bias[a];
         }
 
         net
@@ -718,22 +745,27 @@ impl NNUE {
             const ZEROF: f32 = 0.0f32;
             const ONEF: f32 = 1.0f32;
 
+            // pst
+            let pst = (self.side[self.head].vals[stm][HL_NO_PST + bucket] as f32
+                - self.side[self.head].vals[stm ^ 1][HL_NO_PST + bucket] as f32)
+                / (2.0 * QA as f32);
+
             //- ft cleanup
-            let mut ft = Aligned::<u8, HL>::uninit();
+            let mut ft = Aligned::<u8, HL_NO_PST>::uninit();
             for side in 0..=1 {
-                let acc = &self.side[self.head].vals[stm ^ side];
-                for i in 0..HL / 2 {
+                let acc: &Aligned<i16, 2056> = &self.side[self.head].vals[stm ^ side];
+                for i in 0..HL_NO_PST / 2 {
                     let x0 = acc[i].clamp(ZERO, ONE);
-                    let x1 = acc[i + HL / 2].clamp(ZERO, ONE);
-                    ft.0[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                    let x1 = acc[i + HL_NO_PST / 2].clamp(ZERO, ONE);
+                    ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
                 }
             }
 
-            let mut idx = [0u16; HL / 4];
+            let mut idx = [0u16; HL_NO_PST / 4];
             let mut base = _mm_setzero_si128();
             let lookup_inc = _mm_set1_epi16(8);
             let mut n = 0;
-            for b in (0..HL).step_by(32) {
+            for b in (0..HL_NO_PST).step_by(32) {
                 let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
                 let slice = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
                     v,
@@ -796,6 +828,7 @@ impl NNUE {
                 output += l2[i] * self.network.output_weights[bucket][i];
             }
 
+            output += pst;
             (output * SCALE as f32) as i32
         }
     }

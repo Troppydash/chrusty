@@ -1198,7 +1198,7 @@ impl Engine {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
-            if self.root_moves.len() == 1 && depth >= 3 {
+            if self.root_moves.len() == 1 && depth >= 2 {
                 break;
             }
 
