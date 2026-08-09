@@ -323,6 +323,15 @@ impl PawnKey {
         self.minor[self.size - 1]
     }
 
+    pub fn get_pinners(&self, pos: &Board) -> u64 {
+        let pinners = pos.pinned();
+        let mut mask = 0;
+        for sq in pinners {
+            mask ^= zobrist_pst(pos.side_to_move(), pos.piece_on(sq).unwrap(), sq);
+        }
+        mask
+    }
+
     pub fn get_threats(&self, pos: &Board) -> u64 {
         let mut threats = BitBoard::EMPTY;
 

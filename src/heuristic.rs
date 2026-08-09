@@ -62,6 +62,7 @@ pub struct Heuristic {
     minor_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
     // cont corrhist [colored_piece][to][colored_piece][to]
     cont_corrhist: Box<[[[[PawnCorr; 64]; 12]; 64]; 13]>,
+    // pinners_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
 }
 
 impl Heuristic {
@@ -121,6 +122,11 @@ impl Heuristic {
             .try_into()
             .unwrap();
 
+        // let pinners_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+        //     .into_boxed_slice()
+        //     .try_into()
+        //     .unwrap();
+
         Self {
             lmr,
             main_history,
@@ -135,6 +141,7 @@ impl Heuristic {
             major_corrhist,
             minor_corrhist,
             cont_corrhist,
+            // pinners_corrhist,
         }
     }
 
@@ -179,6 +186,10 @@ impl Heuristic {
             .into_boxed_slice()
             .try_into()
             .unwrap();
+        // self.pinners_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
+        //     .into_boxed_slice()
+        //     .try_into()
+            // .unwrap();
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -296,6 +307,10 @@ impl Heuristic {
     pub fn get_cont_corrhist(&mut self, idx: (usize, usize)) -> &mut [[PawnCorr; 64]; 12] {
         &mut self.cont_corrhist[idx.0][idx.1]
     }
+
+    // pub fn get_pinners_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
+    //     &mut self.pinners_corrhist[key as usize % PAWN_HASH][pos.side_to_move() as usize]
+    // }
 
     pub fn update_history(
         &mut self,

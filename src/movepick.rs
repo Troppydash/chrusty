@@ -16,6 +16,8 @@ enum Stage {
     Pv = 0,
     CaptureInit,
     GoodCapture,
+    KillersInit,
+    Killers,
     QuietInit,
     GoodQuiet,
     BadCapture,
@@ -414,7 +416,7 @@ impl Movepick {
         }
     }
 
-    fn score_quiets(&mut self) {
+    fn score_quiets(&mut self, skip_killers: bool) {
         let occ = self.pos.occupied();
         let stm = self.pos.side_to_move();
         let opp_king = self.pos.king(!stm);
@@ -437,6 +439,12 @@ impl Movepick {
 
             let heuristic = self.get_heuristic();
             let m = self.moves.get(i).inner;
+
+            let killers = self.get_heuristic().get_killers(self.ply);
+            if skip_killers && (m == killers[0] || m == killers[1]) {
+                self.moves.swap_remove(i);
+                continue;
+            }
 
             let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
 
@@ -465,7 +473,6 @@ impl Movepick {
                 score += 1000;
             }
 
-            let killers = self.get_heuristic().get_killers(self.ply);
             if m == killers[0] {
                 score += 20000;
             } else if m == killers[1] {
@@ -514,12 +521,38 @@ impl Movepick {
                         return next_move;
                     }
 
+                    self.stage = Stage::KillersInit;
+                }
+                Stage::KillersInit => {
+                    if !self.skip_quiets {
+                        let killers = self.get_heuristic().get_killers(self.ply).clone();
+                        for m in killers {
+                            if !m.is_null()
+                                && m != self.pv
+                                && self.pos.is_legal(m)
+                                && self.pos.is_quiet(m)
+                            {
+                                self.moves.push(ScoredMove::new(m, 10000));
+                            }
+                        }
+                    }
+
+                    self.stage = Stage::Killers;
+                }
+                Stage::Killers => {
+                    if !self.skip_quiets {
+                        let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                        if !next_move.is_null() {
+                            return next_move;
+                        }
+                    }
+
                     self.stage = Stage::QuietInit;
                 }
                 Stage::QuietInit => {
                     if !self.skip_quiets {
                         self.generate_quiets();
-                        self.score_quiets();
+                        self.score_quiets(true);
                     }
 
                     self.stage = Stage::GoodQuiet;
@@ -589,7 +622,7 @@ impl Movepick {
                 }
                 Stage::QQuietCheckInit => {
                     self.generate_checks();
-                    self.score_quiets();
+                    self.score_quiets(false);
                     self.stage = Stage::QQuietCheck;
                 }
 
@@ -623,7 +656,7 @@ impl Movepick {
                 }
                 Stage::EQuietInit => {
                     self.generate_quiets();
-                    self.score_quiets();
+                    self.score_quiets(false);
 
                     self.stage = Stage::EQuiet;
                 }

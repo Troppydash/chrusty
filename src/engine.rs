@@ -909,7 +909,7 @@ impl Engine {
                     reduction -= 800;
                 }
 
-                reduction -= complexity * 1024 / 100;
+                reduction -= (complexity * 1024 / 200).min(3);
 
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * 1024;
@@ -1118,6 +1118,13 @@ impl Engine {
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
                 .add(bonus);
 
+            // let pinners_key = self.pawn_key.get_pinners(pos);
+            // if pinners_key != 0 {
+            //     self.heuristic
+            //         .get_pinners_corrhist(pos, pinners_key)
+            //         .add(bonus);
+            // }
+
             let prev = self.stack[ss - 1].m;
             if !prev.is_null() && !self.stack[ss - 2].m.is_null() {
                 self.heuristic
@@ -1154,6 +1161,12 @@ impl Engine {
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
                 .get() as i32
             / 512;
+
+        // let pinners_key = self.pawn_key.get_pinners(pos);
+        // if pinners_key != 0 {
+        //     static_score +=
+        //         24 * self.heuristic.get_pinners_corrhist(pos, pinners_key).get() as i32 / 512;
+        // }
 
         let prev = self.stack[ss - 1].m;
         if !prev.is_null() {
