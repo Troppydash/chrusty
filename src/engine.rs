@@ -286,10 +286,12 @@ impl Engine {
 
             if !is_loss(best_score) {
                 //- delta pruning
+                // TODO: optimize
                 if !pos.is_quiet(next_move.inner)
                     && !in_check
                     && futility_base as i32
                         + pesto_value(
+                            pos,
                             ColoredPiece::new(
                                 !pos.side_to_move(),
                                 pos.get_captured(next_move.inner),
@@ -301,6 +303,7 @@ impl Engine {
                 {
                     let futility_best_score = (futility_base as i32
                         + pesto_value(
+                            pos,
                             ColoredPiece::new(
                                 !pos.side_to_move(),
                                 pos.get_captured(next_move.inner),
@@ -832,6 +835,7 @@ impl Engine {
                         + 200
                         + 200 * lmr_depth
                         + pesto_value(
+                            pos,
                             ColoredPiece::new(
                                 !pos.side_to_move(),
                                 pos.get_captured(next_move.inner),

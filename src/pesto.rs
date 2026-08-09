@@ -130,10 +130,16 @@ pub fn init() {
     EG_TABLE.set(eg_table);
 }
 
-pub fn get(piece: Piece, color: Color, sq: Square) -> i32 {
+pub fn get(pos: &Board, piece: Piece, color: Color, sq: Square) -> i32 {
+    let mut phase = pos.occupied().len() * 2 / 3;
+
     let offset = piece as usize + if color == White { 0 } else { 6 };
-    (MG_TABLE.get().unwrap()[offset][sq as usize] + EG_TABLE.get().unwrap()[offset][sq as usize])
-        / 2
+
+    let mg_phase = phase.min(24) as i32;
+    let eg_phase = 24 - mg_phase;
+    let mg_score = MG_TABLE.get().unwrap()[offset][sq as usize];
+    let eg_score = EG_TABLE.get().unwrap()[offset][sq as usize];
+    (mg_phase * mg_score + eg_phase * eg_score) / 24
 }
 
 // pub fn evaluate(pos: &Board) -> i32 {

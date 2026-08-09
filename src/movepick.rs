@@ -404,13 +404,21 @@ impl Movepick {
 
             let captured = self.pos.get_captured(m);
             score += MVV_MULTIPLIER
-                * pesto_value(ColoredPiece::new(!self.pos.side_to_move(), captured), m.to);
+                * pesto_value(
+                    &self.pos,
+                    ColoredPiece::new(!self.pos.side_to_move(), captured),
+                    m.to,
+                );
 
-            score -= pesto_value(self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
+            score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
 
             if let Some(promotion) = self.moves.get(i).inner.promotion {
                 score += 10000
-                    + pesto_value(ColoredPiece::new(self.pos.side_to_move(), promotion), m.to);
+                    + pesto_value(
+                        &self.pos,
+                        ColoredPiece::new(self.pos.side_to_move(), promotion),
+                        m.to,
+                    );
             }
 
             self.moves.get_mut(i).score = score;
@@ -702,7 +710,7 @@ impl Movepick {
 mod tests {
     use crate::pesto;
 
-use super::*;
+    use super::*;
 
     fn diff_movegen(fen: &str) {
         let pos = Board::from_fen(fen, false).unwrap();

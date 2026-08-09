@@ -1,4 +1,4 @@
-use cozy_chess::Square;
+use cozy_chess::{Board, Square};
 
 use crate::{ext::ColoredPiece, pesto};
 
@@ -58,13 +58,15 @@ pub const ASP_WINDOW_SCORE_SCALE: i32 = 13000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 6;
 pub const ASP_WINDOW_SCALE: i32 = 3;
 
-pub fn pesto_value(colored_piece: ColoredPiece, sq: Square) -> i32 {
-    pesto::get(colored_piece.piece, colored_piece.color, sq)
+#[inline]
+pub fn pesto_value(pos: &Board, colored_piece: ColoredPiece, sq: Square) -> i32 {
+    pesto::get(pos, colored_piece.piece, colored_piece.color, sq)
 }
 
-pub fn pesto_value_opt(colored_piece: Option<ColoredPiece>, sq: Square) -> i32 {
+#[inline]
+pub fn pesto_value_opt(pos: &Board, colored_piece: Option<ColoredPiece>, sq: Square) -> i32 {
     match colored_piece {
         None => 0,
-        Some(colored_piece) => pesto_value(colored_piece, sq),
+        Some(colored_piece) => pesto_value(pos, colored_piece, sq),
     }
 }
