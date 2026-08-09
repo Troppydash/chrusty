@@ -31,6 +31,13 @@ impl ColoredPiece {
     }
 }
 
+pub fn index_with_option(c: &Option<ColoredPiece>) -> usize {
+    match c {
+        None => 12,
+        Some(c) => c.index(),
+    }
+}
+
 pub trait BitBoardExt {
     fn pop(&mut self) -> Square;
 }

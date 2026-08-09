@@ -105,9 +105,11 @@ impl Engine {
 
         let mut new_pos = pos.clone();
         if m.is_null() {
+            self.stack[ss].cont_corrhist = (12, 0);
             new_pos.null_move().unwrap()
         } else {
             self.stack[ss].piece = Some(pos.color_piece_on(m.from).unwrap());
+            self.stack[ss].cont_corrhist = self.heuristic.get_cont_corrhist_index(pos, m);
 
             self.nnue.make_move(pos, m);
             new_pos.play_unchecked(m);
@@ -1100,24 +1102,29 @@ impl Engine {
             && (flag == FLAG_EXACT || (best_score >= adjusted_static && flag == FLAG_BETA) || (best_score < adjusted_static && flag == FLAG_ALPHA))
         {
             let bonus = ((best_score as i32 - adjusted_static as i32) * depth as i32 / 8)
-                .clamp((-CORR_LIMIT / 4) as i32, (CORR_LIMIT / 4) as i32);
+                .clamp((-CORR_LIMIT / 4) as i32, (CORR_LIMIT / 4) as i32)
+                as i16;
             self.heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
-                .add(bonus as i16);
+                .add(bonus);
 
             let [white, black] = self.pawn_key.get_colored();
-            self.heuristic
-                .get_white_corrhist(pos, white)
-                .add(bonus as i16);
-            self.heuristic
-                .get_black_corrhist(pos, black)
-                .add(bonus as i16);
+            self.heuristic.get_white_corrhist(pos, white).add(bonus);
+            self.heuristic.get_black_corrhist(pos, black).add(bonus);
             self.heuristic
                 .get_major_corrhist(pos, self.pawn_key.get_major())
-                .add(bonus as i16);
+                .add(bonus);
             self.heuristic
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
-                .add(bonus as i16);
+                .add(bonus);
+
+            let prev = self.stack[ss - 1].m;
+            if !prev.is_null() && !self.stack[ss - 2].m.is_null() {
+                self.heuristic
+                    .get_cont_corrhist(self.stack[ss - 2].cont_corrhist)
+                    [self.stack[ss - 1].piece.unwrap().index()][prev.to as usize]
+                    .add(bonus);
+            }
         }
 
         best_score
@@ -1147,6 +1154,17 @@ impl Engine {
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
                 .get() as i32
             / 512;
+
+        let prev = self.stack[ss - 1].m;
+        if !prev.is_null() {
+            static_score += 24
+                * self
+                    .heuristic
+                    .get_cont_corrhist(self.stack[ss - 2].cont_corrhist)
+                    [self.stack[ss - 1].piece.unwrap().index()][prev.to as usize]
+                    .get() as i32
+                / 512;
+        }
 
         static_score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16
     }

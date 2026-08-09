@@ -60,6 +60,7 @@ pub struct SearchStack {
     pub conseq_checks: i32,
     pub verify_null: bool,
     pub piece: Option<ColoredPiece>,
+    pub cont_corrhist: (usize, usize),
 }
 
 impl SearchStack {
@@ -74,6 +75,7 @@ impl SearchStack {
             conseq_checks: 0,
             verify_null: false,
             piece: None,
+            cont_corrhist: (12, 0),
         }
     }
 
@@ -88,6 +90,7 @@ impl SearchStack {
             conseq_checks: 0,
             verify_null: false,
             piece: None,
+            cont_corrhist: (12, 0),
         }
     }
 }
