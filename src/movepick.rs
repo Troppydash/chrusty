@@ -7,7 +7,7 @@ use cozy_chess::{
 use crate::{
     ext::{ColoredPiece, ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
     heuristic::{Heuristic, LOW_PLY},
-    param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, PIECE_VALUE},
+    param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
     see,
 };
 
@@ -402,12 +402,15 @@ impl Movepick {
             let heuristic = self.get_heuristic();
             let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
 
-            score += MVV_MULTIPLIER * PIECE_VALUE[self.pos.get_captured(m) as usize];
+            let captured = self.pos.get_captured(m);
+            score += MVV_MULTIPLIER
+                * pesto_value(ColoredPiece::new(!self.pos.side_to_move(), captured), m.to);
 
-            score -= PIECE_VALUE[self.pos.piece_on(m.from).unwrap() as usize] / 8;
+            score -= pesto_value(self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
 
             if let Some(promotion) = self.moves.get(i).inner.promotion {
-                score += 10000 + PIECE_VALUE[promotion as usize];
+                score += 10000
+                    + pesto_value(ColoredPiece::new(self.pos.side_to_move(), promotion), m.to);
             }
 
             self.moves.get_mut(i).score = score;
@@ -697,7 +700,9 @@ impl Movepick {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::pesto;
+
+use super::*;
 
     fn diff_movegen(fen: &str) {
         let pos = Board::from_fen(fen, false).unwrap();
@@ -760,6 +765,7 @@ mod tests {
 
     #[test]
     fn test_movegen() {
+        pesto::init();
         let fens = vec![
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             "rnbqkbnr/pppppppp/8/8/8/N7/PPPPPPPP/R1BQKBNR b KQkq - 1 1",

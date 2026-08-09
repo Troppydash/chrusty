@@ -289,14 +289,25 @@ impl Engine {
                 if !pos.is_quiet(next_move.inner)
                     && !in_check
                     && futility_base as i32
-                        + PIECE_VALUE[pos.get_captured(next_move.inner) as usize]
+                        + pesto_value(
+                            ColoredPiece::new(
+                                !pos.side_to_move(),
+                                pos.get_captured(next_move.inner),
+                            ),
+                            next_move.inner.to,
+                        )
                         <= alpha as i32
                     && !see::see_ge(pos, next_move.inner, 0)
                 {
                     let futility_best_score = (futility_base as i32
-                        + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])
-                        .min(VALUE_EVAL as i32)
-                        as i16;
+                        + pesto_value(
+                            ColoredPiece::new(
+                                !pos.side_to_move(),
+                                pos.get_captured(next_move.inner),
+                            ),
+                            next_move.inner.to,
+                        ))
+                    .min(VALUE_EVAL as i32) as i16;
                     best_score = best_score.max(futility_best_score);
                     continue;
                 }
@@ -820,7 +831,13 @@ impl Engine {
                     && (tt_static as i32
                         + 200
                         + 200 * lmr_depth
-                        + PIECE_VALUE[pos.get_captured(next_move.inner) as usize])
+                        + pesto_value(
+                            ColoredPiece::new(
+                                !pos.side_to_move(),
+                                pos.get_captured(next_move.inner),
+                            ),
+                            next_move.inner.to,
+                        ))
                         < (alpha as i32)
                 {
                     continue;
@@ -909,7 +926,7 @@ impl Engine {
                     reduction -= 800;
                 }
 
-                reduction -= (complexity * 1024 / 200).min(3);
+                reduction -= (complexity * 1024 / 200).min(3 * 1024);
 
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * 1024;

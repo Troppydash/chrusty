@@ -1,8 +1,11 @@
 #![allow(unused)]
 
+use std::sync::OnceLock;
+
 use cozy_chess::{
     Board,
-    Color::{Black, White},
+    Color::{self, Black, White},
+    Piece, Square,
 };
 
 const MG_VALUE: [i32; 6] = [82, 337, 365, 477, 1025, 0];
@@ -102,64 +105,73 @@ const EG_PESTO_TABLE: [&[i32; 64]; 6] = [
 
 const GAMEPHASE_INC: [i32; 12] = [0, 0, 1, 1, 1, 1, 2, 2, 4, 4, 0, 0];
 
-static mut MG_TABLE: [[i32; 64]; 12] = [[0; 64]; 12];
-static mut EG_TABLE: [[i32; 64]; 12] = [[0; 64]; 12];
+static MG_TABLE: OnceLock<[[i32; 64]; 12]> = OnceLock::new();
+static EG_TABLE: OnceLock<[[i32; 64]; 12]> = OnceLock::new();
 
 const fn flip(x: usize) -> usize {
     (x ^ 56) as usize
 }
 
 pub fn init() {
-    unsafe {
-        for p in 0..6 {
-            for sq in 0..64 {
-                // white
-                MG_TABLE[p][flip(sq)] = MG_VALUE[p] + MG_PESTO_TABLE[p][sq as usize];
-                EG_TABLE[p][flip(sq)] = EG_VALUE[p] + EG_PESTO_TABLE[p][sq as usize];
-                // black
-                MG_TABLE[p + 6][flip(sq)] = MG_VALUE[p] + MG_PESTO_TABLE[p][flip(sq)];
-                EG_TABLE[p + 6][flip(sq)] = EG_VALUE[p] + EG_PESTO_TABLE[p][flip(sq)];
-            }
+    let mut mg_table = [[0; 64]; 12];
+    let mut eg_table = [[0; 64]; 12];
+    for p in 0..6 {
+        for sq in 0..64 {
+            // white
+            mg_table[p][flip(sq)] = MG_VALUE[p] + MG_PESTO_TABLE[p][sq as usize];
+            eg_table[p][flip(sq)] = EG_VALUE[p] + EG_PESTO_TABLE[p][sq as usize];
+            // black
+            mg_table[p + 6][flip(sq)] = MG_VALUE[p] + MG_PESTO_TABLE[p][flip(sq)];
+            eg_table[p + 6][flip(sq)] = EG_VALUE[p] + EG_PESTO_TABLE[p][flip(sq)];
         }
     }
+
+    MG_TABLE.set(mg_table);
+    EG_TABLE.set(eg_table);
 }
 
-pub fn evaluate(pos: &Board) -> i32 {
-    let mut mg = [0, 0];
-    let mut eg = [0, 0];
-    let mut game_phase = 0;
-
-    for sq in pos.colors(White) {
-        let piece = pos.piece_on(sq).unwrap();
-
-        let offset = piece as usize;
-        unsafe {
-            mg[0] += MG_TABLE[offset][sq as usize];
-            eg[0] += EG_TABLE[offset][sq as usize];
-        }
-        game_phase += GAMEPHASE_INC[piece as usize];
-    }
-
-    for sq in pos.colors(Black) {
-        let piece = pos.piece_on(sq).unwrap();
-
-        let offset = piece as usize + 6;
-        unsafe {
-            mg[1] += MG_TABLE[offset][sq as usize];
-            eg[1] += EG_TABLE[offset][sq as usize];
-        }
-        game_phase += GAMEPHASE_INC[piece as usize];
-    }
-
-    let side2move = pos.side_to_move() as usize;
-    let mg_score = mg[side2move] - mg[side2move ^ 1];
-    let eg_score = eg[side2move] - eg[side2move ^ 1];
-
-    let mut mg_phase = game_phase;
-    if mg_phase > 24 {
-        mg_phase = 24;
-    }
-    let eg_phase = 24 - mg_phase;
-
-    (mg_score * mg_phase + eg_score * eg_phase) / 24
+pub fn get(piece: Piece, color: Color, sq: Square) -> i32 {
+    let offset = piece as usize + if color == White { 0 } else { 6 };
+    (MG_TABLE.get().unwrap()[offset][sq as usize] + EG_TABLE.get().unwrap()[offset][sq as usize])
+        / 2
 }
+
+// pub fn evaluate(pos: &Board) -> i32 {
+//     let mut mg = [0, 0];
+//     let mut eg = [0, 0];
+//     let mut game_phase = 0;
+
+//     for sq in pos.colors(White) {
+//         let piece = pos.piece_on(sq).unwrap();
+
+//         let offset = piece as usize;
+//         unsafe {
+//             mg[0] += MG_TABLE[offset][sq as usize];
+//             eg[0] += EG_TABLE[offset][sq as usize];
+//         }
+//         game_phase += GAMEPHASE_INC[piece as usize];
+//     }
+
+//     for sq in pos.colors(Black) {
+//         let piece = pos.piece_on(sq).unwrap();
+
+//         let offset = piece as usize + 6;
+//         unsafe {
+//             mg[1] += MG_TABLE[offset][sq as usize];
+//             eg[1] += EG_TABLE[offset][sq as usize];
+//         }
+//         game_phase += GAMEPHASE_INC[piece as usize];
+//     }
+
+//     let side2move = pos.side_to_move() as usize;
+//     let mg_score = mg[side2move] - mg[side2move ^ 1];
+//     let eg_score = eg[side2move] - eg[side2move ^ 1];
+
+//     let mut mg_phase = game_phase;
+//     if mg_phase > 24 {
+//         mg_phase = 24;
+//     }
+//     let eg_phase = 24 - mg_phase;
+
+//     (mg_score * mg_phase + eg_score * eg_phase) / 24
+// }

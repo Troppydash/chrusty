@@ -193,7 +193,7 @@ impl Heuristic {
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
-        assert!(depth >= 0);
+        debug_assert!(depth >= 0);
         self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]
     }
 
@@ -228,12 +228,12 @@ impl Heuristic {
     }
 
     pub fn get_low_ply(&self, pos: &Board, m: Move, ply: i8) -> &MainHistory {
-        assert!((ply as usize) < LOW_PLY);
+        debug_assert!((ply as usize) < LOW_PLY);
         &self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
     fn get_low_ply_mut(&mut self, pos: &Board, m: Move, ply: i8) -> &mut MainHistory {
-        assert!((ply as usize) < LOW_PLY);
+        debug_assert!((ply as usize) < LOW_PLY);
         &mut self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
@@ -325,7 +325,7 @@ impl Heuristic {
         captures: &MoveList,
         quiets: &MoveList,
     ) {
-        assert!(!best_move.is_null(), "best move null in history update");
+        debug_assert!(!best_move.is_null(), "best move null in history update");
 
         let bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
         let malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
@@ -338,7 +338,7 @@ impl Heuristic {
             self.get_pawn_mut(pos, best_move, pawn_key).add(bonus);
 
             for m in quiets.iter() {
-                assert!(!m.is_null());
+                debug_assert!(!m.is_null());
                 self.get_main_history_mut(pos, *m).add(-malus);
 
                 if ply < LOW_PLY as i8 {
@@ -362,7 +362,7 @@ impl Heuristic {
         }
 
         for m in captures.iter() {
-            assert!(!m.is_null());
+            debug_assert!(!m.is_null());
             self.get_capture_history_mut(pos, *m).add(-malus);
         }
     }

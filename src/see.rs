@@ -6,10 +6,10 @@ use cozy_chess::{
 
 use crate::{
     ext::{
-        BitBoardExt, ExtBoard,
+        BitBoardExt, ColoredPiece, ExtBoard,
         MoveType::{NORMAL, PROMOTION},
     },
-    param::PIECE_VALUE,
+    param::{pesto_value, pesto_value_opt},
 };
 
 fn to_bool(result: i32) -> bool {
@@ -42,13 +42,13 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
     }
 
     // initial capture check
-    let mut swap = PIECE_VALUE[pos.piece_on_index(m.to)] - beta;
+    let mut swap = pesto_value_opt(pos.color_piece_on(m.to), m.to) - beta;
     if swap < 0 {
         return false;
     }
 
     // recapture test
-    swap = PIECE_VALUE[pos.piece_on_index(m.from)] - swap;
+    swap = pesto_value(pos.color_piece_on(m.from).unwrap(), m.from) - swap;
     if swap <= 0 {
         return true;
     }
@@ -96,7 +96,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         if let mut bb = stm_attackers & pawns
             && !bb.is_empty()
         {
-            swap = PIECE_VALUE[Piece::Pawn as usize] - swap;
+            swap = pesto_value(ColoredPiece::new(stm, Piece::Pawn), m.to) - swap;
             if swap < result {
                 break;
             }
@@ -106,7 +106,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         } else if let mut bb = stm_attackers & knights
             && !bb.is_empty()
         {
-            swap = PIECE_VALUE[Piece::Knight as usize] - swap;
+            swap = pesto_value(ColoredPiece::new(stm, Piece::Knight), m.to) - swap;
             if swap < result {
                 break;
             }
@@ -115,7 +115,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         } else if let mut bb = stm_attackers & bishops
             && !bb.is_empty()
         {
-            swap = PIECE_VALUE[Piece::Bishop as usize] - swap;
+            swap = pesto_value(ColoredPiece::new(stm, Piece::Bishop), m.to) - swap;
             if swap < result {
                 break;
             }
@@ -125,7 +125,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         } else if let mut bb = stm_attackers & rooks
             && !bb.is_empty()
         {
-            swap = PIECE_VALUE[Piece::Rook as usize] - swap;
+            swap = pesto_value(ColoredPiece::new(stm, Piece::Rook), m.to) - swap;
             if swap < result {
                 break;
             }
@@ -135,7 +135,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32) -> bool {
         } else if let bb = stm_attackers & queens
             && !bb.is_empty()
         {
-            swap = PIECE_VALUE[Piece::Queen as usize] - swap;
+            swap = pesto_value(ColoredPiece::new(stm, Piece::Queen), m.to) - swap;
             if swap < result {
                 break;
             }
