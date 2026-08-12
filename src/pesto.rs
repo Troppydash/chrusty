@@ -105,31 +105,38 @@ const EG_PESTO_TABLE: [&[i32; 64]; 6] = [
 
 const GAMEPHASE_INC: [i32; 12] = [0, 0, 1, 1, 1, 1, 2, 2, 4, 4, 0, 0];
 
-static MG_TABLE: OnceLock<[[i32; 64]; 12]> = OnceLock::new();
-static EG_TABLE: OnceLock<[[i32; 64]; 12]> = OnceLock::new();
+// static MG_TABLE: OnceLock<[[i32; 64]; 12]> = OnceLock::new();
+// static EG_TABLE: OnceLock<[[i32; 64]; 12]> = OnceLock::new();
 
 const fn flip(x: usize) -> usize {
     (x ^ 56) as usize
 }
 
-pub fn init() {
+const fn init() -> ([[i32; 64]; 12], [[i32; 64]; 12]) {
     let mut mg_table = [[0; 64]; 12];
     let mut eg_table = [[0; 64]; 12];
-    for p in 0..6 {
-        for sq in 0..64 {
+    let mut p = 0;
+    while p < 6 {
+        let mut sq = 0;
+        while sq < 64 {
             // white
             mg_table[p][flip(sq)] = MG_VALUE[p] + MG_PESTO_TABLE[p][sq as usize];
             eg_table[p][flip(sq)] = EG_VALUE[p] + EG_PESTO_TABLE[p][sq as usize];
             // black
             mg_table[p + 6][flip(sq)] = MG_VALUE[p] + MG_PESTO_TABLE[p][flip(sq)];
             eg_table[p + 6][flip(sq)] = EG_VALUE[p] + EG_PESTO_TABLE[p][flip(sq)];
-        }
-    }
 
-    MG_TABLE.set(mg_table);
-    EG_TABLE.set(eg_table);
+            sq += 1;
+        }
+        p += 1;
+    }
+    (mg_table, eg_table)
 }
 
+const MG_TABLE: [[i32; 64]; 12] = init().0;
+const EG_TABLE: [[i32; 64]; 12] = init().1;
+
+#[inline]
 pub fn get(pos: &Board, piece: Piece, color: Color, sq: Square) -> i32 {
     let mut phase = pos.occupied().len() * 2 / 3;
 
@@ -137,8 +144,8 @@ pub fn get(pos: &Board, piece: Piece, color: Color, sq: Square) -> i32 {
 
     let mg_phase = phase.min(24) as i32;
     let eg_phase = 24 - mg_phase;
-    let mg_score = MG_TABLE.get().unwrap()[offset][sq as usize];
-    let eg_score = EG_TABLE.get().unwrap()[offset][sq as usize];
+    let mg_score = MG_TABLE[offset][sq as usize];
+    let eg_score = EG_TABLE[offset][sq as usize];
     (mg_phase * mg_score + eg_phase * eg_score) / 24
 }
 

@@ -72,6 +72,22 @@ pub trait ExtMove {
     fn from_bits(value: u16) -> Move;
 }
 
+pub const fn move_to_bits(m: Move) -> u16 {
+    let from = m.from as u16;
+    let to = m.to as u16;
+    let promotion = match m.promotion {
+        None => 6,
+        Some(piece) => piece as u16,
+    };
+
+    // 6 bits + 6 bits + 3 bits = 15 bits
+    from | (to << 6) | (promotion << 12)
+}
+
+pub const fn move_is_null(m: Move) -> bool {
+    move_to_bits(m) == Move::NULL_MOVE_BITS
+}
+
 impl ExtMove for Move {
     const NULL_MOVE: Move = Move {
         from: cozy_chess::Square::A1,
@@ -93,15 +109,7 @@ impl ExtMove for Move {
     }
 
     fn to_bits(&self) -> u16 {
-        let from = self.from as u16;
-        let to = self.to as u16;
-        let promotion = match self.promotion {
-            None => 6,
-            Some(piece) => piece as u16,
-        };
-
-        // 6 bits + 6 bits + 3 bits = 15 bits
-        from | (to << 6) | (promotion << 12)
+        move_to_bits(*self)
     }
 
     fn from_bits(value: u16) -> Move {

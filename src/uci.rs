@@ -1,8 +1,8 @@
-use crate::Engine;
 use crate::ext::ExtMove;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
+use crate::{Engine, spsa};
 use std::process::exit;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -36,6 +36,7 @@ struct AsyncEngine {
     engine: Arc<Mutex<Engine>>,
     handle: Option<JoinHandle<()>>,
     table: Box<Table>,
+    parameter: spsa::Parameters,
 }
 
 impl AsyncEngine {
@@ -44,11 +45,13 @@ impl AsyncEngine {
         let mut table = Box::new(Table::new(DEFAULT_TT_SIZE));
         let table_ptr = TablePtr::from_table(&mut table);
         let engine = Arc::new(Mutex::new(Engine::new(timer.clone(), table_ptr)));
+        let parameter = spsa::Parameters::default();
         Self {
             timer,
             engine,
             handle: None,
             table,
+            parameter,
         }
     }
 
@@ -94,6 +97,11 @@ impl AsyncEngine {
     fn resize_table(&mut self, size_in_mbytes: usize) {
         self.table.resize(size_in_mbytes);
     }
+
+    fn set_parameter(&mut self, name: &str, value: &str) {
+        self.parameter.uci_apply(name, value);
+        self.engine.lock().unwrap().set_settings(&self.parameter);
+    }
 }
 
 impl Drop for AsyncEngine {
@@ -128,7 +136,12 @@ pub fn start(args: Vec<String>) {
                     "option name Hash type spin default {} min 8 max 16000",
                     DEFAULT_TT_SIZE
                 );
+
+                println!("{}", spsa::Parameters::uci_text());
                 println!("uciok");
+            }
+            "json" => {
+                println!("{}", spsa::Parameters::uci_json());
             }
             "position" => {
                 // position startpos moves <move1> <move2>
@@ -246,7 +259,11 @@ pub fn start(args: Vec<String>) {
                         async_engine.resize_table(size);
                     }
                     _ => {
-                        println!("unknown option {}, skipping", parts[2]);
+                        if parts[2].starts_with("p_") {
+                            async_engine.set_parameter(parts[2], parts[4]);
+                        } else {
+                            println!("unknown option {}, skipping", parts[2]);
+                        }
                     }
                 }
             }

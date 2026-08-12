@@ -15,6 +15,7 @@ use crate::{
     param::*,
     rep::RepTable,
     see::{self, see_ge},
+    spsa::Parameters,
     stack::{KeyStack, PawnKey, PvList, SearchStack},
     timer::Timer,
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
@@ -61,6 +62,7 @@ pub struct Engine {
     rep: RepTable,
     table: TablePtr,
     nnue: NNUE,
+    settings: Parameters,
 }
 
 impl Engine {
@@ -77,7 +79,12 @@ impl Engine {
             rep: RepTable::new(),
             table,
             nnue: NNUE::new(),
+            settings: Parameters::default(),
         }
+    }
+
+    pub fn set_settings(&mut self, settings: &Parameters) {
+        self.settings = settings.clone();
     }
 
     pub fn newgame(&mut self) {
@@ -909,35 +916,35 @@ impl Engine {
 
                 // check extension
                 if self.stack[ss].conseq_checks < 4 && new_pos.in_check() {
-                    reduction -= 800;
+                    reduction -= self.settings.p_lmr_check;
                 }
 
                 // cutnode reduction
                 if cut_node {
-                    reduction += (2 - self.stack[ss].tt_pv as i32) * 1200;
+                    reduction += (2 - self.stack[ss].tt_pv as i32) * self.settings.p_lmr_cutnode;
                 }
 
                 // capture reduction
                 if is_tt_capture && is_quiet {
-                    reduction += 1024;
+                    reduction += self.settings.p_lmr_capture;
                 }
 
                 if !improving {
-                    reduction += 1024;
+                    reduction += self.settings.p_lmr_improving;
                 }
 
                 if tt_data.depth >= depth {
-                    reduction -= 800;
+                    reduction -= self.settings.p_lmr_tt_depth;
                 }
 
-                reduction -= (complexity * 1024 / 200).min(3 * 1024);
+                reduction -= (complexity * self.settings.p_lmr_complexity / 200).min(3 * 1024);
 
                 // pv extension
-                reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * 1024;
+                reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
 
                 // history adjustment
-                let scaled_history_score =
-                    next_move.get_score() * 1024 / if is_quiet { 9000 } else { 14000 };
+                let scaled_history_score = next_move.get_score() * self.settings.p_lmr_history
+                    / if is_quiet { 9000 } else { 14000 };
                 reduction -= scaled_history_score as i32;
 
                 reduction /= 1024;

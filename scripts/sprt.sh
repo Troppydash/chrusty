@@ -23,4 +23,5 @@ mkdir -p $LOG_FILE
   -rounds 100000 -concurrency $CONCURRENCY \
   -pgnout notation=san nodes=true file=$LOG_FILE/pgn append=false \
   -show-latency -recover -ratinginterval 1 \
+  -use-affinity "1-$CONCURRENCY"
   -log file=$LOG_FILE/log append=false realtime=true engine=true level=warn

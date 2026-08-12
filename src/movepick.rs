@@ -773,7 +773,6 @@ mod tests {
 
     #[test]
     fn test_movegen() {
-        pesto::init();
         let fens = vec![
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             "rnbqkbnr/pppppppp/8/8/8/N7/PPPPPPPP/R1BQKBNR b KQkq - 1 1",

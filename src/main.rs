@@ -12,13 +12,13 @@ mod param;
 mod pesto;
 mod rep;
 mod see;
+mod spsa;
 mod stack;
 mod timer;
 mod tt;
 mod uci;
 
 fn main() {
-    pesto::init();
     cuckoo::init();
     let args: Vec<String> = env::args().collect();
     uci::start(args);
