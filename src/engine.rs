@@ -656,7 +656,8 @@ impl Engine {
             }
 
             //- probcut
-            let probcut_beta = (beta as i32 + 200).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
+            let probcut_beta = (beta as i32 + self.settings.p_probcut_beta)
+                .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
             if !is_pv
                 && depth >= PROBCUT_DEPTH_MIN
                 && !is_decisive(beta)
@@ -668,7 +669,9 @@ impl Engine {
                     && ((tt_data.score as i32) < probcut_beta)
                     && (tt_data.depth >= depth - 3))
             {
-                let margin = (probcut_beta - tt_static as i32).clamp(-10000, 10000) * 10 / 16;
+                let margin = (probcut_beta - tt_static as i32).clamp(-10000, 10000)
+                    * self.settings.p_probcut_margin
+                    / 1024;
 
                 let mut tt_move = Move::NULL_MOVE;
                 if is_tt_capture && see_ge(pos, tt_data.pv, margin) {
@@ -809,9 +812,11 @@ impl Engine {
 
                 //- see pruning
                 let see_margin = if is_quiet {
-                    50 + 50 * lmr_depth * lmr_depth
+                    self.settings.p_lowdepth_see_quiet_base
+                        + self.settings.p_lowdepth_see_quiet_depth * lmr_depth * lmr_depth
                 } else {
-                    100 + 100 * lmr_depth
+                    self.settings.p_lowdepth_see_capture_base
+                        + self.settings.p_lowdepth_see_capture_depth * lmr_depth
                 };
                 if !see::see_ge(pos, next_move.inner, -see_margin) {
                     continue;
@@ -833,7 +838,10 @@ impl Engine {
                     && quiets.len() > 1
                     && lmr_depth < 14
                     && !in_check
-                    && (tt_static as i32 + 200 + 200 * lmr_depth) < (alpha as i32)
+                    && (tt_static as i32
+                        + self.settings.p_lowdepth_fut_quiet_base
+                        + self.settings.p_lowdepth_fut_quiet_depth * lmr_depth)
+                        < (alpha as i32)
                 {
                     movepick.skip_quiets();
                     continue;
@@ -844,8 +852,8 @@ impl Engine {
                     && lmr_depth < 14
                     && !in_check
                     && (tt_static as i32
-                        + 200
-                        + 200 * lmr_depth
+                        + self.settings.p_lowdepth_fut_capture_base
+                        + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
                         + pesto_value(
                             pos,
                             ColoredPiece::new(
@@ -891,8 +899,14 @@ impl Engine {
 
                 if next_best_score < to_beat {
                     // extend
-                    if !is_pv && ((next_best_score as i32) < (to_beat as i32 - 50)) {
-                        if is_quiet && ((next_best_score as i32) < (to_beat as i32 - 300)) {
+                    if !is_pv
+                        && ((next_best_score as i32)
+                            < (to_beat as i32 - self.settings.p_singular_double))
+                    {
+                        if is_quiet
+                            && ((next_best_score as i32)
+                                < (to_beat as i32 - self.settings.p_singular_triple))
+                        {
                             extension = 3;
                         } else {
                             extension = 2;
@@ -1086,11 +1100,11 @@ impl Engine {
                 &captures,
                 &quiets,
             );
-        } else if !best_move.is_null() {
+        } else if !best_move.is_null() && !pos.is_quiet(best_move) {
             self.heuristic.update_history(
                 pos,
                 depth,
-                8,
+                4,
                 ply,
                 best_move,
                 self.stack[ss - 1].m,
@@ -1131,8 +1145,7 @@ impl Engine {
 
         //- correction history
         let adjusted_static = self.stack[ss].adjusted_static;
-        if !has_excluded
-            && is_valid(self.stack[ss].adjusted_static)
+        if is_valid(self.stack[ss].adjusted_static)
             && !in_check
             // pv not a capture
             && !(!best_move.is_null() && !pos.is_quiet(best_move))
