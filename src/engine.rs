@@ -796,11 +796,16 @@ impl Engine {
 
             //- low depth pruning
             if !is_root && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
-                let lmr_depth = (depth as i32
-                    - self.heuristic.get_lmr(move_count, depth) as i32
-                    - !improving as i32
-                    + (next_move.get_score() / if is_quiet { 9000 } else { 14000 }) as i32)
-                    .clamp(1, depth as i32 + 1);
+                let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32 * 1024;
+                reduction += !improving as i32 * self.settings.p_lmr_improving;
+                reduction -= (next_move.get_score() * self.settings.p_lmr_history
+                    / if is_quiet {
+                        self.settings.p_lmr_quiet_div
+                    } else {
+                        self.settings.p_lmr_capture_div
+                    }) as i32;
+                reduction /= 1024;
+                let lmr_depth = (depth as i32 - reduction).clamp(1, depth as i32 + 1);
 
                 //- see pruning
                 let see_margin = if is_quiet {
@@ -944,7 +949,11 @@ impl Engine {
 
                 // history adjustment
                 let scaled_history_score = next_move.get_score() * self.settings.p_lmr_history
-                    / if is_quiet { 9000 } else { 14000 };
+                    / if is_quiet {
+                        self.settings.p_lmr_quiet_div
+                    } else {
+                        self.settings.p_lmr_capture_div
+                    };
                 reduction -= scaled_history_score as i32;
 
                 reduction /= 1024;

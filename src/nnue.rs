@@ -32,7 +32,7 @@ pub const FT_SHIFT: usize = 9;
 pub const SCALE: i32 = 400;
 
 #[repr(C, align(64))]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Aligned<T, const N: usize>([T; N]);
 impl<T: Copy + Default, const N: usize> Aligned<T, N> {
     fn zeroed() -> Self {
@@ -164,7 +164,6 @@ impl RawNetwork {
 }
 
 #[repr(C, align(64))]
-#[derive(Clone)]
 struct Network {
     feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
     feature_bias: Aligned<i16, HL>,
@@ -400,7 +399,6 @@ struct Update {
 }
 
 #[repr(C, align(64))]
-#[derive(Clone)]
 struct Accumulator {
     vals: [Aligned<i16, HL>; 2],
     is_clean: [bool; 2],
@@ -413,7 +411,6 @@ impl Accumulator {
     }
 }
 
-#[derive(Clone)]
 struct FinnyEntry {
     acc: Accumulator,
     // [side][color]
@@ -467,7 +464,6 @@ impl FinnyEntry {
     }
 }
 
-#[derive(Clone)]
 struct FinnyTable {
     entries: [[FinnyEntry; KINGS]; 2],
 }
@@ -482,7 +478,6 @@ impl FinnyTable {
     }
 }
 
-#[derive(Clone)]
 pub struct NNUE {
     network: Box<Network>,
     side: Box<[Accumulator]>,
@@ -506,9 +501,14 @@ impl NNUE {
             }
         }
 
+        // we don't have clone on [accumulator]
+        let mut sides = vec![];
+        for _ in 0..MAX_DEPTH_USIZE {
+            sides.push(Accumulator::new());
+        }
         let mut net = Self {
             network: Network::load(),
-            side: vec![Accumulator::new(); MAX_DEPTH_USIZE].into_boxed_slice(),
+            side: sides.into_boxed_slice(),
             head: 0,
             finny: FinnyTable::new(),
             nnz_table,
@@ -540,7 +540,7 @@ impl NNUE {
 
     pub fn make_move(&mut self, board: &Board, m: Move) {
         self.head += 1;
-        assert!(self.head < MAX_DEPTH_USIZE);
+        debug_assert!(self.head < MAX_DEPTH_USIZE);
 
         self.side[self.head].is_clean[0] = false;
         self.side[self.head].is_clean[1] = false;
@@ -624,6 +624,33 @@ impl NNUE {
         let mirrored = Network::is_mirrored(king_sq);
 
         let entry = &mut self.finny.entries[mirrored as usize][bucket];
+
+        // let full_count = board.occupied().len();
+        // if full_count < 10 {
+        //     let mut finny_count = 0;
+        //     'outer: for color in 0..=1 {
+        //         for piece in 0..6 {
+        //             let old_bb =
+        //                 entry.bycolor[side as usize][color] & entry.bypiece[side as usize][piece];
+        //             let new_bb = board.colored_pieces(Color::ALL[color], Piece::ALL[piece]);
+
+        //             let added = new_bb & !old_bb;
+        //             let removed = old_bb & !new_bb;
+
+        //             finny_count += added.len().max(removed.len());
+
+        //             if full_count < finny_count {
+        //                 SimdOps::fused_copy(
+        //                     &mut entry.acc.vals[side as usize],
+        //                     &self.network.feature_bias,
+        //                 );
+        //                 entry.bycolor[side as usize] = [BitBoard::EMPTY; 2];
+        //                 entry.bypiece[side as usize] = [BitBoard::EMPTY; 6];
+        //                 break 'outer;
+        //             }
+        //         }
+        //     }
+        // }
 
         for color in 0..=1 {
             for piece in 0..6 {
@@ -726,14 +753,12 @@ impl NNUE {
 
     pub fn evaluate(&mut self, board: &Board) -> i32 {
         self.catchup(board);
-        assert!(self.side[self.head].is_clean[0] && self.side[self.head].is_clean[1]);
-        // we know that self.side[self.head].vals accumualators are ready
-
-        unsafe { self.avx2_evaluate(board) }
+        debug_assert!(self.side[self.head].is_clean[0] && self.side[self.head].is_clean[1]);
+        unsafe { self.avx512_evaluate(board) }
     }
 
-    #[target_feature(enable = "avx2", enable = "fma")]
-    pub unsafe fn avx2_evaluate(&mut self, board: &Board) -> i32 {
+    #[target_feature(enable = "avx512f")]
+    pub unsafe fn avx512_evaluate(&mut self, board: &Board) -> i32 {
         let bucket = Network::get_output_bucket(board);
         let stm = board.side_to_move() as usize;
 
@@ -745,8 +770,9 @@ impl NNUE {
             const ONEF: f32 = 1.0f32;
 
             // pst
-            let pst = (self.side[self.head].vals[stm][HL_NO_PST + bucket] as f32
-                - self.side[self.head].vals[stm ^ 1][HL_NO_PST + bucket] as f32)
+            let pst = (self.side[self.head].vals[stm][HL_NO_PST + bucket]
+                - self.side[self.head].vals[stm ^ 1][HL_NO_PST + bucket])
+                as f32
                 / (2.0 * QA as f32);
 
             //- ft cleanup
@@ -764,39 +790,41 @@ impl NNUE {
             let mut base = _mm_setzero_si128();
             let lookup_inc = _mm_set1_epi16(8);
             let mut n = 0;
-            for b in (0..HL_NO_PST).step_by(32) {
-                let v = _mm256_load_si256(ft.0.as_ptr().add(b) as _);
-                let slice = _mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
-                    v,
-                    _mm256_setzero_si256(),
-                ))) as u8;
-                let indices =
-                    _mm_loadu_si128(self.nnz_table.as_ptr().add(slice as usize) as *const __m128i);
-                _mm_storeu_si128(
-                    idx.as_mut_ptr().add(n) as *mut __m128i,
-                    _mm_add_epi16(base, indices),
-                );
-                n += slice.count_ones() as usize;
-                base = _mm_add_epi16(base, lookup_inc);
+            for b in (0..HL_NO_PST).step_by(64) {
+                let v = _mm512_load_si512(ft.as_ptr().add(b) as _);
+                let mask = _mm512_cmpgt_epi32_mask(v, _mm512_setzero_si512());
+
+                for lookup in (0..16).step_by(8) {
+                    let slice = ((mask >> lookup) & 0xff) as u8;
+                    let indices = _mm_loadu_si128(
+                        self.nnz_table.as_ptr().add(slice as usize) as *const __m128i
+                    );
+                    _mm_storeu_si128(
+                        idx.as_mut_ptr().add(n) as *mut __m128i,
+                        _mm_add_epi16(base, indices),
+                    );
+                    n += slice.count_ones() as usize;
+                    base = _mm_add_epi16(base, lookup_inc);
+                }
             }
 
-            // TODO: copy the dpbusd
-            let mut l1_sum = Aligned::<i32, L1>::zeroed();
+            const STEP: usize = 16;
+            let mut l1_sum_acc = [_mm512_setzero_epi32(); L1 / STEP];
             let l1_weights = &self.network.l1_weights[bucket];
             for t in 0..n {
                 let c = idx[t] as usize;
-                let f = _mm256_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
-                let w = l1_weights[c].as_ptr() as *const __m256i;
-                for q in (0..L1).step_by(8) {
-                    let value = _mm256_add_epi32(
-                        _mm256_load_si256(l1_sum.as_ptr().add(q) as _),
-                        _mm256_madd_epi16(
-                            _mm256_maddubs_epi16(f, _mm256_load_si256(w.add(q / 8))),
-                            _mm256_set1_epi16(1),
-                        ),
-                    );
-                    _mm256_store_si256(l1_sum.as_mut_ptr().add(q) as _, value);
+                let f = _mm512_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
+                let w = l1_weights[c].as_ptr() as *const __m512i;
+                for q in (0..L1).step_by(STEP) {
+                    let prod16 = _mm512_maddubs_epi16(f, _mm512_load_si512(w.add(q / STEP)));
+                    let prod32 = _mm512_madd_epi16(prod16, _mm512_set1_epi16(1));
+                    l1_sum_acc[q / STEP] = _mm512_add_epi32(l1_sum_acc[q / STEP], prod32);
                 }
+            }
+
+            let mut l1_sum = Aligned::<i32, L1>::zeroed();
+            for q in (0..L1).step_by(STEP) {
+                _mm512_store_si512(l1_sum.as_mut_ptr().add(q) as _, l1_sum_acc[q / STEP]);
             }
 
             let mut l1 = Aligned::<f32, L1>::uninit();
@@ -807,7 +835,6 @@ impl NNUE {
             }
 
             //- l1 -> l2
-            // TODO: maybe flip?
             let mut l2_sum = Aligned::<f32, L2>::zeroed();
             for i in 0..L1 {
                 for j in 0..L2 {
@@ -985,6 +1012,6 @@ mod tests {
             Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 0);
+        assert_eq!(eval, -1131);
     }
 }

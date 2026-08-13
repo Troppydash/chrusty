@@ -364,6 +364,7 @@ impl ExtBoard for Board {
     }
 
     /// (king, rook)
+    #[inline]
     fn castle_to(&self, m: Move) -> (Square, Square) {
         debug_assert!(self.is_castle(m));
 

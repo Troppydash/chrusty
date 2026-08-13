@@ -140,9 +140,15 @@ pub fn start(args: Vec<String>) {
                 println!("{}", spsa::Parameters::uci_text());
                 println!("uciok");
             }
-            "json" => {
-                println!("{}", spsa::Parameters::uci_json());
-            }
+            "tune" => match parts[1] {
+                "json" => {
+                    println!("{}", spsa::Parameters::uci_json());
+                }
+                "leela" => {
+                    println!("{}", spsa::Parameters::uci_leela());
+                }
+                _ => println!("unknown tune type {}", parts[1]),
+            },
             "position" => {
                 // position startpos moves <move1> <move2>
                 // position fen <fen> moves <move1> <move2>
