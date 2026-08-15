@@ -62,6 +62,8 @@ fn benchmark(mut net: NNUE, file: &str, iter: usize) -> f64 {
 
 pub fn start(path: &str, iter: usize) {
     let net = NNUE::new();
+    println!("starting raw sparseness {}", benchmark(net, path, iter));
+    let net = NNUE::build(&Permute::load());
     println!("starting sparseness {}", benchmark(net, path, iter));
 
     let file = File::open(path).unwrap();

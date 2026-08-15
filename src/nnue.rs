@@ -134,13 +134,9 @@ pub struct Permute {
 }
 
 impl Permute {
-    const fn permute_name() -> &'static str {
-        env!("PERMUTE_FILE")
-    }
-
     pub fn save(&self) {
-        println!("writing to {}", Self::permute_name());
-        let mut file = std::fs::File::create(Self::permute_name()).unwrap();
+        println!("writing to {}", env!("PERMUTE_FILE_NEXT"));
+        let mut file = std::fs::File::create(env!("PERMUTE_FILE_NEXT")).unwrap();
         let bytes = unsafe {
             std::slice::from_raw_parts(
                 self.mapping.as_ptr() as *const u8,
@@ -149,6 +145,7 @@ impl Permute {
         };
         file.write_all(bytes).unwrap();
     }
+
     pub fn new(mapping: [usize; HL_NO_PST]) -> Self {
         Self { mapping }
     }
@@ -163,7 +160,7 @@ impl Permute {
 
     #[cfg(permute_file)]
     pub fn load() -> Self {
-        let data = *include_bytes!(env!("PERMUTE_FILE"));
+        let data = *include_bytes!(env!("PERMUTE_FILE_SRC"));
         let data = unsafe { std::mem::transmute(data) };
 
         Self::new(data)

@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fmt::format, fs, path::Path};
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(permute_file)");
@@ -9,8 +9,11 @@ fn main() {
         .trim()
         .to_string();
     let target_file = format!("../nets/{}.bin", hash);
-    let permute_file = format!("../nets/permute_{}.bin", hash);
-    if Path::new(&format!("./nets/permute_{}.bin", hash)).exists() {
+
+    let permute_index = 0;
+    let permute_file = format!("./nets/permute_{}_{}.bin", hash, permute_index);
+    let permute_file_next = format!("./nets/permute_{}_{}.bin", hash, permute_index + 1);
+    if Path::new(&permute_file).exists() {
         println!("cargo::rustc-cfg=permute_file");
     }
 
@@ -18,4 +21,6 @@ fn main() {
     println!("cargo:rerun-if-changed={}", permute_file);
     println!("cargo:rustc-env=EVAL_FILE={}", target_file);
     println!("cargo:rustc-env=PERMUTE_FILE={}", permute_file);
+    println!("cargo:rustc-env=PERMUTE_FILE_SRC=../{}", permute_file);
+    println!("cargo:rustc-env=PERMUTE_FILE_NEXT={}", permute_file_next);
 }
