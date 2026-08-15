@@ -138,7 +138,7 @@ const EG_TABLE: [[i32; 64]; 12] = init().1;
 
 #[inline]
 pub fn get(pos: &Board, piece: Piece, color: Color, sq: Square) -> i32 {
-    let mut phase = pos.occupied().len() * 2 / 3;
+    let mut phase = (pos.occupied().len() - pos.pieces(Piece::Pawn).len() - 2) * 3 / 2;
 
     let offset = piece as usize + if color == White { 0 } else { 6 };
 
