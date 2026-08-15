@@ -10,3 +10,4 @@ nets/
 *.data
 
 scripts/test.sh
+scripts/sort.sh

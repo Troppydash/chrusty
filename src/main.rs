@@ -17,6 +17,7 @@ mod stack;
 mod timer;
 mod tt;
 mod uci;
+mod sort;
 
 fn main() {
     cuckoo::init();

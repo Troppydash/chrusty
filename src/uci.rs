@@ -2,7 +2,7 @@ use crate::ext::ExtMove;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
-use crate::{Engine, spsa};
+use crate::{Engine, sort, spsa};
 use std::process::exit;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -278,6 +278,9 @@ pub fn start(args: Vec<String>) {
             }
             "isready" => {
                 println!("readyok");
+            }
+            "sort" => {
+                sort::start(parts[1], parts[2].parse::<usize>().unwrap());
             }
             _ => {
                 println!("warn unknown command {}", parts[0]);

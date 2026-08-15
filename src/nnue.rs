@@ -33,7 +33,7 @@ pub const SCALE: i32 = 400;
 
 #[repr(C, align(64))]
 #[derive(Debug)]
-struct Aligned<T, const N: usize>([T; N]);
+pub struct Aligned<T, const N: usize>([T; N]);
 
 impl<T: Copy, const N: usize> Aligned<T, N> {
     fn uninit() -> Self {
@@ -128,6 +128,7 @@ impl SimdOps {
 }
 
 #[repr(C, align(64))]
+#[derive(Clone)]
 struct RawNetwork {
     // default output sizing is (outputs, inputs)
     // not-transposed
@@ -162,6 +163,59 @@ impl RawNetwork {
             net.assume_init()
         }
     }
+
+    fn get_boxed(&self) -> Box<Self> {
+        unsafe {
+            let mut uninit_box: Box<MaybeUninit<Self>> = Box::new_uninit();
+            uninit_box
+                .as_mut_ptr()
+                .copy_from(self as *const RawNetwork, 1);
+            uninit_box.assume_init()
+        }
+    }
+
+    fn permute(&mut self, mapping: &[usize; HL_NO_PST]) {
+        // mapping[i] = j means that move jth HL neuron to i
+
+        let old = self.get_boxed();
+
+        /*
+           This part is a bit confusing but it actually ends up working.
+           Using HL = HL_NO_PST
+
+           We enforce that mapping[i+HL/2] = mapping[i]+HL/2 for symmetry.
+           The network looks like
+           stm           nstm
+           [HL]          [HL]
+           [HL/2]*[HL/2] [HL/2]*[HL/2]
+           [HL/2]        [HL/2]
+
+           Stm index i is computed by bias[j] + f(weights[j])*f(weights[j+HL/2])
+           so we need to update feature bias and weights. Ntm indices will also
+           be fixed by this.
+
+           Since stm index i is actually the old stm index j, we update l1 i to j.
+           For ntm that this is actually the same, ntm i is actually HL/2+i will 
+           get mapped to mapping[HL/2+i] = HL/2+j = j + HL/2 which is exactly correct.
+        */
+
+        for i in 0..HL_NO_PST {
+            let j = mapping[i];
+            self.feature_bias[i] = old.feature_bias[j];
+
+            for k in 0..KINGS {
+                for p in 0..768 {
+                    self.feature_weights[k][p][i] = old.feature_weights[k][p][j];
+                }
+            }
+
+            for output in 0..OUTPUTS {
+                for l1_idx in 0..L1 {
+                    self.l1_weights[output][l1_idx][i] = old.l1_weights[output][l1_idx][j];
+                }
+            }
+        }
+    }
 }
 
 #[repr(C, align(64))]
@@ -193,9 +247,7 @@ const KING_BUCKET: [usize; 64] = [
 ];
 
 impl Network {
-    fn load() -> Box<Self> {
-        let raw = RawNetwork::load();
-
+    fn load(raw: Box<RawNetwork>) -> Box<Self> {
         let mut net = unsafe { Box::<Self>::new_uninit().assume_init() };
 
         for a in 0..KINGS {
@@ -490,7 +542,10 @@ pub struct NNUE {
 }
 
 impl NNUE {
-    pub fn new() -> Self {
+    pub fn build(mapping: &[usize; HL_NO_PST]) -> Self {
+        let mut raw = RawNetwork::load();
+        raw.permute(mapping);
+
         // nnz_table[bits][i] = ith bit in bits offset
         let mut nnz_table: [Aligned<u16, 8>; 256] = unsafe { MaybeUninit::zeroed().assume_init() };
         for i in 0..256 {
@@ -510,7 +565,7 @@ impl NNUE {
             sides.push(Accumulator::new());
         }
         let mut net = Self {
-            network: Network::load(),
+            network: Network::load(raw),
             side: sides.into_boxed_slice(),
             head: 0,
             finny: FinnyTable::new(),
@@ -521,6 +576,14 @@ impl NNUE {
         // explicit clear to init finny
         net.clear();
         net
+    }
+
+    pub fn new() -> Self {
+        let mut mapping = [0; HL_NO_PST];
+        for i in 0..HL_NO_PST {
+            mapping[i] = i;
+        }
+        Self::build(&mapping)
     }
 
     pub fn init(&mut self, board: &Board) {
@@ -795,13 +858,19 @@ impl NNUE {
             let mut n = 0;
             for b in (0..HL_NO_PST).step_by(64) {
                 let v = _mm512_load_si512(self.ft.as_ptr().add(b) as _);
-                let mask = _mm512_cmpgt_epi32_mask(v, _mm512_setzero_si512());
 
+                // skip if all 64 u8 are zero
+                let non_zero_mask = _mm512_test_epi8_mask(v, v);
+                if non_zero_mask == 0 {
+                    base = _mm_add_epi16(base, _mm_set1_epi16(16));
+                    continue;
+                }
+
+                let mask = _mm512_cmpgt_epi32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {
                     let slice = ((mask >> lookup) & 0xff) as u8;
-                    let indices = _mm_load_si128(
-                        self.nnz_table[slice as usize].as_ptr() as *const __m128i
-                    );
+                    let indices =
+                        _mm_load_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
                     _mm_storeu_si128(
                         idx.as_mut_ptr().add(n) as *mut __m128i,
                         _mm_add_epi16(base, indices),
@@ -864,6 +933,24 @@ impl NNUE {
             output += pst;
             (output * SCALE as f32) as i32
         }
+    }
+
+    pub fn sort_eval(&mut self, board: &Board) {
+        let stm = board.side_to_move() as usize;
+        const ZERO: i16 = 0i16;
+        const ONE: i16 = QA as i16;
+        for side in 0..=1 {
+            let acc = &self.side[self.head].vals[stm ^ side];
+            for i in 0..HL_NO_PST / 2 {
+                let x0 = acc[i].clamp(ZERO, ONE);
+                let x1 = acc[i + HL_NO_PST / 2].clamp(ZERO, ONE);
+                self.ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+            }
+        }
+    }
+
+    pub fn sort_ft(&self) -> &Aligned<u8, HL_NO_PST> {
+        &self.ft
     }
 }
 

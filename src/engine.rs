@@ -15,6 +15,7 @@ use crate::{
     param::*,
     rep::RepTable,
     see::{self, see_ge},
+    sort,
     spsa::Parameters,
     stack::{KeyStack, PawnKey, PvList, SearchStack},
     timer::Timer,
@@ -78,7 +79,7 @@ impl Engine {
             timer,
             rep: RepTable::new(),
             table,
-            nnue: NNUE::new(),
+            nnue: NNUE::build(&sort::load_permute()),
             settings: Parameters::default(),
         }
     }
