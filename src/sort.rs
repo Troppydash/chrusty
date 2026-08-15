@@ -5,6 +5,7 @@ use std::{
 };
 
 use cozy_chess::Board;
+use rand::Rng;
 use sfbinpack::{
     TrainingDataEntry,
     chess::{r#move::MoveType, piecetype::PieceType},
@@ -20,13 +21,12 @@ fn filter(entry: &TrainingDataEntry) -> bool {
         && entry.pos.piece_at(entry.mv.to()).piece_type() == PieceType::None
 }
 
-fn benchmark(mut net: NNUE, file: &str, iter: usize) -> f64 {
+fn get_boards(file: &str, iter: usize) -> Vec<Board> {
     let file = File::open(file).unwrap();
     let mut reader =
         sfbinpack::CompressedTrainingDataEntryReader::new(BufReader::new(file)).unwrap();
 
-    let mut sparseness = 0;
-
+    let mut boards = vec![];
     let mut it = 0;
     while it < iter {
         let entry = reader.next();
@@ -38,8 +38,16 @@ fn benchmark(mut net: NNUE, file: &str, iter: usize) -> f64 {
         it += 1;
 
         let board = Board::from_fen(&entry.pos.fen().unwrap(), false).unwrap();
-        net.init(&board);
-        net.sort_eval(&board);
+        boards.push(board);
+    }
+
+    boards
+}
+fn benchmark(mut net: NNUE, boards: &Vec<Board>) -> f64 {
+    let mut sparseness = 0;
+    for board in boards.iter() {
+        net.init(board);
+        net.sort_eval(board);
 
         let ft = net.sort_ft();
         for i in (0..HL_NO_PST).step_by(4) {
@@ -57,22 +65,21 @@ fn benchmark(mut net: NNUE, file: &str, iter: usize) -> f64 {
         }
     }
 
-    sparseness as f64 / (HL_NO_PST / 4 * iter) as f64
+    sparseness as f64 / (HL_NO_PST / 4 * boards.len()) as f64
 }
 
-pub fn start(path: &str, iter: usize) {
-    let net = NNUE::new();
-    println!("starting raw sparseness {}", benchmark(net, path, iter));
-    let net = NNUE::build(&Permute::load());
-    println!("starting sparseness {}", benchmark(net, path, iter));
-
+pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL_NO_PST] {
     let file = File::open(path).unwrap();
     let mut reader =
         sfbinpack::CompressedTrainingDataEntryReader::new(BufReader::new(file)).unwrap();
 
-    let mut net = NNUE::new();
-    let mut counts = [0; HL_NO_PST];
+    let half_hl = HL_NO_PST / 2;
 
+    let mut net = NNUE::new();
+    let mut co_matrix = vec![0u64; half_hl * half_hl];
+    let mut counts = vec![0u64; half_hl];
+
+    // Collect co-occurrence statistics for 0..HL_NO_PST / 2
     let mut it = 0;
     while it < iter {
         let entry = reader.next();
@@ -88,29 +95,142 @@ pub fn start(path: &str, iter: usize) {
         net.sort_eval(&board);
 
         let ft = net.sort_ft();
-        for i in 0..HL_NO_PST {
+
+        // Track active feature indices only in the first half
+        let mut active = Vec::with_capacity(half_hl);
+        for i in 0..half_hl {
             if ft[i] > 0 {
+                active.push(i);
                 counts[i] += 1;
+            }
+        }
+
+        // Increment symmetric co-occurrence pairs
+        let len = active.len();
+        for i in 0..len {
+            let a = active[i];
+            for j in (i + 1)..len {
+                let b = active[j];
+                co_matrix[a * half_hl + b] += 1;
+                co_matrix[b * half_hl + a] += 1;
             }
         }
     }
 
-    let mut index = [0; HL_NO_PST];
+    // Initialize mapping with identity mapping for the full array
+    let mut mapping = [0usize; HL_NO_PST];
     for i in 0..HL_NO_PST {
-        index[i] = i;
+        mapping[i] = i;
     }
 
-    // TODO: hill climb this
-    index[0..(HL_NO_PST / 2)].sort_by_key(|&i| (std::cmp::Reverse(counts[i]), i));
-    for i in 0..(HL_NO_PST / 2) {
-        index[i + HL_NO_PST / 2] = index[i] + HL_NO_PST / 2;
+    // Greedy 4-element block packing strictly on 0..HL_NO_PST / 2
+    let mut used = vec![false; half_hl];
+    let mut write_head = 0;
+
+    while write_head < half_hl {
+        // Pick unmapped neuron with highest activity to anchor the block
+        let mut seed = None;
+        let mut max_count = 0;
+        for i in 0..half_hl {
+            if !used[i] && (seed.is_none() || counts[i] > max_count) {
+                max_count = counts[i];
+                seed = Some(i);
+            }
+        }
+
+        let seed_idx = match seed {
+            Some(idx) => idx,
+            None => break,
+        };
+
+        let mut block = Vec::with_capacity(4);
+        block.push(seed_idx);
+        used[seed_idx] = true;
+
+        // Fill remaining slots in the 4-element block with highest shared co-occurrence
+        while block.len() < 4 && write_head + block.len() < half_hl {
+            let mut best_candidate = None;
+            let mut max_co = 0;
+
+            for candidate in 0..half_hl {
+                if used[candidate] {
+                    continue;
+                }
+
+                // Sum co-occurrence with all current block members
+                let co_sum: u64 = block
+                    .iter()
+                    .map(|&b| co_matrix[candidate * half_hl + b])
+                    .sum();
+
+                if best_candidate.is_none() || co_sum > max_co {
+                    max_co = co_sum;
+                    best_candidate = Some(candidate);
+                }
+            }
+
+            if let Some(candidate_idx) = best_candidate {
+                block.push(candidate_idx);
+                used[candidate_idx] = true;
+            } else {
+                break;
+            }
+        }
+
+        // Write permuted block into mapping
+        for &neuron in &block {
+            mapping[write_head] = neuron;
+            write_head += 1;
+        }
     }
 
-    // index[i] = j where ith largest count is index j
+    mapping
+}
 
-    let mapping = index;
+pub fn start(path: &str, iter: usize) {
+    let boards = get_boards(path, iter);
+    let net = NNUE::new();
+    println!("starting raw sparseness {}", benchmark(net, &boards));
+    let net = NNUE::build(&Permute::load());
+    let baseline = benchmark(net, &boards);
+    println!("starting sparseness {}", baseline);
+
+    // let mut local_best = baseline;
+    // let mut mapping = Permute::load().mapping;
+
+    let mapping = compute_co_occurrence_mapping(path, iter);
+    // let mut rng = rand::rng();
+    // for it in 0..10000 {
+    //     if it % 100 == 0 {
+    //         println!("iter {}, best {}, old {}", it, local_best, baseline);
+    //     }
+
+    //     let mut new_mapping = mapping;
+    //     let mut a = 0;
+    //     let mut b = 0;
+    //     loop {
+    //         a = rng.next_u64() as usize % (HL_NO_PST / 2);
+    //         b = rng.next_u64() as usize % (HL_NO_PST / 2);
+    //         if a != b {
+    //             break;
+    //         }
+    //     }
+
+    //     new_mapping[a] = mapping[b];
+    //     new_mapping[b] = mapping[a];
+
+    //     let net = NNUE::build(&Permute::new(new_mapping.clone()));
+    //     let score = benchmark(net, &boards);
+    //     if score > local_best {
+    //         mapping = new_mapping;
+    //         local_best = score;
+    //         Permute::new(mapping).save();
+    //         println!("improve {}", score);
+    //     }
+    // }
+
     let net = NNUE::build(&Permute::new(mapping));
-    println!("ending sparseness {}", benchmark(net, path, iter));
+    println!("ending sparseness {}", benchmark(net, &boards));
 
     Permute::new(mapping).save();
 }

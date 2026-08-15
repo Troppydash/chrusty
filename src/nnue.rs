@@ -130,7 +130,7 @@ impl SimdOps {
 
 pub struct Permute {
     // mapping[i] = j means that move jth HL neuron to i
-    mapping: [usize; HL_NO_PST],
+    pub mapping: [usize; HL_NO_PST],
 }
 
 impl Permute {
@@ -146,7 +146,10 @@ impl Permute {
         file.write_all(bytes).unwrap();
     }
 
-    pub fn new(mapping: [usize; HL_NO_PST]) -> Self {
+    pub fn new(mut mapping: [usize; HL_NO_PST]) -> Self {
+        for i in 0..(HL_NO_PST / 2) {
+            mapping[i + HL_NO_PST / 2] = mapping[i] + HL_NO_PST / 2;
+        }
         Self { mapping }
     }
 
@@ -899,11 +902,11 @@ impl NNUE {
                 let v = _mm512_load_si512(self.ft.as_ptr().add(b) as _);
 
                 // skip if all 64 u8 are zero
-                let non_zero_mask = _mm512_test_epi8_mask(v, v);
-                if non_zero_mask == 0 {
-                    base = _mm_add_epi16(base, _mm_set1_epi16(16));
-                    continue;
-                }
+                // let non_zero_mask = _mm512_test_epi8_mask(v, v);
+                // if non_zero_mask == 0 {
+                //     base = _mm_add_epi16(base, _mm_set1_epi16(16));
+                //     continue;
+                // }
 
                 let mask = _mm512_cmpgt_epi32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {
