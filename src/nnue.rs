@@ -34,13 +34,14 @@ pub const SCALE: i32 = 400;
 #[repr(C, align(64))]
 #[derive(Debug)]
 struct Aligned<T, const N: usize>([T; N]);
-impl<T: Copy + Default, const N: usize> Aligned<T, N> {
-    fn zeroed() -> Self {
-        Self([T::default(); N])
-    }
 
+impl<T: Copy, const N: usize> Aligned<T, N> {
     fn uninit() -> Self {
         unsafe { Self(MaybeUninit::uninit().assume_init()) }
+    }
+
+    fn zeroed() -> Self {
+        unsafe { Self(MaybeUninit::zeroed().assume_init()) }
     }
 }
 
@@ -483,13 +484,15 @@ pub struct NNUE {
     side: Box<[Accumulator]>,
     head: usize,
     finny: Box<FinnyTable>,
-    nnz_table: [[u16; 8]; 256],
+    nnz_table: [Aligned<u16, 8>; 256],
+    // this is just a temp cache
+    ft: Aligned<u8, HL_NO_PST>,
 }
 
 impl NNUE {
     pub fn new() -> Self {
         // nnz_table[bits][i] = ith bit in bits offset
-        let mut nnz_table = [[0; 8]; 256];
+        let mut nnz_table: [Aligned<u16, 8>; 256] = unsafe { MaybeUninit::zeroed().assume_init() };
         for i in 0..256 {
             let mut j = 0;
             let mut bits = i as u8;
@@ -512,6 +515,7 @@ impl NNUE {
             head: 0,
             finny: FinnyTable::new(),
             nnz_table,
+            ft: Aligned::<u8, HL_NO_PST>::zeroed(),
         };
 
         // explicit clear to init finny
@@ -763,7 +767,7 @@ impl NNUE {
         let stm = board.side_to_move() as usize;
 
         unsafe {
-            const DIVISOR: f32 = 1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32;
+            const DIVISOR: f32 = (1.0 / ((QA * QA * QB) >> FT_SHIFT) as f64) as f32;
             const ZERO: i16 = 0i16;
             const ONE: i16 = QA as i16;
             const ZEROF: f32 = 0.0f32;
@@ -776,28 +780,27 @@ impl NNUE {
                 / (2.0 * QA as f32);
 
             //- ft cleanup
-            let mut ft = Aligned::<u8, HL_NO_PST>::uninit();
             for side in 0..=1 {
                 let acc = &self.side[self.head].vals[stm ^ side];
                 for i in 0..HL_NO_PST / 2 {
                     let x0 = acc[i].clamp(ZERO, ONE);
                     let x1 = acc[i + HL_NO_PST / 2].clamp(ZERO, ONE);
-                    ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                    self.ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
                 }
             }
 
-            let mut idx = [0u16; HL_NO_PST / 4];
+            let mut idx = Aligned::<u16, { HL_NO_PST / 4 }>::uninit();
             let mut base = _mm_setzero_si128();
             let lookup_inc = _mm_set1_epi16(8);
             let mut n = 0;
             for b in (0..HL_NO_PST).step_by(64) {
-                let v = _mm512_load_si512(ft.as_ptr().add(b) as _);
+                let v = _mm512_load_si512(self.ft.as_ptr().add(b) as _);
                 let mask = _mm512_cmpgt_epi32_mask(v, _mm512_setzero_si512());
 
                 for lookup in (0..16).step_by(8) {
                     let slice = ((mask >> lookup) & 0xff) as u8;
-                    let indices = _mm_loadu_si128(
-                        self.nnz_table.as_ptr().add(slice as usize) as *const __m128i
+                    let indices = _mm_load_si128(
+                        self.nnz_table[slice as usize].as_ptr() as *const __m128i
                     );
                     _mm_storeu_si128(
                         idx.as_mut_ptr().add(n) as *mut __m128i,
@@ -813,16 +816,18 @@ impl NNUE {
             let l1_weights = &self.network.l1_weights[bucket];
             for t in 0..n {
                 let c = idx[t] as usize;
-                let f = _mm512_set1_epi32(*(ft.0.as_ptr() as *const i32).add(c));
+                let f = _mm512_set1_epi32(*(self.ft.as_ptr() as *const i32).add(c));
                 let w = l1_weights[c].as_ptr() as *const __m512i;
                 for q in (0..L1).step_by(STEP) {
-                    let prod16 = _mm512_maddubs_epi16(f, _mm512_load_si512(w.add(q / STEP)));
-                    let prod32 = _mm512_madd_epi16(prod16, _mm512_set1_epi16(1));
-                    l1_sum_acc[q / STEP] = _mm512_add_epi32(l1_sum_acc[q / STEP], prod32);
+                    l1_sum_acc[q / STEP] = _mm512_dpbusd_epi32(
+                        l1_sum_acc[q / STEP],
+                        f,
+                        _mm512_load_si512(w.add(q / STEP)),
+                    );
                 }
             }
 
-            let mut l1_sum = Aligned::<i32, L1>::zeroed();
+            let mut l1_sum = Aligned::<i32, L1>::uninit();
             for q in (0..L1).step_by(STEP) {
                 _mm512_store_si512(l1_sum.as_mut_ptr().add(q) as _, l1_sum_acc[q / STEP]);
             }
@@ -847,6 +852,8 @@ impl NNUE {
                 let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
                 l2[i] = s * s;
             }
+
+            // TODO: this might be slow
 
             //- l2 -> output
             let mut output = self.network.output_bias[bucket];
