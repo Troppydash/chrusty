@@ -1,4 +1,5 @@
 use std::arch::x86_64::*;
+use std::io::Write;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::ops::DerefMut;
@@ -127,6 +128,53 @@ impl SimdOps {
     }
 }
 
+pub struct Permute {
+    // mapping[i] = j means that move jth HL neuron to i
+    mapping: [usize; HL_NO_PST],
+}
+
+impl Permute {
+    const fn permute_name() -> &'static str {
+        env!("PERMUTE_FILE")
+    }
+
+    pub fn save(&self) {
+        println!("writing to {}", Self::permute_name());
+        let mut file = std::fs::File::create(Self::permute_name()).unwrap();
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                self.mapping.as_ptr() as *const u8,
+                size_of_val(&self.mapping),
+            )
+        };
+        file.write_all(bytes).unwrap();
+    }
+    pub fn new(mapping: [usize; HL_NO_PST]) -> Self {
+        Self { mapping }
+    }
+
+    pub fn default() -> Self {
+        let mut mapping = [0; HL_NO_PST];
+        for i in 0..HL_NO_PST {
+            mapping[i] = i;
+        }
+        Self::new(mapping)
+    }
+
+    #[cfg(permute_file)]
+    pub fn load() -> Self {
+        let data = *include_bytes!(env!("PERMUTE_FILE"));
+        let data = unsafe { std::mem::transmute(data) };
+
+        Self::new(data)
+    }
+
+    #[cfg(not(permute_file))]
+    pub fn load() -> Self {
+        Self::default()
+    }
+}
+
 #[repr(C, align(64))]
 #[derive(Clone)]
 struct RawNetwork {
@@ -174,9 +222,7 @@ impl RawNetwork {
         }
     }
 
-    fn permute(&mut self, mapping: &[usize; HL_NO_PST]) {
-        // mapping[i] = j means that move jth HL neuron to i
-
+    fn permute(&mut self, permute: &Permute) {
         let old = self.get_boxed();
 
         /*
@@ -195,12 +241,12 @@ impl RawNetwork {
            be fixed by this.
 
            Since stm index i is actually the old stm index j, we update l1 i to j.
-           For ntm that this is actually the same, ntm i is actually HL/2+i will 
+           For ntm that this is actually the same, ntm i is actually HL/2+i will
            get mapped to mapping[HL/2+i] = HL/2+j = j + HL/2 which is exactly correct.
         */
 
         for i in 0..HL_NO_PST {
-            let j = mapping[i];
+            let j = permute.mapping[i];
             self.feature_bias[i] = old.feature_bias[j];
 
             for k in 0..KINGS {
@@ -542,9 +588,9 @@ pub struct NNUE {
 }
 
 impl NNUE {
-    pub fn build(mapping: &[usize; HL_NO_PST]) -> Self {
+    pub fn build(permute: &Permute) -> Self {
         let mut raw = RawNetwork::load();
-        raw.permute(mapping);
+        raw.permute(permute);
 
         // nnz_table[bits][i] = ith bit in bits offset
         let mut nnz_table: [Aligned<u16, 8>; 256] = unsafe { MaybeUninit::zeroed().assume_init() };
@@ -579,11 +625,7 @@ impl NNUE {
     }
 
     pub fn new() -> Self {
-        let mut mapping = [0; HL_NO_PST];
-        for i in 0..HL_NO_PST {
-            mapping[i] = i;
-        }
-        Self::build(&mapping)
+        Self::build(&Permute::default())
     }
 
     pub fn init(&mut self, board: &Board) {

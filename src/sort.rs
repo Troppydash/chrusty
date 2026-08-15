@@ -10,7 +10,7 @@ use sfbinpack::{
     chess::{r#move::MoveType, piecetype::PieceType},
 };
 
-use crate::nnue::{HL_NO_PST, NNUE};
+use crate::nnue::{HL_NO_PST, NNUE, Permute};
 
 fn filter(entry: &TrainingDataEntry) -> bool {
     entry.ply >= 22
@@ -61,7 +61,6 @@ fn benchmark(mut net: NNUE, file: &str, iter: usize) -> f64 {
 }
 
 pub fn start(path: &str, iter: usize) {
-    println!("{}", permute_name());
     let net = NNUE::new();
     println!("starting sparseness {}", benchmark(net, path, iter));
 
@@ -108,37 +107,10 @@ pub fn start(path: &str, iter: usize) {
     // index[i] = j where ith largest count is index j
 
     let mapping = index;
-    let net = NNUE::build(&mapping);
+    let net = NNUE::build(&Permute::new(mapping));
     println!("ending sparseness {}", benchmark(net, path, iter));
 
-    save_permute(&mapping);
-}
-
-const fn permute_name() -> &'static str {
-    env!("PERMUTE_FILE")
-}
-
-pub fn save_permute(mapping: &[usize; HL_NO_PST]) {
-    println!("writing to {}", permute_name());
-    let mut file = File::create(permute_name()).unwrap();
-    let bytes =
-        unsafe { std::slice::from_raw_parts(mapping.as_ptr() as *const u8, size_of_val(mapping)) };
-    file.write_all(bytes).unwrap();
-}
-
-#[cfg(permute_file)]
-pub fn load_permute() -> [usize; HL_NO_PST] {
-    let data = *include_bytes!(env!("PERMUTE_FILE"));
-    unsafe { std::mem::transmute(data) }
-}
-
-#[cfg(not(permute_file))]
-pub fn load_permute() -> [usize; HL_NO_PST] {
-    let mut data = [0; HL_NO_PST];
-    for i in 0..HL_NO_PST {
-        data[i] = i;
-    }
-    data
+    Permute::new(mapping).save();
 }
 
 mod tests {
@@ -177,7 +149,7 @@ mod tests {
         ];
 
         let mut net = NNUE::new();
-        let mut perm_net = NNUE::build(&load_permute());
+        let mut perm_net = NNUE::build(&Permute::load());
         for fen in fens {
             let board = Board::from_fen(fen, false).unwrap();
             net.init(&board);

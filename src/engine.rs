@@ -11,7 +11,7 @@ use crate::{
     helpers::avg,
     heuristic::{CORR_LIMIT, Heuristic},
     movepick::Movepick,
-    nnue::NNUE,
+    nnue::{NNUE, Permute},
     param::*,
     rep::RepTable,
     see::{self, see_ge},
@@ -79,7 +79,7 @@ impl Engine {
             timer,
             rep: RepTable::new(),
             table,
-            nnue: NNUE::build(&sort::load_permute()),
+            nnue: NNUE::build(&Permute::load()),
             settings: Parameters::default(),
         }
     }
