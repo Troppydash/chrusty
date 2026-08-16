@@ -29,10 +29,6 @@ impl ColoredPiece {
     pub fn index(&self) -> usize {
         self.color as usize * 6 + self.piece as usize
     }
-
-    pub fn kingless_index(&self) -> usize {
-        self.color as usize * 5 + self.piece as usize
-    }
 }
 
 pub fn index_with_option(c: &Option<ColoredPiece>) -> usize {
@@ -62,6 +58,12 @@ pub enum MoveType {
     CASTLE,
     PROMOTION,
     NONE,
+}
+
+impl Default for MoveType {
+    fn default() -> Self {
+        MoveType::NONE
+    }
 }
 
 pub trait ExtMove {

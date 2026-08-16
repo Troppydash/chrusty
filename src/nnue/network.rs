@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 
 use crate::ext::ColoredPiece;
+use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
 use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
@@ -22,7 +23,6 @@ pub const FT_SHIFT: usize = 9;
 pub const SCALE: i32 = 400;
 
 pub const THREATS: usize = (5 * 64 * 5 * 64) * 2;
-pub const BASE: usize = KINGS * 768;
 
 const KING_BUCKET: [usize; 64] = [
     0, 1, 2, 3, 3, 2, 1, 0, //
@@ -66,6 +66,11 @@ impl<T, const N: usize> DerefMut for Aligned<T, N> {
 pub struct SimdOps;
 impl SimdOps {
     #[inline(always)]
+    pub fn zero(out: &mut Aligned<i16, HL>) {
+        out.0.fill(0);
+    }
+
+    #[inline(always)]
     pub fn fused_copy(out: &mut Aligned<i16, HL>, in_vec: &Aligned<i16, HL>) {
         out.0.copy_from_slice(&in_vec.0);
     }
@@ -78,9 +83,31 @@ impl SimdOps {
     }
 
     #[inline(always)]
+    pub fn fused_add_add(
+        out: &mut Aligned<i16, HL>,
+        add1: &Aligned<i16, HL>,
+        add2: &Aligned<i16, HL>,
+    ) {
+        for i in 0..HL {
+            out[i] += add1[i] + add2[i];
+        }
+    }
+
+    #[inline(always)]
     pub fn fused_sub(out: &mut Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] -= sub[i];
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_sub_sub(
+        out: &mut Aligned<i16, HL>,
+        sub1: &Aligned<i16, HL>,
+        sub2: &Aligned<i16, HL>,
+    ) {
+        for i in 0..HL {
+            out[i] -= sub1[i] + sub2[i];
         }
     }
 
@@ -403,14 +430,19 @@ impl Network {
         &self,
         side: Color,
         attacker: ColoredPiece,
+        attacker_square: Square,
         target: ColoredPiece,
+        target_square: Square,
     ) -> &Aligned<i16, HL> {
+        debug_assert!(attacker.piece != Piece::King);
+        debug_assert!(target.piece != Piece::King);
         let index = if attacker.color == side {
             0
         } else {
             THREATS / 2
-        } + attacker.kingless_index() * (5 * 64)
-            + target.kingless_index();
+        } + (attacker.piece as usize * 64 + attacker_square.relative_to(side) as usize)
+            * (5 * 64)
+            + (target.piece as usize * 64 + target_square.relative_to(side) as usize);
         &self.threat_weights[index]
     }
 
@@ -495,6 +527,69 @@ impl Network {
                     ),
                 );
             }
+        }
+    }
+
+    pub fn threat_apply_update(
+        &self,
+        next: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        update: &ThreatUpdate,
+        side: Color,
+    ) {
+        SimdOps::fused_copy(next, base);
+
+        let mut i = 0;
+        while i < update.adds.len() && i < update.subs.len() {
+            let add = update.adds[i];
+            let sub = update.subs[i];
+            SimdOps::fused_add_sub(
+                next,
+                self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
+                self.threat_feature_lookup(side, sub.p1, sub.sq1, sub.p2, sub.sq2),
+            );
+
+            i += 1;
+        }
+
+        let mut j = i;
+        while j + 1 < update.adds.len() {
+            let add = update.adds[j];
+            let add2 = update.adds[j + 1];
+            SimdOps::fused_add_add(
+                next,
+                self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
+                self.threat_feature_lookup(side, add2.p1, add2.sq1, add2.p2, add2.sq2),
+            );
+            j += 2;
+        }
+
+        if j < update.adds.len() {
+            let add = update.adds[j];
+            SimdOps::fused_add(
+                next,
+                self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
+            );
+        }
+
+        let mut j = i;
+        while j + 1 < update.subs.len() {
+            let sub1 = update.subs[j];
+            let sub2 = update.subs[j + 1];
+            SimdOps::fused_sub_sub(
+                next,
+                self.threat_feature_lookup(side, sub1.p1, sub1.sq1, sub1.p2, sub1.sq2),
+                self.threat_feature_lookup(side, sub2.p1, sub2.sq1, sub2.p2, sub2.sq2),
+            );
+            j += 2;
+        }
+
+        if j < update.subs.len() {
+            let sub = update.subs[j];
+            SimdOps::fused_sub(
+                next,
+                self.threat_feature_lookup(side, sub.p1, sub.sq1, sub.p2, sub.sq2),
+            );
         }
     }
 }

@@ -3,16 +3,20 @@ use std::{arch::x86_64::*, mem::MaybeUninit};
 use cozy_chess::{Board, Move};
 
 use crate::nnue::{
-    halfka::HalfKA, network::{Aligned, FT_SHIFT, HL_NO_PST, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
+    halfka::HalfKA,
+    network::{Aligned, FT_SHIFT, HL_NO_PST, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
+    threats::Threats,
 };
 
 mod halfka;
 pub mod network;
+mod threats;
 mod update;
 
 pub struct NNUE {
     network: Box<Network>,
     halfka: HalfKA,
+    threats: Threats,
     nnz_table: [Aligned<u16, 8>; 256],
     // this is just a temp cache
     ft: Aligned<u8, HL_NO_PST>,
@@ -39,6 +43,7 @@ impl NNUE {
         let mut net = Self {
             network: Network::load(raw),
             halfka: HalfKA::new(),
+            threats: Threats::new(),
             nnz_table,
             ft: Aligned::<u8, HL_NO_PST>::zeroed(),
         };
@@ -52,6 +57,7 @@ impl NNUE {
 
     pub fn init(&mut self, board: &Board) {
         self.halfka.init(board, &self.network);
+        self.threats.init(board, &self.network);
     }
 
     pub fn clear(&mut self) {
@@ -60,14 +66,17 @@ impl NNUE {
 
     pub fn catchup(&mut self, board: &Board) {
         self.halfka.catchup(board, &self.network);
+        self.threats.catchup(board, &self.network);
     }
 
     pub fn make_move(&mut self, board: &Board, m: Move) {
         self.halfka.make_move(board, m);
+        self.threats.make_move(board, m);
     }
 
     pub fn unmake_move(&mut self) {
         self.halfka.unmake_move();
+        self.threats.unmake_move();
     }
 
     pub fn evaluate(&mut self, board: &Board) -> i32 {
@@ -76,7 +85,7 @@ impl NNUE {
     }
 
     #[target_feature(enable = "avx512f")]
-    pub unsafe fn avx512_evaluate(&mut self, board: &Board) -> i32 {
+    unsafe fn avx512_evaluate(&mut self, board: &Board) -> i32 {
         let bucket = Network::get_output_bucket(board);
         let stm = board.side_to_move() as usize;
 
@@ -88,17 +97,21 @@ impl NNUE {
             const ONEF: f32 = 1.0f32;
 
             // pst
-            let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket]
-                - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket])
-                as f32
+            let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket] as f32
+                - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket] as f32
+                + self.threats.side[self.threats.head].vals[stm][HL_NO_PST + bucket] as f32
+                - self.threats.side[self.threats.head].vals[stm ^ 1][HL_NO_PST + bucket] as f32)
                 / (2.0 * QA as f32);
 
             //- ft cleanup
             for side in 0..=1 {
                 let acc = &self.halfka.side[self.halfka.head].vals[stm ^ side];
+                let acc_threats = &self.threats.side[self.threats.head].vals[stm ^ side];
+
                 for i in 0..HL_NO_PST / 2 {
-                    let x0 = acc[i].clamp(ZERO, ONE);
-                    let x1 = acc[i + HL_NO_PST / 2].clamp(ZERO, ONE);
+                    let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
+                    let x1 =
+                        (acc[i + HL_NO_PST / 2] + acc_threats[i + HL_NO_PST / 2]).clamp(ZERO, ONE);
                     self.ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
                 }
             }
@@ -187,6 +200,7 @@ impl NNUE {
     }
 
     pub fn sort_eval(&mut self, board: &Board) {
+        // TODO: fix
         let stm = board.side_to_move() as usize;
         const ZERO: i16 = 0i16;
         const ONE: i16 = QA as i16;
@@ -207,9 +221,11 @@ impl NNUE {
 
 #[cfg(test)]
 mod tests {
+    use cozy_chess::GameStatus;
+
     use crate::ext::ExtBoard;
 
-use super::*;
+    use super::*;
 
     #[test]
     fn make_unmake_test() {
@@ -348,6 +364,32 @@ use super::*;
                     let board = boards[sp].clone().unwrap();
                     assert_eq!(net.evaluate(&board), evals[sp].unwrap());
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn random_make_unmake_init_test() {
+        let mut net = NNUE::new();
+
+        for op in 0..10 {
+            let mut board = Board::startpos();
+            net.init(&board);
+
+            while board.status() == GameStatus::Ongoing {
+                let moves = board.get_legal_moves();
+                let random_move = moves[op % moves.len()];
+
+                net.make_move(&board, random_move);
+
+                let mut next_board = board.clone();
+                next_board.play_unchecked(random_move);
+                let incr_eval = net.evaluate(&next_board);
+                net.init(&next_board);
+                let err = incr_eval - net.evaluate(&next_board);
+                assert!(err.abs() < 2);
+
+                board = next_board;
             }
         }
     }
