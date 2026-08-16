@@ -7,7 +7,7 @@ use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
 
 use crate::{
-    ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType},
+    ext::{BitBoardExt, ColoredPiece, ExtBoard, ExtMove, MoveType},
     nnue::{
         network::{Aligned, HL, KINGS, Network, SimdOps},
         update::{ThreatDelta, ThreatDeltaUpdates, ThreatUpdate},
@@ -19,7 +19,7 @@ use crate::{
 pub struct Accumulator {
     pub vals: [Aligned<i16, HL>; 2],
     is_clean: [bool; 2],
-    update: ThreatUpdate,
+    update: (Move, Board),
 }
 
 impl Accumulator {
@@ -27,7 +27,7 @@ impl Accumulator {
         Self {
             vals: [Aligned::<i16, HL>::zeroed(), Aligned::<i16, HL>::zeroed()],
             is_clean: [false; 2],
-            update: ThreatUpdate::default(),
+            update: (Move::NULL_MOVE, Board::startpos()),
         }
     }
 }
@@ -53,82 +53,15 @@ impl Threats {
 
     pub fn init(&mut self, board: &Board, network: &Box<Network>) {
         self.head = 0;
-        self.side[self.head].update.clear();
-        self.refresh(board, Color::White, network);
-        self.refresh(board, Color::Black, network);
+        self.side[self.head].update = (Move::NULL_MOVE, board.clone());
+        self.refresh(board, network);
     }
 
     pub fn make_move(&mut self, board: &Board, m: Move) {
         self.head += 1;
         let acc = &mut self.side[self.head];
         acc.is_clean = [false; 2];
-        acc.update.clear();
-        acc.update.move_type = board.move_type(m);
-
-        // Fallback to full refresh for complex move types
-        if matches!(
-            acc.update.move_type,
-            MoveType::CASTLE | MoveType::PROMOTION | MoveType::ENPASSENT
-        ) {
-            return;
-        }
-
-        match acc.update.move_type {
-            MoveType::NORMAL => {
-                /*
-                Removes:
-                from outgoing/incoming
-
-                if cap
-                    to outgoing/incoming
-                else
-                    blocked discovered attacks bypassing to
-
-                Adds:
-                to outgoing
-                to incoming
-
-                discovered attacks bypassing from
-                 */
-
-                let from = m.from;
-                let to = m.to;
-                let is_cap = board.piece_on(to).is_some();
-
-                Self::record_sq_inout(board, from, BitBoard::FULL, &mut acc.update.subs);
-                if is_cap {
-                    Self::record_sq_inout(
-                        board,
-                        to,
-                        BitBoard::FULL & !from.bitboard(),
-                        &mut acc.update.subs,
-                    );
-                }
-
-                let mut new_board = board.clone();
-                new_board.play_unchecked(m);
-
-                Self::record_sq_inout(&new_board, to, BitBoard::FULL, &mut acc.update.adds);
-                Self::record_unblocked_discovered(
-                    board,
-                    &new_board,
-                    from,
-                    to,
-                    &mut acc.update.adds,
-                );
-
-                if !is_cap {
-                    Self::record_blocked_discovered(
-                        board,
-                        &new_board,
-                        to,
-                        from,
-                        &mut acc.update.subs,
-                    );
-                }
-            }
-            _ => panic!(""),
-        }
+        acc.update = (m, board.clone());
     }
 
     fn record_sq_inout(board: &Board, sq: Square, mask: BitBoard, out: &mut ThreatDeltaUpdates) {
@@ -322,86 +255,58 @@ impl Threats {
         }
     }
 
-    // fn get_attacks(occ: BitBoard, sq: Square, piece: ColoredPiece) -> BitBoard {
-    //     match piece.piece {
-    //         Piece::Pawn => cozy_chess::get_pawn_attacks(sq, piece.color),
-    //         Piece::Knight => cozy_chess::get_knight_moves(sq),
-    //         Piece::Bishop => cozy_chess::get_bishop_moves(sq, occ),
-    //         Piece::Rook => cozy_chess::get_rook_moves(sq, occ),
-    //         Piece::Queen => {
-    //             cozy_chess::get_bishop_moves(sq, occ) | cozy_chess::get_rook_moves(sq, occ)
-    //         }
-    //         Piece::King => BitBoard::EMPTY,
-    //     }
-    // }
+    fn get_threat_update(board: &Board, m: Move) -> ThreatUpdate {
+        /*
+        Removes:
+        from outgoing/incoming
 
-    // fn record_sq_outgoing(board: &Board, sq: Square, out: &mut ThreatDeltaUpdates) {
-    //     let piece1 = board.color_piece_on(sq).unwrap();
-    //     if piece1.piece == Piece::King {
-    //         return;
-    //     }
+        if cap
+            to outgoing/incoming
+        else
+            blocked discovered attacks bypassing to
 
-    //     let targets = Self::get_attacks(board.occupied(), sq, piece1)
-    //         & board.colors(!piece1.color)
-    //         & !board.pieces(Piece::King);
-    //     for target_sq in targets {
-    //         let piece2 = board.color_piece_on(target_sq).unwrap();
-    //         out.push(ThreatDelta {
-    //             p1: piece1,
-    //             sq1: sq,
-    //             p2: piece2,
-    //             sq2: target_sq,
-    //         });
-    //     }
-    // }
+        Adds:
+        to outgoing
+        to incoming
 
-    // fn record_sq_incoming_non_sliders(
-    //     board: &Board,
-    //     target_sq: Square,
-    //     occ: BitBoard,
-    //     out: &mut ThreatDeltaUpdates,
-    // ) {
-    //     let piece2 = board.color_piece_on(target_sq).unwrap();
-    //     if piece2.piece == Piece::King {
-    //         return;
-    //     }
+        discovered attacks bypassing from
+         */
+        let mut threats = ThreatUpdate::default();
 
-    //     let pawn_attackers =
-    //         cozy_chess::get_pawn_attacks(target_sq, !piece2.color) & board.pieces(Piece::Pawn);
-    //     let knight_attackers =
-    //         cozy_chess::get_knight_moves(target_sq) & board.pieces(Piece::Knight);
+        let from = m.from;
+        let to = m.to;
+        let is_cap = board.piece_on(to).is_some();
 
-    //     let attackers = (pawn_attackers | knight_attackers) & board.colors(!piece2.color) & occ;
-    //     for attacker_sq in attackers {
-    //         let piece1 = board.color_piece_on(attacker_sq).unwrap();
-    //         out.push(ThreatDelta {
-    //             p1: piece1,
-    //             sq1: attacker_sq,
-    //             p2: piece2,
-    //             sq2: target_sq,
-    //         });
-    //     }
-    // }
+        Self::record_sq_inout(board, from, BitBoard::FULL, &mut threats.subs);
+        if is_cap {
+            Self::record_sq_inout(
+                board,
+                to,
+                BitBoard::FULL & !from.bitboard(),
+                &mut threats.subs,
+            );
+        }
 
-    // fn get_ray_aligned_sliders(board: &Board, occ: BitBoard, sqs: &[Square]) -> BitBoard {
-    //     let mut sliders = BitBoard::EMPTY;
-    //     let bishops_queens = board.pieces(Piece::Bishop) | board.pieces(Piece::Queen);
-    //     let rooks_queens = board.pieces(Piece::Rook) | board.pieces(Piece::Queen);
+        let mut new_board = board.clone();
+        new_board.play_unchecked(m);
 
-    //     for &sq in sqs {
-    //         let diag = cozy_chess::get_bishop_moves(sq, occ) & bishops_queens;
-    //         let ortho = cozy_chess::get_rook_moves(sq, occ) & rooks_queens;
-    //         sliders |= diag | ortho;
-    //     }
-    //     sliders
-    // }
+        Self::record_sq_inout(&new_board, to, BitBoard::FULL, &mut threats.adds);
+        Self::record_unblocked_discovered(board, &new_board, from, to, &mut threats.adds);
+
+        if !is_cap {
+            Self::record_blocked_discovered(board, &new_board, to, from, &mut threats.subs);
+        }
+
+        threats
+    }
 
     pub fn unmake_move(&mut self) {
         self.head -= 1;
     }
 
-    fn refresh(&mut self, board: &Board, side: Color, network: &Box<Network>) {
-        SimdOps::zero(&mut self.side[self.head].vals[side as usize]);
+    fn refresh(&mut self, board: &Board, network: &Box<Network>) {
+        SimdOps::zero(&mut self.side[self.head].vals[0]);
+        SimdOps::zero(&mut self.side[self.head].vals[1]);
 
         let occ = board.occupied();
         for sq1 in occ {
@@ -433,54 +338,64 @@ impl Threats {
 
                 if attacks.has(sq2) {
                     SimdOps::fused_add(
-                        &mut self.side[self.head].vals[side as usize],
-                        network.threat_feature_lookup(side, piece1, sq1, piece2, sq2),
+                        &mut self.side[self.head].vals[0],
+                        network.threat_feature_lookup(Color::White, piece1, sq1, piece2, sq2),
+                    );
+                    SimdOps::fused_add(
+                        &mut self.side[self.head].vals[1],
+                        network.threat_feature_lookup(Color::Black, piece1, sq1, piece2, sq2),
                     );
                 }
             }
         }
 
-        self.side[self.head].is_clean[side as usize] = true;
+        self.side[self.head].is_clean[0] = true;
     }
 
     pub fn catchup(&mut self, board: &Board, network: &Box<Network>) {
-        for side in 0..=1 {
-            if self.side[self.head].is_clean[side] {
-                continue;
+        if self.side[self.head].is_clean[0] {
+            return;
+        }
+
+        let mut base = self.head;
+        loop {
+            if matches!(
+                self.side[base].update.1.move_type(self.side[base].update.0),
+                MoveType::CASTLE | MoveType::PROMOTION | MoveType::ENPASSENT
+            ) {
+                self.refresh(board, network);
+                break;
             }
 
-            let mut base = self.head;
-            loop {
-                if matches!(
-                    self.side[base].update.move_type,
-                    MoveType::CASTLE | MoveType::PROMOTION | MoveType::ENPASSENT
-                ) {
-                    self.refresh(board, Color::ALL[side], network);
-                    break;
+            if self.side[base].is_clean[0] {
+                for i in base + 1..=self.head {
+                    let threat_update =
+                        Self::get_threat_update(&self.side[i].update.1, self.side[i].update.0);
+                    let (base, next) = self.side.split_at_mut(i);
+
+                    network.threat_apply_update(
+                        &mut next[0].vals[0],
+                        &base[i - 1].vals[0],
+                        &threat_update,
+                        Color::White,
+                    );
+                    network.threat_apply_update(
+                        &mut next[0].vals[1],
+                        &base[i - 1].vals[1],
+                        &threat_update,
+                        Color::Black,
+                    );
+                    self.side[i].is_clean[0] = true;
                 }
 
-                if self.side[base].is_clean[side] {
-                    for i in base + 1..=self.head {
-                        let (base, next) = self.side.split_at_mut(i);
-
-                        network.threat_apply_update(
-                            &mut next[0].vals[side],
-                            &base[i - 1].vals[side],
-                            &next[0].update,
-                            Color::ALL[side],
-                        );
-                        self.side[i].is_clean[side] = true;
-                    }
-
-                    self.side[self.head].is_clean[side] = true;
-                    break;
-                }
-
-                if base == 0 {
-                    panic!("no clean base");
-                }
-                base -= 1;
+                self.side[self.head].is_clean[0] = true;
+                break;
             }
+
+            if base == 0 {
+                panic!("no clean base");
+            }
+            base -= 1;
         }
     }
 }
