@@ -106,7 +106,7 @@ impl Threats {
                 }
 
                 let mut new_board = board.clone();
-                new_board.play(m);
+                new_board.play_unchecked(m);
 
                 Self::record_sq_inout(&new_board, to, BitBoard::FULL, &mut acc.update.adds);
                 Self::record_unblocked_discovered(
@@ -186,63 +186,69 @@ impl Threats {
 
     /// Records new attacks created because `vacated_sq` was emptied.
     fn record_unblocked_discovered(
-        old_board: &Board,
+        _old_board: &Board,
         new_board: &Board,
         vacated_sq: Square,
         ignore_sq: Square,
         out: &mut ThreatDeltaUpdates,
     ) {
-        let old_occ = old_board.occupied();
         let new_occ = new_board.occupied();
-
         let bishops_queens = new_board.pieces(Piece::Bishop) | new_board.pieces(Piece::Queen);
         let rooks_queens = new_board.pieces(Piece::Rook) | new_board.pieces(Piece::Queen);
 
-        let diag_sliders = cozy_chess::get_bishop_moves(vacated_sq, new_occ)
-            & bishops_queens
-            & !ignore_sq.bitboard();
+        // Diagonal discovery
+        let diag_moves = cozy_chess::get_bishop_moves(vacated_sq, new_occ);
+        let diag_sliders = diag_moves & bishops_queens & !ignore_sq.bitboard();
 
-        let ortho_sliders =
-            cozy_chess::get_rook_moves(vacated_sq, new_occ) & rooks_queens & !ignore_sq.bitboard();
+        if !diag_sliders.is_empty() {
+            let valid_targets = diag_moves
+                & !new_board.pieces(Piece::King)
+                & !ignore_sq.bitboard()
+                & !vacated_sq.bitboard();
 
-        let valid_targets =
-            !new_board.pieces(Piece::King) & !ignore_sq.bitboard() & !vacated_sq.bitboard();
+            for slider_sq in diag_sliders {
+                let piece = new_board.color_piece_on(slider_sq).unwrap();
+                let enemy_targets = valid_targets & new_board.colors(!piece.color);
 
-        for slider_sq in diag_sliders {
-            let piece = new_board.color_piece_on(slider_sq).unwrap();
-            let new_attacks = cozy_chess::get_bishop_moves(slider_sq, new_occ)
-                & new_board.colors(!piece.color)
-                & valid_targets;
-            let old_attacks =
-                cozy_chess::get_bishop_moves(slider_sq, old_occ) & old_board.colors(!piece.color);
-
-            for att_sq in new_attacks & !old_attacks {
-                let att_piece = new_board.color_piece_on(att_sq).unwrap();
-                out.push(ThreatDelta {
-                    p1: piece,
-                    sq1: slider_sq,
-                    p2: att_piece,
-                    sq2: att_sq,
-                });
+                for att_sq in enemy_targets {
+                    if cozy_chess::get_between_rays(slider_sq, att_sq).has(vacated_sq) {
+                        let att_piece = new_board.color_piece_on(att_sq).unwrap();
+                        out.push(ThreatDelta {
+                            p1: piece,
+                            sq1: slider_sq,
+                            p2: att_piece,
+                            sq2: att_sq,
+                        });
+                    }
+                }
             }
         }
 
-        for slider_sq in ortho_sliders {
-            let piece = new_board.color_piece_on(slider_sq).unwrap();
-            let new_attacks = cozy_chess::get_rook_moves(slider_sq, new_occ)
-                & new_board.colors(!piece.color)
-                & valid_targets;
-            let old_attacks =
-                cozy_chess::get_rook_moves(slider_sq, old_occ) & old_board.colors(!piece.color);
+        // Orthogonal discovery
+        let ortho_moves = cozy_chess::get_rook_moves(vacated_sq, new_occ);
+        let ortho_sliders = ortho_moves & rooks_queens & !ignore_sq.bitboard();
 
-            for att_sq in new_attacks & !old_attacks {
-                let att_piece = new_board.color_piece_on(att_sq).unwrap();
-                out.push(ThreatDelta {
-                    p1: piece,
-                    sq1: slider_sq,
-                    p2: att_piece,
-                    sq2: att_sq,
-                });
+        if !ortho_sliders.is_empty() {
+            let valid_targets = ortho_moves
+                & !new_board.pieces(Piece::King)
+                & !ignore_sq.bitboard()
+                & !vacated_sq.bitboard();
+
+            for slider_sq in ortho_sliders {
+                let piece = new_board.color_piece_on(slider_sq).unwrap();
+                let enemy_targets = valid_targets & new_board.colors(!piece.color);
+
+                for att_sq in enemy_targets {
+                    if cozy_chess::get_between_rays(slider_sq, att_sq).has(vacated_sq) {
+                        let att_piece = new_board.color_piece_on(att_sq).unwrap();
+                        out.push(ThreatDelta {
+                            p1: piece,
+                            sq1: slider_sq,
+                            p2: att_piece,
+                            sq2: att_sq,
+                        });
+                    }
+                }
             }
         }
     }
@@ -250,63 +256,68 @@ impl Threats {
     /// Records old attacks destroyed because `blocked_sq` became occupied.
     fn record_blocked_discovered(
         old_board: &Board,
-        new_board: &Board,
+        _new_board: &Board,
         blocked_sq: Square,
         ignore_sq: Square,
         out: &mut ThreatDeltaUpdates,
     ) {
         let old_occ = old_board.occupied();
-        let new_occ = new_board.occupied();
-
         let bishops_queens = old_board.pieces(Piece::Bishop) | old_board.pieces(Piece::Queen);
         let rooks_queens = old_board.pieces(Piece::Rook) | old_board.pieces(Piece::Queen);
 
-        // Look for sliders on the OLD board that passed through blocked_sq
-        let diag_sliders = cozy_chess::get_bishop_moves(blocked_sq, old_occ)
-            & bishops_queens
-            & !ignore_sq.bitboard();
+        // Diagonal blocked attacks
+        let diag_moves = cozy_chess::get_bishop_moves(blocked_sq, old_occ);
+        let diag_sliders = diag_moves & bishops_queens & !ignore_sq.bitboard();
 
-        let ortho_sliders =
-            cozy_chess::get_rook_moves(blocked_sq, old_occ) & rooks_queens & !ignore_sq.bitboard();
+        if !diag_sliders.is_empty() {
+            let valid_targets = diag_moves
+                & !old_board.pieces(Piece::King)
+                & !ignore_sq.bitboard()
+                & !blocked_sq.bitboard();
 
-        let valid_targets =
-            !old_board.pieces(Piece::King) & !ignore_sq.bitboard() & !blocked_sq.bitboard();
+            for slider_sq in diag_sliders {
+                let piece = old_board.color_piece_on(slider_sq).unwrap();
+                let enemy_targets = valid_targets & old_board.colors(!piece.color);
 
-        for slider_sq in diag_sliders {
-            let piece = old_board.color_piece_on(slider_sq).unwrap();
-            let old_attacks = cozy_chess::get_bishop_moves(slider_sq, old_occ)
-                & old_board.colors(!piece.color)
-                & valid_targets;
-            let new_attacks =
-                cozy_chess::get_bishop_moves(slider_sq, new_occ) & new_board.colors(!piece.color);
-
-            for att_sq in old_attacks & !new_attacks {
-                let att_piece = old_board.color_piece_on(att_sq).unwrap();
-                out.push(ThreatDelta {
-                    p1: piece,
-                    sq1: slider_sq,
-                    p2: att_piece,
-                    sq2: att_sq,
-                });
+                for att_sq in enemy_targets {
+                    if cozy_chess::get_between_rays(slider_sq, att_sq).has(blocked_sq) {
+                        let att_piece = old_board.color_piece_on(att_sq).unwrap();
+                        out.push(ThreatDelta {
+                            p1: piece,
+                            sq1: slider_sq,
+                            p2: att_piece,
+                            sq2: att_sq,
+                        });
+                    }
+                }
             }
         }
 
-        for slider_sq in ortho_sliders {
-            let piece = old_board.color_piece_on(slider_sq).unwrap();
-            let old_attacks = cozy_chess::get_rook_moves(slider_sq, old_occ)
-                & old_board.colors(!piece.color)
-                & valid_targets;
-            let new_attacks =
-                cozy_chess::get_rook_moves(slider_sq, new_occ) & new_board.colors(!piece.color);
+        // Orthogonal blocked attacks
+        let ortho_moves = cozy_chess::get_rook_moves(blocked_sq, old_occ);
+        let ortho_sliders = ortho_moves & rooks_queens & !ignore_sq.bitboard();
 
-            for att_sq in old_attacks & !new_attacks {
-                let att_piece = old_board.color_piece_on(att_sq).unwrap();
-                out.push(ThreatDelta {
-                    p1: piece,
-                    sq1: slider_sq,
-                    p2: att_piece,
-                    sq2: att_sq,
-                });
+        if !ortho_sliders.is_empty() {
+            let valid_targets = ortho_moves
+                & !old_board.pieces(Piece::King)
+                & !ignore_sq.bitboard()
+                & !blocked_sq.bitboard();
+
+            for slider_sq in ortho_sliders {
+                let piece = old_board.color_piece_on(slider_sq).unwrap();
+                let enemy_targets = valid_targets & old_board.colors(!piece.color);
+
+                for att_sq in enemy_targets {
+                    if cozy_chess::get_between_rays(slider_sq, att_sq).has(blocked_sq) {
+                        let att_piece = old_board.color_piece_on(att_sq).unwrap();
+                        out.push(ThreatDelta {
+                            p1: piece,
+                            sq1: slider_sq,
+                            p2: att_piece,
+                            sq2: att_sq,
+                        });
+                    }
+                }
             }
         }
     }
