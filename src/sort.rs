@@ -11,7 +11,10 @@ use sfbinpack::{
     chess::{r#move::MoveType, piecetype::PieceType},
 };
 
-use crate::nnue::{HL_NO_PST, NNUE, Permute};
+use crate::nnue::{
+    NNUE,
+    network::{HL_NO_PST, Permute},
+};
 
 fn filter(entry: &TrainingDataEntry) -> bool {
     entry.ply >= 22

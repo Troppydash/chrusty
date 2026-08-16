@@ -6,20 +6,7 @@ use std::{
 use cozy_chess::{Board, Move, Piece};
 
 use crate::{
-    cuckoo,
-    ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
-    helpers::avg,
-    heuristic::{CORR_LIMIT, Heuristic},
-    movepick::Movepick,
-    nnue::{NNUE, Permute},
-    param::*,
-    rep::RepTable,
-    see::{self, see_ge},
-    sort,
-    spsa::Parameters,
-    stack::{KeyStack, PawnKey, PvList, SearchStack},
-    timer::Timer,
-    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
+    cuckoo, ext::{ColoredPiece, ExtBoard, ExtMove, MoveList}, helpers::avg, heuristic::{CORR_LIMIT, Heuristic}, movepick::Movepick, nnue::{NNUE, network::Permute}, param::*, rep::RepTable, see::{self, see_ge}, sort, spsa::Parameters, stack::{KeyStack, PawnKey, PvList, SearchStack}, timer::Timer, tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
 
 #[derive(Clone, Debug)]

@@ -29,6 +29,10 @@ impl ColoredPiece {
     pub fn index(&self) -> usize {
         self.color as usize * 6 + self.piece as usize
     }
+
+    pub fn kingless_index(&self) -> usize {
+        self.color as usize * 5 + self.piece as usize
+    }
 }
 
 pub fn index_with_option(c: &Option<ColoredPiece>) -> usize {
