@@ -331,13 +331,9 @@ impl Threats {
         SimdOps::zero(&mut self.side[self.head].vals[0]);
         SimdOps::zero(&mut self.side[self.head].vals[1]);
 
-        let mut set = HashSet::<(usize, usize, usize)>::new();
         let occ = board.occupied();
-        for sq1 in occ {
+        for sq1 in occ & !board.pieces(Piece::King) {
             let piece1 = board.color_piece_on(sq1).unwrap();
-            if piece1.piece == Piece::King {
-                continue;
-            }
 
             let attacks = match piece1.piece {
                 Piece::Pawn => cozy_chess::get_pawn_attacks(sq1, piece1.color),
@@ -350,29 +346,16 @@ impl Threats {
                 Piece::King => BitBoard::EMPTY,
             };
 
-            for sq2 in occ {
+            for sq2 in board.colors(!piece1.color) & !board.pieces(Piece::King) & attacks {
                 let piece2 = board.color_piece_on(sq2).unwrap();
-                if piece2.color == piece1.color {
-                    continue;
-                }
-
-                if piece2.piece == Piece::King {
-                    continue;
-                }
-
-
-                if attacks.has(sq2) {
-                set.insert((piece1 as usize, ))
-
-                    SimdOps::fused_add(
-                        &mut self.side[self.head].vals[0],
-                        network.threat_feature_lookup(Color::White, piece1, sq1, piece2, sq2),
-                    );
-                    SimdOps::fused_add(
-                        &mut self.side[self.head].vals[1],
-                        network.threat_feature_lookup(Color::Black, piece1, sq1, piece2, sq2),
-                    );
-                }
+                SimdOps::fused_add(
+                    &mut self.side[self.head].vals[0],
+                    network.threat_feature_lookup(Color::White, piece1, sq1, piece2, sq2),
+                );
+                SimdOps::fused_add(
+                    &mut self.side[self.head].vals[1],
+                    network.threat_feature_lookup(Color::Black, piece1, sq1, piece2, sq2),
+                );
             }
         }
 
@@ -383,8 +366,6 @@ impl Threats {
         if self.side[self.head].is_clean[0] {
             return;
         }
-        self.refresh(board, network);
-        return;
 
         let mut base = self.head;
         loop {

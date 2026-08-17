@@ -15,7 +15,7 @@ pub const MAX_MOVES: usize = 218;
 pub type ScoredMoveList = ArrayVec<ScoredMove, MAX_MOVES>;
 pub type MoveList = ArrayVec<Move, MAX_MOVES>;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ColoredPiece {
     pub color: Color,
     pub piece: Piece,

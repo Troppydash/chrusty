@@ -553,43 +553,23 @@ impl Network {
         }
 
         let mut j = i;
-        while j + 1 < update.adds.len() {
-            let add = update.adds[j];
-            let add2 = update.adds[j + 1];
-            SimdOps::fused_add_add(
-                next,
-                self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
-                self.threat_feature_lookup(side, add2.p1, add2.sq1, add2.p2, add2.sq2),
-            );
-            j += 2;
-        }
-
-        if j < update.adds.len() {
+        while j < update.adds.len() {
             let add = update.adds[j];
             SimdOps::fused_add(
                 next,
                 self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
             );
+            j += 1;
         }
 
         let mut j = i;
-        while j + 1 < update.subs.len() {
-            let sub1 = update.subs[j];
-            let sub2 = update.subs[j + 1];
-            SimdOps::fused_sub_sub(
-                next,
-                self.threat_feature_lookup(side, sub1.p1, sub1.sq1, sub1.p2, sub1.sq2),
-                self.threat_feature_lookup(side, sub2.p1, sub2.sq1, sub2.p2, sub2.sq2),
-            );
-            j += 2;
-        }
-
-        if j < update.subs.len() {
+        while j < update.subs.len() {
             let sub = update.subs[j];
             SimdOps::fused_sub(
                 next,
                 self.threat_feature_lookup(side, sub.p1, sub.sq1, sub.p2, sub.sq2),
             );
+            j += 1;
         }
     }
 }
