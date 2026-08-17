@@ -256,48 +256,71 @@ impl Threats {
     }
 
     fn get_threat_update(board: &Board, m: Move) -> ThreatUpdate {
-        /*
-        Removes:
-        from outgoing/incoming
+        match board.move_type(m) {
+            MoveType::NORMAL => {
+                /*
+                Removes:
+                from outgoing/incoming
 
-        if cap
-            to outgoing/incoming
-        else
-            blocked discovered attacks bypassing to
+                if cap
+                    to outgoing/incoming
+                else
+                    blocked discovered attacks bypassing to
 
-        Adds:
-        to outgoing
-        to incoming
+                Adds:
+                to outgoing
+                to incoming
 
-        discovered attacks bypassing from
-         */
-        let mut threats = ThreatUpdate::default();
+                discovered attacks bypassing from
+                 */
+                let mut threats = ThreatUpdate::default();
 
-        let from = m.from;
-        let to = m.to;
-        let is_cap = board.piece_on(to).is_some();
+                let from = m.from;
+                let to = m.to;
+                let is_cap = board.piece_on(to).is_some();
 
-        Self::record_sq_inout(board, from, BitBoard::FULL, &mut threats.subs);
-        if is_cap {
-            Self::record_sq_inout(
-                board,
-                to,
-                BitBoard::FULL & !from.bitboard(),
-                &mut threats.subs,
-            );
+                Self::record_sq_inout(board, from, BitBoard::FULL, &mut threats.subs);
+                if is_cap {
+                    Self::record_sq_inout(
+                        board,
+                        to,
+                        BitBoard::FULL & !from.bitboard(),
+                        &mut threats.subs,
+                    );
+                }
+
+                let mut new_board = board.clone();
+                new_board.play_unchecked(m);
+
+                Self::record_sq_inout(&new_board, to, BitBoard::FULL, &mut threats.adds);
+                Self::record_unblocked_discovered(board, &new_board, from, to, &mut threats.adds);
+
+                if !is_cap {
+                    Self::record_blocked_discovered(board, &new_board, to, from, &mut threats.subs);
+                }
+
+                threats
+            }
+            MoveType::CASTLE => {
+                let mut threats = ThreatUpdate::default();
+                // king takes rook
+                let king_from = m.from;
+                let rook_from = m.to;
+
+                let (king_to, rook_to) = board.castle_to(m);
+
+                Self::record_sq_inout(board, rook_from, BitBoard::FULL, &mut threats.subs);
+
+                let mut new_board = board.clone();
+                new_board.play_unchecked(m);
+                Self::record_sq_inout(&new_board, rook_to, BitBoard::FULL, &mut threats.adds);
+
+                // guaranteed nothing attacking and starts attacking rook/king
+                // guaranteed no discovered attacks or blocked attacks
+                threats
+            }
+            _ => unreachable!(),
         }
-
-        let mut new_board = board.clone();
-        new_board.play_unchecked(m);
-
-        Self::record_sq_inout(&new_board, to, BitBoard::FULL, &mut threats.adds);
-        Self::record_unblocked_discovered(board, &new_board, from, to, &mut threats.adds);
-
-        if !is_cap {
-            Self::record_blocked_discovered(board, &new_board, to, from, &mut threats.subs);
-        }
-
-        threats
     }
 
     pub fn unmake_move(&mut self) {
@@ -308,6 +331,7 @@ impl Threats {
         SimdOps::zero(&mut self.side[self.head].vals[0]);
         SimdOps::zero(&mut self.side[self.head].vals[1]);
 
+        let mut set = HashSet::<(usize, usize, usize)>::new();
         let occ = board.occupied();
         for sq1 in occ {
             let piece1 = board.color_piece_on(sq1).unwrap();
@@ -336,7 +360,10 @@ impl Threats {
                     continue;
                 }
 
+
                 if attacks.has(sq2) {
+                set.insert((piece1 as usize, ))
+
                     SimdOps::fused_add(
                         &mut self.side[self.head].vals[0],
                         network.threat_feature_lookup(Color::White, piece1, sq1, piece2, sq2),
@@ -356,12 +383,14 @@ impl Threats {
         if self.side[self.head].is_clean[0] {
             return;
         }
+        self.refresh(board, network);
+        return;
 
         let mut base = self.head;
         loop {
             if matches!(
                 self.side[base].update.1.move_type(self.side[base].update.0),
-                MoveType::CASTLE | MoveType::PROMOTION | MoveType::ENPASSENT
+                MoveType::PROMOTION | MoveType::ENPASSENT
             ) {
                 self.refresh(board, network);
                 break;
