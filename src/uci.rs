@@ -1,4 +1,5 @@
 use crate::ext::ExtMove;
+use crate::nnue::NNUE;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
@@ -255,6 +256,16 @@ pub fn start(args: Vec<String>) {
             }
             "stop" => {
                 async_engine.stop();
+            }
+            "eval" => {
+                let fen = format!(
+                    "{} {} {} {} {} {}",
+                    parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
+                );
+                let mut net = NNUE::new();
+                let board = Board::from_fen(&fen, false).unwrap();
+                net.init(&board);
+                println!("{}", net.evaluate(&board));
             }
             "setoption" => {
                 // setoption name <name> value <value>

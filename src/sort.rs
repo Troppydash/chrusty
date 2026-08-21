@@ -17,11 +17,9 @@ use crate::nnue::{
 };
 
 fn filter(entry: &TrainingDataEntry) -> bool {
-    entry.ply >= 22
+    entry.ply >= 14
         && !entry.pos.is_checked(entry.pos.side_to_move())
-        && entry.score.abs() < 20000
-        && entry.mv.mtype() == MoveType::Normal
-        && entry.pos.piece_at(entry.mv.to()).piece_type() == PieceType::None
+        && entry.score.abs() < 10000
 }
 
 fn get_boards(file: &str, iter: usize) -> Vec<Board> {
@@ -33,7 +31,9 @@ fn get_boards(file: &str, iter: usize) -> Vec<Board> {
     let mut it = 0;
     while it < iter {
         let entry = reader.next();
-
+        if !rand::random_bool(1.0 / 20.0) {
+            continue;
+        }
         if !filter(&entry) {
             continue;
         }

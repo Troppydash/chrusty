@@ -4,6 +4,8 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 
 use crate::ext::ColoredPiece;
+use crate::nnue::ti;
+use crate::nnue::update::ThreatDelta;
 use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
@@ -19,10 +21,10 @@ pub const OUTPUTS: usize = 8;
 pub const HL: usize = HL_NO_PST + OUTPUTS;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
-pub const FT_SHIFT: usize = 9;
+pub const FT_SHIFT: usize = 8;
 pub const SCALE: i32 = 400;
 
-pub const THREATS: usize = (5 * 64 * 5 * 64) * 2;
+pub const THREATS: usize = 34440;
 
 const KING_BUCKET: [usize; 64] = [
     0, 1, 2, 3, 3, 2, 1, 0, //
@@ -81,6 +83,34 @@ impl SimdOps {
             out[i] += add[i];
         }
     }
+    #[inline(always)]
+    pub fn fused_add2(out: &mut Aligned<i16, HL>, add: &Aligned<i8, HL>) {
+        for i in 0..HL {
+            out[i] += add[i] as i16;
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_add_base(
+        out: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        add: &Aligned<i16, HL>,
+    ) {
+        for i in 0..HL {
+            out[i] = base[i] + add[i];
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_sub_base(
+        out: &mut Aligned<i16, HL>,
+        base: &Aligned<i16, HL>,
+        sub: &Aligned<i16, HL>,
+    ) {
+        for i in 0..HL {
+            out[i] = base[i] - sub[i];
+        }
+    }
 
     #[inline(always)]
     pub fn fused_add_add(
@@ -97,6 +127,13 @@ impl SimdOps {
     pub fn fused_sub(out: &mut Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] -= sub[i];
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_sub2(out: &mut Aligned<i16, HL>, sub: &Aligned<i8, HL>) {
+        for i in 0..HL {
+            out[i] -= sub[i] as i16;
         }
     }
 
@@ -119,6 +156,17 @@ impl SimdOps {
     ) {
         for i in 0..HL {
             out[i] += add[i] - sub[i];
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_add_sub2(
+        out: &mut Aligned<i16, HL>,
+        add: &Aligned<i8, HL>,
+        sub: &Aligned<i8, HL>,
+    ) {
+        for i in 0..HL {
+            out[i] += add[i] as i16 - sub[i] as i16;
         }
     }
 
@@ -290,7 +338,9 @@ impl RawNetwork {
                 }
             }
 
-            // TODO: fix for threats
+            for k in 0..THREATS {
+                self.threat_weights[k][i] = old.threat_weights[k][j];
+            }
 
             for output in 0..OUTPUTS {
                 for l1_idx in 0..L1 {
@@ -304,18 +354,18 @@ impl RawNetwork {
 #[repr(C, align(64))]
 pub struct Network {
     pub feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
-    /// [0 if us attacker][attacker][square][target][square]
-    pub threat_weights: [Aligned<i16, HL>; THREATS],
+    pub threat_weights: [Aligned<i8, HL>; THREATS],
     pub feature_bias: Aligned<i16, HL>,
 
-    pub l1_weights: [[[i8; 4 * L1]; HL_NO_PST / 4]; OUTPUTS],
-    pub l1_bias: [[f32; L1]; OUTPUTS],
+    pub l1_weights: [[Aligned<i8, { 4 * L1 }>; HL_NO_PST / 4]; OUTPUTS],
+    // pub l1_weights: [[[i8; HL_NO_PST]; L1]; OUTPUTS],
+    pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
-    pub l2_weights: [[[f32; L2]; L1]; OUTPUTS],
-    pub l2_bias: [[f32; L2]; OUTPUTS],
+    pub l2_weights: [[Aligned<f32, L2>; L1]; OUTPUTS],
+    pub l2_bias: [Aligned<f32, L2>; OUTPUTS],
 
-    pub output_weights: [[f32; L2]; OUTPUTS],
+    pub output_weights: [Aligned<f32, L2>; OUTPUTS],
     pub output_bias: [f32; OUTPUTS],
 }
 
@@ -331,9 +381,21 @@ impl Network {
             }
         }
 
+        let mut clamped = 0;
         for a in 0..THREATS {
-            net.threat_weights[a] = Aligned::<i16, HL>(raw.threat_weights[a]);
+            for b in 0..HL {
+                net.threat_weights[a][b] =
+                    raw.threat_weights[a][b].clamp(i8::MIN as i16 + 1, i8::MAX as i16) as i8;
+
+                if net.threat_weights[a][b] as i16 != raw.threat_weights[a][b] {
+                    clamped += 1;
+                }
+            }
         }
+        println!(
+            "info pct_threats_clamped {:.2}%",
+            (clamped * 100) as f32 / (THREATS * HL) as f32
+        );
 
         for a in 0..HL {
             net.feature_bias[a] = raw.feature_bias[a];
@@ -348,6 +410,13 @@ impl Network {
                 }
             }
         }
+        // for bucket in 0..OUTPUTS {
+        // for c in 0..L1 {
+        // for j in 0..HL_NO_PST {
+        // net.l1_weights[bucket][c][j] = raw.l1_weights[bucket][c][j];
+        // }
+        // }
+        // }
 
         for a in 0..OUTPUTS {
             for b in 0..L1 {
@@ -406,6 +475,15 @@ impl Network {
             != Self::get_king_bucket(new_king.relative_to(side));
     }
 
+    pub fn needs_refresh_threat(old_king: Square, new_king: Square) -> bool {
+        if old_king == new_king {
+            return false;
+        }
+
+        // if different side, need refresh
+        Self::is_mirrored(old_king) != Self::is_mirrored(new_king)
+    }
+
     pub fn get_output_bucket(board: &Board) -> usize {
         ((board.occupied().len() - 2) / 4) as usize
     }
@@ -426,23 +504,53 @@ impl Network {
         &self.feature_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
     }
 
+    fn threat_feature_lookup_from_threat(
+        &self,
+        king_sq: Square,
+        side: Color,
+        threat_delta: ThreatDelta,
+    ) -> &Aligned<i8, HL> {
+        let (attacker, attacker_square, target, target_square, attacker_color) = threat_delta.get();
+        &self.threat_feature_lookup(
+            king_sq,
+            side,
+            attacker_color,
+            attacker,
+            attacker_square,
+            target,
+            target_square,
+        )
+    }
+
     pub fn threat_feature_lookup(
         &self,
+        king_sq: Square,
         side: Color,
-        attacker: ColoredPiece,
-        attacker_square: Square,
-        target: ColoredPiece,
-        target_square: Square,
-    ) -> &Aligned<i16, HL> {
-        debug_assert!(attacker.piece != Piece::King);
-        debug_assert!(target.piece != Piece::King);
-        let index = if attacker.color == side {
+        attacker_color: Color,
+        attacker: Piece,
+        mut attacker_square: Square,
+        target: Piece,
+        mut target_square: Square,
+    ) -> &Aligned<i8, HL> {
+        debug_assert!(attacker != Piece::King);
+        debug_assert!(target != Piece::King);
+        if (king_sq as u16 & 0b100) != 0 {
+            attacker_square = attacker_square.flip_file();
+            target_square = target_square.flip_file();
+        }
+
+        let index = ti::threat_feature_index(
+            attacker as usize,
+            attacker_square.relative_to(side) as usize,
+            target_square.relative_to(side) as usize,
+            target as usize,
+        );
+
+        let index = if attacker_color == side {
             0
         } else {
             THREATS / 2
-        } + (attacker.piece as usize * 64 + attacker_square.relative_to(side) as usize)
-            * (5 * 64)
-            + (target.piece as usize * 64 + target_square.relative_to(side) as usize);
+        } + index;
         &self.threat_weights[index]
     }
 
@@ -536,38 +644,40 @@ impl Network {
         base: &Aligned<i16, HL>,
         update: &ThreatUpdate,
         side: Color,
+        king_sq: Square,
     ) {
         SimdOps::fused_copy(next, base);
 
         let mut i = 0;
-        while i < update.adds.len() && i < update.subs.len() {
+        let mut j = 0;
+        while i < update.adds.len() && j < update.subs.len() {
             let add = update.adds[i];
             let sub = update.subs[i];
-            SimdOps::fused_add_sub(
+
+            SimdOps::fused_add_sub2(
                 next,
-                self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
-                self.threat_feature_lookup(side, sub.p1, sub.sq1, sub.p2, sub.sq2),
+                self.threat_feature_lookup_from_threat(king_sq, side, add),
+                self.threat_feature_lookup_from_threat(king_sq, side, sub),
             );
 
             i += 1;
-        }
-
-        let mut j = i;
-        while j < update.adds.len() {
-            let add = update.adds[j];
-            SimdOps::fused_add(
-                next,
-                self.threat_feature_lookup(side, add.p1, add.sq1, add.p2, add.sq2),
-            );
             j += 1;
         }
 
-        let mut j = i;
+        while i < update.adds.len() {
+            let add = update.adds[i];
+            SimdOps::fused_add2(
+                next,
+                self.threat_feature_lookup_from_threat(king_sq, side, add),
+            );
+            i += 1;
+        }
+
         while j < update.subs.len() {
             let sub = update.subs[j];
-            SimdOps::fused_sub(
+            SimdOps::fused_sub2(
                 next,
-                self.threat_feature_lookup(side, sub.p1, sub.sq1, sub.p2, sub.sq2),
+                self.threat_feature_lookup_from_threat(king_sq, side, sub),
             );
             j += 1;
         }

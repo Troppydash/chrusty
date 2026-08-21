@@ -6,7 +6,20 @@ use std::{
 use cozy_chess::{Board, Move, Piece};
 
 use crate::{
-    cuckoo, ext::{ColoredPiece, ExtBoard, ExtMove, MoveList}, helpers::avg, heuristic::{CORR_LIMIT, Heuristic}, movepick::Movepick, nnue::{NNUE, network::Permute}, param::*, rep::RepTable, see::{self, see_ge}, sort, spsa::Parameters, stack::{KeyStack, PawnKey, PvList, SearchStack}, timer::Timer, tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
+    cuckoo,
+    ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
+    helpers::avg,
+    heuristic::{CORR_LIMIT, Heuristic},
+    movepick::Movepick,
+    nnue::{NNUE, network::Permute},
+    param::*,
+    rep::RepTable,
+    see::{self, see_ge},
+    sort,
+    spsa::Parameters,
+    stack::{KeyStack, PawnKey, PvList, SearchStack},
+    timer::Timer,
+    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
 
 #[derive(Clone, Debug)]
@@ -100,14 +113,16 @@ impl Engine {
 
         let mut new_pos = pos.clone();
         if m.is_null() {
+            self.stack[ss].piece = None;
             self.stack[ss].cont_corrhist = (12, 0);
             new_pos.null_move().unwrap()
         } else {
             self.stack[ss].piece = Some(pos.color_piece_on(m.from).unwrap());
             self.stack[ss].cont_corrhist = self.heuristic.get_cont_corrhist_index(pos, m);
 
-            self.nnue.make_move(pos, m);
             new_pos.play_unchecked(m);
+            self.nnue.make_move(pos, &new_pos, m);
+
             new_pos
         }
     }

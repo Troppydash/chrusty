@@ -11,6 +11,7 @@ use crate::nnue::{
 mod halfka;
 pub mod network;
 mod threats;
+mod ti;
 mod update;
 
 pub struct NNUE {
@@ -69,9 +70,15 @@ impl NNUE {
         self.threats.catchup(board, &self.network);
     }
 
-    pub fn make_move(&mut self, board: &Board, m: Move) {
+    pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) {
         self.halfka.make_move(board, m);
-        self.threats.make_move(board, m);
+        self.threats.make_move(board, new_board, m);
+    }
+
+    pub fn make_move_slow(&mut self, board: &Board, m: Move) {
+        let mut new_board = board.clone();
+        new_board.play_unchecked(m);
+        self.make_move(board, &new_board, m);
     }
 
     pub fn unmake_move(&mut self) {
@@ -97,10 +104,11 @@ impl NNUE {
             const ONEF: f32 = 1.0f32;
 
             // pst
-            let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket] as f32
-                - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket] as f32
-                + self.threats.side[self.threats.head].vals[stm][HL_NO_PST + bucket] as f32
-                - self.threats.side[self.threats.head].vals[stm ^ 1][HL_NO_PST + bucket] as f32)
+            let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket] as i32
+                - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32
+                + self.threats.side[self.threats.head].vals[stm][HL_NO_PST + bucket] as i32
+                - self.threats.side[self.threats.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32)
+                as f32
                 / (2.0 * QA as f32);
 
             //- ft cleanup
@@ -130,7 +138,7 @@ impl NNUE {
                 //     continue;
                 // }
 
-                let mask = _mm512_cmpgt_epi32_mask(v, _mm512_setzero_si512());
+                let mask = _mm512_cmpgt_epu32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {
                     let slice = ((mask >> lookup) & 0xff) as u8;
                     let indices =
@@ -165,6 +173,12 @@ impl NNUE {
                 _mm512_store_si512(l1_sum.as_mut_ptr().add(q) as _, l1_sum_acc[q / STEP]);
             }
 
+            // for i in 0..L1 {
+            //     for j in 0..HL_NO_PST {
+            //         l1_sum[i] += self.ft[j] as i32 * self.network.l1_weights[bucket][i][j] as i32;
+            //     }
+            // }
+
             let mut l1 = Aligned::<f32, L1>::uninit();
             for i in 0..L1 {
                 let s = (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i])
@@ -189,26 +203,34 @@ impl NNUE {
             // TODO: this might be slow
 
             //- l2 -> output
-            let mut output = self.network.output_bias[bucket];
-            for i in 0..L2 {
-                output += l2[i] * self.network.output_weights[bucket][i];
-            }
 
-            output += pst;
+            // let mut output = self.network.output_bias[bucket];
+            // for i in 0..L2 {
+            //     output += l2[i] * self.network.output_weights[bucket][i];
+            // }
+            let mut out = _mm512_setzero_ps();
+            let out_weights = self.network.output_weights[bucket].as_ptr();
+            for i in (0..L2).step_by(16) {
+                let l2_vec = _mm512_load_ps(l2.as_ptr().add(i));
+                let w_vec = _mm512_load_ps(out_weights.add(i));
+                out = _mm512_fmadd_ps(l2_vec, w_vec, out);
+            }
+            let output = _mm512_reduce_add_ps(out) + self.network.output_bias[bucket] + pst;
             (output * SCALE as f32) as i32
         }
     }
 
     pub fn sort_eval(&mut self, board: &Board) {
-        // TODO: fix
         let stm = board.side_to_move() as usize;
         const ZERO: i16 = 0i16;
         const ONE: i16 = QA as i16;
         for side in 0..=1 {
             let acc = &self.halfka.side[self.halfka.head].vals[stm ^ side];
+            let acc_threats = &self.threats.side[self.threats.head].vals[stm ^ side];
+
             for i in 0..HL_NO_PST / 2 {
-                let x0 = acc[i].clamp(ZERO, ONE);
-                let x1 = acc[i + HL_NO_PST / 2].clamp(ZERO, ONE);
+                let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
+                let x1 = (acc[i + HL_NO_PST / 2] + acc_threats[i + HL_NO_PST / 2]).clamp(ZERO, ONE);
                 self.ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
             }
         }
@@ -235,7 +257,7 @@ mod tests {
         let eval = net.evaluate(&board);
 
         let random_move = board.get_legal_moves()[12];
-        net.make_move(&board, random_move);
+        net.make_move_slow(&board, random_move);
         net.unmake_move();
         assert_eq!(net.evaluate(&board), eval);
     }
@@ -264,7 +286,7 @@ mod tests {
 
         net.catchup(&board);
         let random_move = board.get_legal_moves()[12];
-        net.make_move(&board, random_move);
+        net.make_move_slow(&board, random_move);
 
         let mut new_board = board.clone();
         new_board.play_unchecked(random_move);
@@ -299,7 +321,7 @@ mod tests {
                     let moves = board.get_legal_moves();
                     let random_move = moves[1337 % moves.len()];
 
-                    net.make_move(&board, random_move);
+                    net.make_move_slow(&board, random_move);
 
                     let mut next_board = board.clone();
                     next_board.play_unchecked(random_move);
@@ -346,7 +368,7 @@ mod tests {
                     let moves = board.get_legal_moves();
                     let random_move = moves[1337 % moves.len()];
 
-                    net.make_move(&board, random_move);
+                    net.make_move_slow(&board, random_move);
 
                     let mut next_board = board.clone();
                     next_board.play_unchecked(random_move);
@@ -372,7 +394,7 @@ mod tests {
     fn random_make_unmake_init_test() {
         let mut net = NNUE::new();
 
-        for op in 0..10 {
+        for op in 0..100 {
             let mut board = Board::startpos();
             net.init(&board);
 
@@ -380,14 +402,21 @@ mod tests {
                 let moves = board.get_legal_moves();
                 let random_move = moves[op % moves.len()];
 
-                net.make_move(&board, random_move);
+                net.make_move_slow(&board, random_move);
 
                 let mut next_board = board.clone();
                 next_board.play_unchecked(random_move);
                 let incr_eval = net.evaluate(&next_board);
                 net.init(&next_board);
                 let err = incr_eval - net.evaluate(&next_board);
-                assert!(err.abs() < 2);
+                assert!(
+                    err.abs() < 2,
+                    "{} against {}, fen {}, move {}",
+                    incr_eval,
+                    net.evaluate(&next_board),
+                    board,
+                    random_move
+                );
 
                 board = next_board;
             }
@@ -402,5 +431,18 @@ mod tests {
         net.init(&board);
         let eval = net.evaluate(&board);
         assert_eq!(eval, -1532);
+    }
+
+    #[test]
+    fn test_eval2() {
+        let mut net = NNUE::new();
+        let board = Board::from_fen(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            false,
+        )
+        .unwrap();
+        net.init(&board);
+        let eval = net.evaluate(&board);
+        assert_eq!(eval, 30);
     }
 }
