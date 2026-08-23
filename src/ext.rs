@@ -76,6 +76,8 @@ pub trait ExtMove {
 
     fn to_bits(&self) -> u16;
     fn from_bits(value: u16) -> Move;
+
+    fn is_under_promotion(&self) -> bool;
 }
 
 pub const fn move_to_bits(m: Move) -> u16 {
@@ -130,6 +132,15 @@ impl ExtMove for Move {
                 6 => None,
                 _ => Some(Piece::ALL[promotion as usize]),
             },
+        }
+    }
+    
+    fn is_under_promotion(&self) -> bool {
+        match self.promotion {
+            None => false,
+            Some(Piece::Queen) => false,
+            Some(Piece::Knight) => false,
+            _ => true
         }
     }
 }

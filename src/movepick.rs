@@ -410,15 +410,10 @@ impl Movepick {
                     m.to,
                 );
 
-            score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
-
-            if let Some(promotion) = self.moves.get(i).inner.promotion {
-                score += 10000
-                    + pesto_value(
-                        &self.pos,
-                        ColoredPiece::new(self.pos.side_to_move(), promotion),
-                        m.to,
-                    );
+            if let Some(promotion) = self.moves.get(i).inner.promotion
+                && matches!(promotion, Piece::Queen | Piece::Knight)
+            {
+                score += 10000;
             }
 
             self.moves.get_mut(i).score = score;
@@ -519,6 +514,7 @@ impl Movepick {
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         let m = moves[i];
                         if !see::see_ge(&self.pos, m.inner, -m.score / param::GOOD_CAPTURE_SEE_DIV)
+                            || m.inner.is_under_promotion()
                         {
                             moves.swap(i, self.bad_capture_len);
                             self.bad_capture_len += 1;
@@ -694,6 +690,7 @@ impl Movepick {
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         let m = moves[i];
                         see::see_ge(&self.pos, m.inner, self.probcut_margin)
+                            && !m.inner.is_under_promotion()
                     });
                     if !next_move.is_null() {
                         return next_move;

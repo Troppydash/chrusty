@@ -83,7 +83,7 @@ impl Threats {
         }
 
         let occ = board.occupied();
-
+        
         let pawn = cozy_chess::get_pawn_attacks(sq, piece.color);
         let knight = cozy_chess::get_knight_moves(sq);
         let bishop = cozy_chess::get_bishop_moves(sq, occ);

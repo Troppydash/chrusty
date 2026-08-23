@@ -40,7 +40,7 @@ pub const QDEPTH: i8 = 0;
 pub const UNSEARCH_DEPTH: i8 = -10;
 pub const UNINIT_DEPTH: i8 = -20;
 
-pub const MVV_MULTIPLIER: i32 = 3;
+pub const MVV_MULTIPLIER: i32 = 8;
 pub const BAD_QUIET_SCORE: i32 = -15000;
 pub const GOOD_CAPTURE_SEE_DIV: i32 = 32;
 

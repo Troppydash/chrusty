@@ -38,7 +38,7 @@ const KING_BUCKET: [usize; 64] = [
 ];
 
 #[repr(C, align(64))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Aligned<T, const N: usize>([T; N]);
 
 impl<T: Copy, const N: usize> Aligned<T, N> {
@@ -385,7 +385,7 @@ impl Network {
         for a in 0..THREATS {
             for b in 0..HL {
                 net.threat_weights[a][b] =
-                    raw.threat_weights[a][b].clamp(i8::MIN as i16 + 1, i8::MAX as i16) as i8;
+                    raw.threat_weights[a][b].clamp(i8::MIN as i16, i8::MAX as i16) as i8;
 
                 if net.threat_weights[a][b] as i16 != raw.threat_weights[a][b] {
                     clamped += 1;
@@ -652,7 +652,7 @@ impl Network {
         let mut j = 0;
         while i < update.adds.len() && j < update.subs.len() {
             let add = update.adds[i];
-            let sub = update.subs[i];
+            let sub = update.subs[j];
 
             SimdOps::fused_add_sub2(
                 next,

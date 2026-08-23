@@ -17,19 +17,17 @@ use crate::nnue::{
 };
 
 fn filter(entry: &TrainingDataEntry) -> bool {
-    entry.ply >= 14
-        && !entry.pos.is_checked(entry.pos.side_to_move())
-        && entry.score.abs() < 10000
+    entry.ply >= 14 && !entry.pos.is_checked(entry.pos.side_to_move()) && entry.score.abs() < 10000
 }
 
-fn get_boards(file: &str, iter: usize) -> Vec<Board> {
+fn get_boards(file: &str, skip: usize, iter: usize) -> Vec<Board> {
     let file = File::open(file).unwrap();
     let mut reader =
         sfbinpack::CompressedTrainingDataEntryReader::new(BufReader::new(file)).unwrap();
 
     let mut boards = vec![];
     let mut it = 0;
-    while it < iter {
+    while it < skip + iter {
         let entry = reader.next();
         if !rand::random_bool(1.0 / 20.0) {
             continue;
@@ -39,9 +37,10 @@ fn get_boards(file: &str, iter: usize) -> Vec<Board> {
         }
 
         it += 1;
-
-        let board = Board::from_fen(&entry.pos.fen().unwrap(), false).unwrap();
-        boards.push(board);
+        if it > skip {
+            let board = Board::from_fen(&entry.pos.fen().unwrap(), false).unwrap();
+            boards.push(board);
+        }
     }
 
     boards
@@ -191,7 +190,7 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL_NO_P
 }
 
 pub fn start(path: &str, iter: usize) {
-    let boards = get_boards(path, iter);
+    let boards = get_boards(path, 0, iter);
     let net = NNUE::new();
     println!("starting raw sparseness {}", benchmark(net, &boards));
     let net = NNUE::build(&Permute::load());
@@ -234,6 +233,10 @@ pub fn start(path: &str, iter: usize) {
 
     let net = NNUE::build(&Permute::new(mapping));
     println!("ending sparseness {}", benchmark(net, &boards));
+
+    let boards = get_boards(path, iter, iter);
+    let net = NNUE::build(&Permute::new(mapping));
+    println!("ending sparseness2 {}", benchmark(net, &boards));
 
     Permute::new(mapping).save();
 }

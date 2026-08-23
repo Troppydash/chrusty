@@ -91,7 +91,7 @@ impl NNUE {
         unsafe { self.avx512_evaluate(board) }
     }
 
-    #[target_feature(enable = "avx512f")]
+    #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
     unsafe fn avx512_evaluate(&mut self, board: &Board) -> i32 {
         let bucket = Network::get_output_bucket(board);
         let stm = board.side_to_move() as usize;
@@ -132,11 +132,10 @@ impl NNUE {
                 let v = _mm512_load_si512(self.ft.as_ptr().add(b) as _);
 
                 // skip if all 64 u8 are zero
-                // let non_zero_mask = _mm512_test_epi8_mask(v, v);
-                // if non_zero_mask == 0 {
-                //     base = _mm_add_epi16(base, _mm_set1_epi16(16));
-                //     continue;
-                // }
+                if _mm512_test_epi64_mask(v, v) == 0 {
+                    base = _mm_add_epi16(base, _mm_set1_epi16(16));
+                    continue;
+                }
 
                 let mask = _mm512_cmpgt_epu32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {

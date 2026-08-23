@@ -29,36 +29,74 @@ fn geometric_attacks(piece: Piece, sq: Square) -> BitBoard {
     }
 }
 
+// #[derive(Debug)]
+// pub struct ThreatLut {
+//     /// [piece_idx][from*64 + to] -> local index within that piece's block, or u16::MAX
+//     index: [[u16; 4096]; NUM_ATTACKER_PIECES],
+//     offset: [usize; NUM_ATTACKER_PIECES],
+//     pub geo_total: usize,
+// }
+
+// impl ThreatLut {
+//     fn build() -> Self {
+//         let mut index = [[u16::MAX; 4096]; NUM_ATTACKER_PIECES];
+//         let mut offset = [0; NUM_ATTACKER_PIECES];
+//         let mut running = 0;
+
+//         for (pi, &piece) in ATTACKER_PIECES.iter().enumerate() {
+//             offset[pi] = running;
+//             let mut local: u16 = 0;
+//             for from in Square::ALL {
+//                 for to in geometric_attacks(piece, from) {
+//                     index[pi][from as usize * 64 + to as usize] = local;
+//                     local += 1;
+//                 }
+//             }
+//             running += local as usize;
+//         }
+
+//         println!("info threat_lut {}", running * 5 * 2);
+
+//         Self {
+//             index,
+//             offset,
+//             geo_total: running,
+//         }
+//     }
+
+//     #[inline]
+//     pub fn lookup(&self, attacker_pi: usize, from: Square, to: Square) -> usize {
+//         let local = self.index[attacker_pi][from as usize * 64 + to as usize];
+//         debug_assert!(local != u16::MAX, "{} {} {}", attacker_pi, from, to);
+//         self.offset[attacker_pi] + local as usize
+//     }
+// }
+
 #[derive(Debug)]
 pub struct ThreatLut {
-    /// [piece_idx][from*64 + to] -> local index within that piece's block, or u16::MAX
-    index: Box<[[u16; 4096]; NUM_ATTACKER_PIECES]>,
-    offset: [usize; NUM_ATTACKER_PIECES],
+    /// attacks[piece_idx][from] = geometric attack bitboard
+    offset: [[(BitBoard, usize); 64]; NUM_ATTACKER_PIECES],
+    // offset: [[usize; 64]; NUM_ATTACKER_PIECES],
     pub geo_total: usize,
 }
 
 impl ThreatLut {
     fn build() -> Self {
-        let mut index = Box::new([[u16::MAX; 4096]; NUM_ATTACKER_PIECES]);
-        let mut offset = [0; NUM_ATTACKER_PIECES];
+        let mut offset = [[(BitBoard::EMPTY, 0); 64]; NUM_ATTACKER_PIECES];
         let mut running = 0;
 
         for (pi, &piece) in ATTACKER_PIECES.iter().enumerate() {
-            offset[pi] = running;
-            let mut local: u16 = 0;
             for from in Square::ALL {
-                for to in geometric_attacks(piece, from) {
-                    index[pi][from as usize * 64 + to as usize] = local;
-                    local += 1;
-                }
+                offset[pi][from as usize].1 = running;
+                let a = geometric_attacks(piece, from);
+                offset[pi][from as usize].0 = a;
+                running += a.0.count_ones() as usize;
             }
-            running += local as usize;
         }
 
         println!("info threat_lut {}", running * 5 * 2);
 
         Self {
-            index,
             offset,
             geo_total: running,
         }
@@ -66,9 +104,13 @@ impl ThreatLut {
 
     #[inline]
     pub fn lookup(&self, attacker_pi: usize, from: Square, to: Square) -> usize {
-        let local = self.index[attacker_pi][from as usize * 64 + to as usize];
-        debug_assert!(local != u16::MAX, "{} {} {}", attacker_pi, from, to);
-        self.offset[attacker_pi] + local as usize
+        let (a, offset) = self.offset[attacker_pi][from as usize];
+        debug_assert!(a.has(to), "{} {} {}", attacker_pi, from, to);
+
+        let mask = (1u64 << (to as u32)) - 1;
+        let local = ((a.0 & mask).count_ones()) as usize;
+
+        offset + local
     }
 }
 

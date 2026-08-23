@@ -138,15 +138,16 @@ const EG_TABLE: [[i32; 64]; 12] = init().1;
 
 #[inline]
 pub fn get(pos: &Board, piece: Piece, color: Color, sq: Square) -> i32 {
-    let mut phase = (pos.occupied().len() - pos.pieces(Piece::Pawn).len() - 2) * 3 / 2;
+    [100, 320, 340, 620, 1300, 1500, 0][piece as usize]
+    // let mut phase = (pos.occupied().len() - pos.pieces(Piece::Pawn).len() - 2) * 3 / 2;
 
-    let offset = piece as usize + if color == White { 0 } else { 6 };
+    // let offset = piece as usize + if color == White { 0 } else { 6 };
 
-    let mg_phase = phase.min(24) as i32;
-    let eg_phase = 24 - mg_phase;
-    let mg_score = MG_TABLE[offset][sq as usize];
-    let eg_score = EG_TABLE[offset][sq as usize];
-    (mg_phase * mg_score + eg_phase * eg_score) / 24
+    // let mg_phase = phase.min(24) as i32;
+    // let eg_phase = 24 - mg_phase;
+    // let mg_score = MG_TABLE[offset][sq as usize];
+    // let eg_score = EG_TABLE[offset][sq as usize];
+    // (mg_phase * mg_score + eg_phase * eg_score) / 24
 }
 
 // pub fn evaluate(pos: &Board) -> i32 {

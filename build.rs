@@ -21,6 +21,6 @@ fn main() {
     println!("cargo:rerun-if-changed={}", permute_file);
     println!("cargo:rustc-env=EVAL_FILE={}", target_file);
     println!("cargo:rustc-env=PERMUTE_FILE={}", permute_file);
-    println!("cargo:rustc-env=PERMUTE_FILE_SRC=../{}", permute_file);
+    println!("cargo:rustc-env=PERMUTE_FILE_SRC=../../{}", permute_file);
     println!("cargo:rustc-env=PERMUTE_FILE_NEXT={}", permute_file_next);
 }
