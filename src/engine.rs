@@ -141,7 +141,7 @@ impl Engine {
             .nnue
             .evaluate(pos)
             .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
-        score = score * (200 - pos.halfmove_clock() as i32) / 200;
+        // score = score * (200 - pos.halfmove_clock() as i32) / 200;
         return score as i16;
     }
 
@@ -522,6 +522,7 @@ impl Engine {
         if !is_pv
             && !has_excluded
             && tt_data.can_use
+            && ((cut_node == (tt_data.score >= beta)) || depth > 5)
             && tt_data.depth >= depth + (tt_data.score >= beta) as i8
         {
             if pos.halfmove_clock() < 90 {
@@ -807,10 +808,7 @@ impl Engine {
             let old_nodes = self.nodes;
 
             //- low depth pruning
-            if !is_root
-                && pos.has_non_pawns(pos.side_to_move())
-                && !is_loss(best_score)
-            {
+            if !is_root && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
                 let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32 * 1024;
                 reduction += !improving as i32 * self.settings.p_lmr_improving;
                 reduction -= (next_move.get_score() * self.settings.p_lmr_history
@@ -1354,8 +1352,10 @@ impl Engine {
             let best_score = self.root_moves[0].score;
             let mut factors = 1.0;
             if depth > 1 {
-                if depth >= 6 && best != last_best_move {
+              if best != last_best_move {
                     instability = (instability + 1).min(6);
+                } else {
+                    instability = 0;
                 }
 
                 let instability_factor = instability as f64 * 0.02;

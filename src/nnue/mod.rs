@@ -97,19 +97,19 @@ impl NNUE {
         let stm = board.side_to_move() as usize;
 
         unsafe {
-            const DIVISOR: f32 = (1.0 / ((QA * QA * QB) >> FT_SHIFT) as f64) as f32;
+            const DIVISOR: f32 = (1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32) as f32;
             const ZERO: i16 = 0i16;
             const ONE: i16 = QA as i16;
             const ZEROF: f32 = 0.0f32;
             const ONEF: f32 = 1.0f32;
 
             // pst
-            let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket] as i32
-                - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32
-                + self.threats.side[self.threats.head].vals[stm][HL_NO_PST + bucket] as i32
-                - self.threats.side[self.threats.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32)
-                as f32
-                / (2.0 * QA as f32);
+            // let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket] as i32
+            //     - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32
+            //     + self.threats.side[self.threats.head].vals[stm][HL_NO_PST + bucket] as i32
+            //     - self.threats.side[self.threats.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32)
+            //     as f32
+            //     / (2.0 * QA as f32);
 
             //- ft cleanup
             for side in 0..=1 {
@@ -129,19 +129,18 @@ impl NNUE {
             let lookup_inc = _mm_set1_epi16(8);
             let mut n = 0;
             for b in (0..HL_NO_PST).step_by(64) {
-                let v = _mm512_load_si512(self.ft.as_ptr().add(b) as _);
+                let v = *(self.ft.as_ptr().add(b) as *const __m512i);
 
                 // skip if all 64 u8 are zero
-                if _mm512_test_epi64_mask(v, v) == 0 {
-                    base = _mm_add_epi16(base, _mm_set1_epi16(16));
-                    continue;
-                }
+                // if _mm512_test_epi64_mask(v, v) == 0 {
+                //     base = _mm_add_epi16(base, _mm_set1_epi16(16));
+                //     continue;
+                // }
 
                 let mask = _mm512_cmpgt_epu32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {
                     let slice = ((mask >> lookup) & 0xff) as u8;
-                    let indices =
-                        _mm_load_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
+                    let indices = *(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
                     _mm_storeu_si128(
                         idx.as_mut_ptr().add(n) as *mut __m128i,
                         _mm_add_epi16(base, indices),
@@ -159,17 +158,14 @@ impl NNUE {
                 let f = _mm512_set1_epi32(*(self.ft.as_ptr() as *const i32).add(c));
                 let w = l1_weights[c].as_ptr() as *const __m512i;
                 for q in (0..L1).step_by(STEP) {
-                    l1_sum_acc[q / STEP] = _mm512_dpbusd_epi32(
-                        l1_sum_acc[q / STEP],
-                        f,
-                        _mm512_load_si512(w.add(q / STEP)),
-                    );
+                    l1_sum_acc[q / STEP] =
+                        _mm512_dpbusd_epi32(l1_sum_acc[q / STEP], f, *(w.add(q / STEP)));
                 }
             }
 
             let mut l1_sum = Aligned::<i32, L1>::uninit();
             for q in (0..L1).step_by(STEP) {
-                _mm512_store_si512(l1_sum.as_mut_ptr().add(q) as _, l1_sum_acc[q / STEP]);
+                *(l1_sum.as_mut_ptr().add(q) as *mut __m512i) = l1_sum_acc[q / STEP];
             }
 
             // for i in 0..L1 {
@@ -214,7 +210,7 @@ impl NNUE {
                 let w_vec = _mm512_load_ps(out_weights.add(i));
                 out = _mm512_fmadd_ps(l2_vec, w_vec, out);
             }
-            let output = _mm512_reduce_add_ps(out) + self.network.output_bias[bucket] + pst;
+            let output = _mm512_reduce_add_ps(out) + self.network.output_bias[bucket];
             (output * SCALE as f32) as i32
         }
     }
@@ -442,6 +438,6 @@ mod tests {
         .unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 30);
+        assert_eq!(eval, 35);
     }
 }

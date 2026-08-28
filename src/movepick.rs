@@ -410,10 +410,13 @@ impl Movepick {
                     m.to,
                 );
 
+            score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
+
             if let Some(promotion) = self.moves.get(i).inner.promotion
                 && matches!(promotion, Piece::Queen | Piece::Knight)
             {
-                score += 10000;
+                score += 10000
+                    + pesto_value(&self.pos, ColoredPiece::new(self.pos.side_to_move(), promotion), m.to);
             }
 
             self.moves.get_mut(i).score = score;

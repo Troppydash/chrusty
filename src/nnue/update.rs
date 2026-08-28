@@ -58,7 +58,7 @@ impl ThreatDelta {
     }
 }
 
-pub type ThreatDeltaUpdates = ArrayVec<ThreatDelta, 64>;
+pub type ThreatDeltaUpdates = ArrayVec<ThreatDelta, 96>;
 
 #[derive(Clone, Default, Debug)]
 pub struct ThreatUpdate {

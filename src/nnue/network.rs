@@ -1,3 +1,4 @@
+use std::arch::x86_64::*;
 use std::io::Write;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
@@ -9,6 +10,7 @@ use crate::nnue::update::ThreatDelta;
 use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
+use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
@@ -18,10 +20,10 @@ pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const KINGS: usize = 10;
 pub const OUTPUTS: usize = 8;
-pub const HL: usize = HL_NO_PST + OUTPUTS;
+pub const HL: usize = HL_NO_PST;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
-pub const FT_SHIFT: usize = 8;
+pub const FT_SHIFT: usize = 9;
 pub const SCALE: i32 = 400;
 
 pub const THREATS: usize = 34440;
@@ -522,7 +524,25 @@ impl Network {
         )
     }
 
-    pub fn threat_feature_lookup(
+    fn threat_feature_lookup_index_from_threat(
+        &self,
+        king_sq: Square,
+        side: Color,
+        threat_delta: ThreatDelta,
+    ) -> usize {
+        let (attacker, attacker_square, target, target_square, attacker_color) = threat_delta.get();
+        self.threat_feature_lookup_index(
+            king_sq,
+            side,
+            attacker_color,
+            attacker,
+            attacker_square,
+            target,
+            target_square,
+        )
+    }
+
+    pub fn threat_feature_lookup_index(
         &self,
         king_sq: Square,
         side: Color,
@@ -531,7 +551,7 @@ impl Network {
         mut attacker_square: Square,
         target: Piece,
         mut target_square: Square,
-    ) -> &Aligned<i8, HL> {
+    ) -> usize {
         debug_assert!(attacker != Piece::King);
         debug_assert!(target != Piece::King);
         if (king_sq as u16 & 0b100) != 0 {
@@ -546,11 +566,32 @@ impl Network {
             target as usize,
         );
 
-        let index = if attacker_color == side {
+        (if attacker_color == side {
             0
         } else {
             THREATS / 2
-        } + index;
+        }) + index
+    }
+
+    pub fn threat_feature_lookup(
+        &self,
+        king_sq: Square,
+        side: Color,
+        attacker_color: Color,
+        attacker: Piece,
+        attacker_square: Square,
+        target: Piece,
+        target_square: Square,
+    ) -> &Aligned<i8, HL> {
+        let index = self.threat_feature_lookup_index(
+            king_sq,
+            side,
+            attacker_color,
+            attacker,
+            attacker_square,
+            target,
+            target_square,
+        );
         &self.threat_weights[index]
     }
 
@@ -646,40 +687,102 @@ impl Network {
         side: Color,
         king_sq: Square,
     ) {
-        SimdOps::fused_copy(next, base);
-
-        let mut i = 0;
-        let mut j = 0;
-        while i < update.adds.len() && j < update.subs.len() {
-            let add = update.adds[i];
-            let sub = update.subs[j];
-
-            SimdOps::fused_add_sub2(
-                next,
-                self.threat_feature_lookup_from_threat(king_sq, side, add),
-                self.threat_feature_lookup_from_threat(king_sq, side, sub),
-            );
-
-            i += 1;
-            j += 1;
+        let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
+        let mut subs: ArrayVec<usize, 96> = ArrayVec::new();
+        for add in update.adds.iter() {
+            adds.push(self.threat_feature_lookup_index_from_threat(king_sq, side, add.clone()));
+        }
+        for sub in update.subs.iter() {
+            subs.push(self.threat_feature_lookup_index_from_threat(king_sq, side, sub.clone()));
         }
 
-        while i < update.adds.len() {
-            let add = update.adds[i];
-            SimdOps::fused_add2(
-                next,
-                self.threat_feature_lookup_from_threat(king_sq, side, add),
-            );
-            i += 1;
-        }
+        unsafe {
+            let mut acc = [_mm512_setzero_si512(); 8];
+            for i in (0..HL_NO_PST).step_by(32 * 8) {
+                for k in 0..8 {
+                    acc[k] = *(base.as_ptr().add(i + k * 32) as *const __m512i);
+                }
 
-        while j < update.subs.len() {
-            let sub = update.subs[j];
-            SimdOps::fused_sub2(
-                next,
-                self.threat_feature_lookup_from_threat(king_sq, side, sub),
-            );
-            j += 1;
+                let mut add_idx = 0;
+                let mut sub_idx = 0;
+                while add_idx < adds.len() && sub_idx < subs.len() {
+                    let add = self.threat_weights[adds[add_idx]].as_ptr().add(i);
+                    let sub = self.threat_weights[subs[sub_idx]].as_ptr().add(i);
+                    for k in 0..8 {
+                        acc[k] = _mm512_add_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(add.add(k * 32) as *const __m256i)),
+                        );
+                        acc[k] = _mm512_sub_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(sub.add(k * 32) as *const __m256i)),
+                        );
+                    }
+                    add_idx += 1;
+                    sub_idx += 1;
+                }
+
+                while add_idx < adds.len() {
+                    let add = self.threat_weights[adds[add_idx]].as_ptr().add(i);
+                    for k in 0..8 {
+                        acc[k] = _mm512_add_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(add.add(k * 32) as *const __m256i)),
+                        );
+                    }
+                    add_idx += 1;
+                }
+
+                while sub_idx < subs.len() {
+                    let sub = self.threat_weights[subs[sub_idx]].as_ptr().add(i);
+                    for k in 0..8 {
+                        acc[k] = _mm512_sub_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(sub.add(k * 32) as *const __m256i)),
+                        );
+                    }
+                    sub_idx += 1;
+                }
+
+                for k in 0..8 {
+                    *(next.as_mut_ptr().add(i + k * 32) as *mut __m512i) = acc[k];
+                }
+            }
         }
+        // SimdOps::fused_copy(next, base);
+
+        // let mut i = 0;
+        // let mut j = 0;
+        // while i < update.adds.len() && j < update.subs.len() {
+        //     let add = update.adds[i];
+        //     let sub = update.subs[j];
+
+        //     SimdOps::fused_add_sub2(
+        //         next,
+        //         self.threat_feature_lookup_from_threat(king_sq, side, add),
+        //         self.threat_feature_lookup_from_threat(king_sq, side, sub),
+        //     );
+
+        //     i += 1;
+        //     j += 1;
+        // }
+
+        // while i < update.adds.len() {
+        //     let add = update.adds[i];
+        //     SimdOps::fused_add2(
+        //         next,
+        //         self.threat_feature_lookup_from_threat(king_sq, side, add),
+        //     );
+        //     i += 1;
+        // }
+
+        // while j < update.subs.len() {
+        //     let sub = update.subs[j];
+        //     SimdOps::fused_sub2(
+        //         next,
+        //         self.threat_feature_lookup_from_threat(king_sq, side, sub),
+        //     );
+        //     j += 1;
+        // }
     }
 }

@@ -1,6 +1,5 @@
 use std::{
-    collections::HashSet,
-    mem::{self},
+    arch::x86_64::*,
 };
 
 use arrayvec::ArrayVec;
@@ -9,7 +8,7 @@ use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
 use crate::{
     ext::{BitBoardExt, ColoredPiece, ExtBoard, ExtMove, MoveType},
     nnue::{
-        network::{Aligned, HL, KINGS, Network, SimdOps},
+        network::{Aligned, HL, HL_NO_PST, KINGS, Network, SimdOps},
         update::{ThreatDelta, ThreatDeltaUpdates, ThreatUpdate},
     },
     param::MAX_DEPTH_USIZE,
@@ -32,6 +31,53 @@ impl Accumulator {
             king_sq: [Square::A1; 2],
         }
     }
+}
+
+fn get_line(sq: Square, dir: usize) -> BitBoard {
+    const LINE: [[BitBoard; 4]; 64] = {
+        let mut line = [[BitBoard::EMPTY; 4]; 64];
+        // Offsets for: 0: Horizontal, 1: Anti-Diagonal, 2: Vertical, 3: Main Diagonal
+        let offsets: [(i32, i32); 4] = [(1, 0), (-1, 1), (0, 1), (1, 1)];
+
+        let mut sq = 0;
+        while sq < 64 {
+            let file = (sq % 8) as i32;
+            let rank = (sq / 8) as i32;
+
+            let mut i = 0;
+            while i < 4 {
+                let (df, dr) = offsets[i];
+                let mut bitboard = 0u64;
+
+                // Ray forward
+                let mut f = file + df;
+                let mut r = rank + dr;
+                while f >= 0 && f < 8 && r >= 0 && r < 8 {
+                    bitboard |= 1u64 << (r * 8 + f);
+                    f += df;
+                    r += dr;
+                }
+
+                // Ray backward
+                let mut f = file - df;
+                let mut r = rank - dr;
+                while f >= 0 && f < 8 && r >= 0 && r < 8 {
+                    bitboard |= 1u64 << (r * 8 + f);
+                    f -= df;
+                    r -= dr;
+                }
+
+                line[sq][i] = BitBoard(bitboard);
+                i += 1;
+            }
+
+            sq += 1;
+        }
+
+        line
+    };
+
+    LINE[sq as usize][dir]
 }
 
 pub struct Threats {
@@ -67,7 +113,8 @@ impl Threats {
         acc.is_clean = [false; 2];
         acc.king_sq[0] = new_board.king(Color::White);
         acc.king_sq[1] = new_board.king(Color::Black);
-        acc.update = Self::get_threat_update(board, new_board, m);
+        acc.update.clear();
+        Self::get_threat_update(board, new_board, m, &mut acc.update);
     }
 
     fn record_sq_inout(
@@ -83,7 +130,7 @@ impl Threats {
         }
 
         let occ = board.occupied();
-        
+
         let pawn = cozy_chess::get_pawn_attacks(sq, piece.color);
         let knight = cozy_chess::get_knight_moves(sq);
         let bishop = cozy_chess::get_bishop_moves(sq, occ);
@@ -134,74 +181,43 @@ impl Threats {
     }
 
     /// Records new attacks created because `vacated_sq` was emptied.
-    fn record_unblocked_discovered(
+    fn record_discovered(
         new_board: &Board,
         vacated_sq: Square,
-        ignore_sq: Square,
+        ignore_sq: BitBoard,
         out: &mut ThreatDeltaUpdates,
     ) {
-        let new_occ = new_board.occupied();
-        let bishops_queens = new_board.pieces(Piece::Bishop) | new_board.pieces(Piece::Queen);
-        let rooks_queens = new_board.pieces(Piece::Rook) | new_board.pieces(Piece::Queen);
+        let occ = new_board.occupied();
 
-        if !(bishops_queens & !ignore_sq.bitboard()).is_empty() {
-            // Diagonal discovery
-            let diag_moves = cozy_chess::get_bishop_moves(vacated_sq, new_occ);
-            let diag_sliders = diag_moves & bishops_queens & !ignore_sq.bitboard();
+        let types = [
+            new_board.pieces(Piece::Rook) | new_board.pieces(Piece::Queen),
+            new_board.pieces(Piece::Bishop) | new_board.pieces(Piece::Queen),
+            new_board.pieces(Piece::Rook) | new_board.pieces(Piece::Queen),
+            new_board.pieces(Piece::Bishop) | new_board.pieces(Piece::Queen),
+        ];
 
-            if !diag_sliders.is_empty() {
-                let valid_targets = diag_moves
-                    & !new_board.pieces(Piece::King)
-                    & !ignore_sq.bitboard()
-                    & !vacated_sq.bitboard();
+        for dir in 0..4 {
+            let line = get_line(vacated_sq, dir) & occ;
+            let ty = types[dir];
+            if let Some((a, b)) = line.pop2(vacated_sq as usize) {
+                let pa = new_board.color_piece_on(a).unwrap();
+                let pb = new_board.color_piece_on(b).unwrap();
 
-                for slider_sq in diag_sliders {
-                    let piece = new_board.color_piece_on(slider_sq).unwrap();
-                    let enemy_targets = valid_targets & new_board.colors(!piece.color);
-
-                    for att_sq in enemy_targets {
-                        if cozy_chess::get_between_rays(slider_sq, att_sq).has(vacated_sq) {
-                            let att_piece = new_board.color_piece_on(att_sq).unwrap();
-                            out.push(ThreatDelta::new(
-                                piece.piece,
-                                slider_sq,
-                                att_piece.piece,
-                                att_sq,
-                                piece.color,
-                            ));
-                        }
-                    }
+                if pa.color == pb.color
+                    || pa.piece == Piece::King
+                    || pb.piece == Piece::King
+                    || ignore_sq.has(a)
+                    || ignore_sq.has(b)
+                {
+                    continue;
                 }
-            }
-        }
 
-        if !(rooks_queens & !ignore_sq.bitboard()).is_empty() {
-            // Orthogonal discovery
-            let ortho_moves = cozy_chess::get_rook_moves(vacated_sq, new_occ);
-            let ortho_sliders = ortho_moves & rooks_queens & !ignore_sq.bitboard();
+                if ty.has(a) {
+                    out.push(ThreatDelta::new(pa.piece, a, pb.piece, b, pa.color));
+                }
 
-            if !ortho_sliders.is_empty() {
-                let valid_targets = ortho_moves
-                    & !new_board.pieces(Piece::King)
-                    & !ignore_sq.bitboard()
-                    & !vacated_sq.bitboard();
-
-                for slider_sq in ortho_sliders {
-                    let piece = new_board.color_piece_on(slider_sq).unwrap();
-                    let enemy_targets = valid_targets & new_board.colors(!piece.color);
-
-                    for att_sq in enemy_targets {
-                        if cozy_chess::get_between_rays(slider_sq, att_sq).has(vacated_sq) {
-                            let att_piece = new_board.color_piece_on(att_sq).unwrap();
-                            out.push(ThreatDelta::new(
-                                piece.piece,
-                                slider_sq,
-                                att_piece.piece,
-                                att_sq,
-                                piece.color,
-                            ));
-                        }
-                    }
+                if ty.has(b) {
+                    out.push(ThreatDelta::new(pb.piece, b, pa.piece, a, pb.color));
                 }
             }
         }
@@ -284,77 +300,7 @@ impl Threats {
         }
     }
 
-    /// Records old attacks destroyed because `blocked_sq` became occupied.
-    fn record_blocked_discovered(
-        old_board: &Board,
-        blocked_sq: Square,
-        ignore: BitBoard,
-        out: &mut ThreatDeltaUpdates,
-    ) {
-        let old_occ = old_board.occupied();
-        let bishops_queens = old_board.pieces(Piece::Bishop) | old_board.pieces(Piece::Queen);
-        let rooks_queens = old_board.pieces(Piece::Rook) | old_board.pieces(Piece::Queen);
-
-        if !(bishops_queens & !ignore).is_empty() {
-            // Diagonal blocked attacks
-            let diag_moves = cozy_chess::get_bishop_moves(blocked_sq, old_occ);
-            let diag_sliders = diag_moves & bishops_queens & !ignore;
-
-            if !diag_sliders.is_empty() {
-                let valid_targets =
-                    diag_moves & !old_board.pieces(Piece::King) & !ignore & !blocked_sq.bitboard();
-
-                for slider_sq in diag_sliders {
-                    let piece = old_board.color_piece_on(slider_sq).unwrap();
-                    let enemy_targets = valid_targets & old_board.colors(!piece.color);
-
-                    for att_sq in enemy_targets {
-                        if cozy_chess::get_between_rays(slider_sq, att_sq).has(blocked_sq) {
-                            let att_piece = old_board.color_piece_on(att_sq).unwrap();
-                            out.push(ThreatDelta::new(
-                                piece.piece,
-                                slider_sq,
-                                att_piece.piece,
-                                att_sq,
-                                piece.color,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        if !(rooks_queens & !ignore).is_empty() {
-            // Orthogonal blocked attacks
-            let ortho_moves = cozy_chess::get_rook_moves(blocked_sq, old_occ);
-            let ortho_sliders = ortho_moves & rooks_queens & !ignore;
-
-            if !ortho_sliders.is_empty() {
-                let valid_targets =
-                    ortho_moves & !old_board.pieces(Piece::King) & !ignore & !blocked_sq.bitboard();
-
-                for slider_sq in ortho_sliders {
-                    let piece = old_board.color_piece_on(slider_sq).unwrap();
-                    let enemy_targets = valid_targets & old_board.colors(!piece.color);
-
-                    for att_sq in enemy_targets {
-                        if cozy_chess::get_between_rays(slider_sq, att_sq).has(blocked_sq) {
-                            let att_piece = old_board.color_piece_on(att_sq).unwrap();
-                            out.push(ThreatDelta::new(
-                                piece.piece,
-                                slider_sq,
-                                att_piece.piece,
-                                att_sq,
-                                piece.color,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn get_threat_update(board: &Board, new_board: &Board, m: Move) -> ThreatUpdate {
+    fn get_threat_update(board: &Board, new_board: &Board, m: Move, threats: &mut ThreatUpdate) {
         match board.move_type(m) {
             MoveType::NORMAL | MoveType::PROMOTION => {
                 /*
@@ -372,8 +318,6 @@ impl Threats {
 
                 discovered attacks bypassing from
                  */
-                let mut threats = ThreatUpdate::default();
-
                 let from = m.from;
                 let to = m.to;
                 let is_cap = board.piece_on(to).is_some();
@@ -390,16 +334,13 @@ impl Threats {
                 }
 
                 Self::record_sq_inout(&new_board, to, BitBoard::FULL, true, &mut threats.adds);
-                Self::record_unblocked_discovered(&new_board, from, to, &mut threats.adds);
+                Self::record_discovered(&new_board, from, to.bitboard(), &mut threats.adds);
 
                 if !is_cap {
-                    Self::record_blocked_discovered(board, to, from.bitboard(), &mut threats.subs);
+                    Self::record_discovered(board, to, from.bitboard(), &mut threats.subs);
                 }
-
-                threats
             }
             MoveType::CASTLE => {
-                let mut threats = ThreatUpdate::default();
                 // king takes rook
                 let king_from = m.from;
                 let rook_from = m.to;
@@ -422,11 +363,8 @@ impl Threats {
 
                 // guaranteed nothing attacking and starts attacking rook/king
                 // guaranteed no discovered attacks or blocked attacks
-                threats
             }
             MoveType::ENPASSENT => {
-                let mut threats = ThreatUpdate::default();
-
                 Self::record_sq_inout(board, m.from, BitBoard::FULL, true, &mut threats.subs);
                 Self::record_sq_inout(
                     board,
@@ -437,7 +375,7 @@ impl Threats {
                 );
 
                 Self::record_sq_inout(&new_board, m.to, BitBoard::FULL, true, &mut threats.adds);
-                Self::record_blocked_discovered(
+                Self::record_discovered(
                     board,
                     m.to,
                     board.ep_capture_square().unwrap().bitboard() | m.from.bitboard(),
@@ -451,8 +389,6 @@ impl Threats {
                     m.to.bitboard(),
                     &mut threats.adds,
                 );
-
-                threats
             }
             _ => unreachable!(),
         }
@@ -463,7 +399,7 @@ impl Threats {
     }
 
     fn refresh(&mut self, side: Color, board: &Board, network: &Box<Network>) {
-        SimdOps::zero(&mut self.side[self.head].vals[side as usize]);
+        let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
 
         let occ = board.occupied();
         for sq1 in occ & !board.pieces(Piece::King) {
@@ -482,18 +418,53 @@ impl Threats {
 
             for sq2 in board.colors(!piece1.color) & !board.pieces(Piece::King) & attacks {
                 let piece2 = board.color_piece_on(sq2).unwrap();
-                SimdOps::fused_add2(
-                    &mut self.side[self.head].vals[side as usize],
-                    network.threat_feature_lookup(
-                        board.king(side),
-                        side,
-                        piece1.color,
-                        piece1.piece,
-                        sq1,
-                        piece2.piece,
-                        sq2,
-                    ),
-                );
+                adds.push(network.threat_feature_lookup_index(
+                    board.king(side),
+                    side,
+                    piece1.color,
+                    piece1.piece,
+                    sq1,
+                    piece2.piece,
+                    sq2,
+                ));
+            }
+        }
+
+        unsafe {
+            let out = self.side[self.head].vals[side as usize].as_mut_ptr();
+            for i in (0..HL_NO_PST).step_by(32 * 8) {
+                let mut acc = [_mm512_setzero_si512(); 8];
+                let mut add_idx = 0;
+
+                while add_idx + 1 < adds.len() {
+                    let add1 = network.threat_weights[adds[add_idx]].as_ptr().add(i);
+                    let add2 = network.threat_weights[adds[add_idx + 1]].as_ptr().add(i);
+                    for k in 0..8 {
+                        acc[k] = _mm512_add_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(add1.add(k * 32) as *const __m256i)),
+                        );
+                        acc[k] = _mm512_add_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(add2.add(k * 32) as *const __m256i)),
+                        );
+                    }
+                    add_idx += 2;
+                }
+
+                while add_idx < adds.len() {
+                    let add = network.threat_weights[adds[add_idx]].as_ptr().add(i);
+                    for k in 0..8 {
+                        acc[k] = _mm512_add_epi16(
+                            acc[k],
+                            _mm512_cvtepi8_epi16(*(add.add(k * 32) as *const __m256i)),
+                        );
+                    }
+                    add_idx += 1;
+                }
+                for k in 0..8 {
+                    *(out.add(i + k * 32) as *mut __m512i) = acc[k];
+                }
             }
         }
 
@@ -512,6 +483,7 @@ impl Threats {
             // }
 
             let mut base = self.head;
+            // let mut counts = 0;
             loop {
                 if Network::needs_refresh_threat(
                     self.side[base].king_sq[side as usize],

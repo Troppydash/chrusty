@@ -40,14 +40,30 @@ pub fn index_with_option(c: &Option<ColoredPiece>) -> usize {
 
 pub trait BitBoardExt {
     fn pop(&mut self) -> Square;
+    fn pop2(&self, index: usize) -> Option<(Square, Square)>;
 }
 
 impl BitBoardExt for BitBoard {
     fn pop(&mut self) -> Square {
-        assert!(self.0 != 0);
+        debug_assert!(self.0 != 0);
         let index = self.0.trailing_zeros();
         self.0 ^= 1u64 << index;
         Square::ALL[index as usize]
+    }
+
+    fn pop2(&self, index: usize) -> Option<(Square, Square)> {
+        debug_assert!(!self.has(Square::ALL[index]));
+        let after = self.0 & !((1u64 << index) - 1);
+        let before = self.0 & ((1u64 << index) - 1);
+
+        if before == 0 || after == 0 {
+            return None;
+        }
+
+        Some((
+            Square::index(after.trailing_zeros() as usize),
+            Square::index(63 - before.leading_zeros() as usize),
+        ))
     }
 }
 
@@ -134,13 +150,13 @@ impl ExtMove for Move {
             },
         }
     }
-    
+
     fn is_under_promotion(&self) -> bool {
         match self.promotion {
             None => false,
             Some(Piece::Queen) => false,
             Some(Piece::Knight) => false,
-            _ => true
+            _ => true,
         }
     }
 }
