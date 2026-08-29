@@ -221,6 +221,7 @@ impl HalfKA {
 
         for color in 0..=1 {
             for piece in 0..6 {
+                // TODO: we can also improve this
                 let old_bb =
                     entry.bycolor[side as usize][color] & entry.bypiece[side as usize][piece];
                 let new_bb = board.colored_pieces(Color::ALL[color], Piece::ALL[piece]);

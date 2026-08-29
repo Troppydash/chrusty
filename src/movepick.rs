@@ -416,7 +416,11 @@ impl Movepick {
                 && matches!(promotion, Piece::Queen | Piece::Knight)
             {
                 score += 10000
-                    + pesto_value(&self.pos, ColoredPiece::new(self.pos.side_to_move(), promotion), m.to);
+                    + pesto_value(
+                        &self.pos,
+                        ColoredPiece::new(self.pos.side_to_move(), promotion),
+                        m.to,
+                    );
             }
 
             self.moves.get_mut(i).score = score;
@@ -462,14 +466,13 @@ impl Movepick {
             }
 
             if self.ply < LOW_PLY as i8 {
-                score += LOW_PLY as i32
-                    * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
-                    / (1 + self.ply as i32)
-                    / 4;
+                score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
+                    / (1 + self.ply as i32);
             }
 
             score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
 
+            // TODO: improve this
             let piece = self.pos.piece_on(m.from).unwrap();
             let check = match piece {
                 Piece::Knight => !(m.to.bitboard() & knight_attacks).is_empty(),

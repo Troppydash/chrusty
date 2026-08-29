@@ -412,7 +412,7 @@ mod tests {
             Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, -1532);
+        assert_eq!(eval, -1973);
     }
 
     #[test]
@@ -425,6 +425,6 @@ mod tests {
         .unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 41);
+        assert_eq!(eval, 31);
     }
 }
