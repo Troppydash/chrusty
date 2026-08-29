@@ -4,7 +4,7 @@ use cozy_chess::{Board, Move};
 
 use crate::nnue::{
     halfka::HalfKA,
-    network::{Aligned, FT_SHIFT, HL_NO_PST, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
+    network::{Aligned, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
     threats::Threats,
 };
 
@@ -18,9 +18,9 @@ pub struct NNUE {
     network: Box<Network>,
     halfka: HalfKA,
     threats: Threats,
-    nnz_table: [Aligned<u16, 8>; 256],
+    nnz_table: [[u16; 8]; 256],
     // this is just a temp cache
-    ft: Aligned<u8, HL_NO_PST>,
+    ft: Aligned<u8, HL>,
 }
 
 impl NNUE {
@@ -29,7 +29,7 @@ impl NNUE {
         raw.permute(permute);
 
         // nnz_table[bits][i] = ith bit in bits offset
-        let mut nnz_table: [Aligned<u16, 8>; 256] = unsafe { MaybeUninit::zeroed().assume_init() };
+        let mut nnz_table: [[u16; 8]; 256] = [[0u16; 8]; 256];
         for i in 0..256 {
             let mut j = 0;
             let mut bits = i as u8;
@@ -46,7 +46,7 @@ impl NNUE {
             halfka: HalfKA::new(),
             threats: Threats::new(),
             nnz_table,
-            ft: Aligned::<u8, HL_NO_PST>::zeroed(),
+            ft: Aligned::<u8, HL>::zeroed(),
         };
         net.clear();
         net
@@ -103,44 +103,37 @@ impl NNUE {
             const ZEROF: f32 = 0.0f32;
             const ONEF: f32 = 1.0f32;
 
-            // pst
-            // let pst = (self.halfka.side[self.halfka.head].vals[stm][HL_NO_PST + bucket] as i32
-            //     - self.halfka.side[self.halfka.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32
-            //     + self.threats.side[self.threats.head].vals[stm][HL_NO_PST + bucket] as i32
-            //     - self.threats.side[self.threats.head].vals[stm ^ 1][HL_NO_PST + bucket] as i32)
-            //     as f32
-            //     / (2.0 * QA as f32);
-
             //- ft cleanup
             for side in 0..=1 {
                 let acc = &self.halfka.side[self.halfka.head].vals[stm ^ side];
                 let acc_threats = &self.threats.side[self.threats.head].vals[stm ^ side];
 
-                for i in 0..HL_NO_PST / 2 {
+                for i in 0..HL / 2 {
                     let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
-                    let x1 =
-                        (acc[i + HL_NO_PST / 2] + acc_threats[i + HL_NO_PST / 2]).clamp(ZERO, ONE);
-                    self.ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                    let x1 = (acc[i + HL / 2] + acc_threats[i + HL / 2]).clamp(ZERO, ONE);
+                    self.ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
                 }
             }
 
-            let mut idx = Aligned::<u16, { HL_NO_PST / 4 }>::uninit();
+            let mut idx = Aligned::<u16, { HL / 4 }>::uninit();
             let mut base = _mm_setzero_si128();
             let lookup_inc = _mm_set1_epi16(8);
             let mut n = 0;
-            for b in (0..HL_NO_PST).step_by(64) {
+            for b in (0..HL).step_by(64) {
                 let v = *(self.ft.as_ptr().add(b) as *const __m512i);
 
                 // skip if all 64 u8 are zero
-                // if _mm512_test_epi64_mask(v, v) == 0 {
-                //     base = _mm_add_epi16(base, _mm_set1_epi16(16));
-                //     continue;
-                // }
+                if _mm512_test_epi64_mask(v, v) == 0 {
+                    base = _mm_add_epi16(base, _mm_set1_epi16(16));
+                    continue;
+                }
 
                 let mask = _mm512_cmpgt_epu32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {
+                    debug_assert!(n + 16 <= HL / 4);
                     let slice = ((mask >> lookup) & 0xff) as u8;
-                    let indices = *(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
+                    let indices =
+                        _mm_loadu_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
                     _mm_storeu_si128(
                         idx.as_mut_ptr().add(n) as *mut __m128i,
                         _mm_add_epi16(base, indices),
@@ -168,17 +161,11 @@ impl NNUE {
                 *(l1_sum.as_mut_ptr().add(q) as *mut __m512i) = l1_sum_acc[q / STEP];
             }
 
-            // for i in 0..L1 {
-            //     for j in 0..HL_NO_PST {
-            //         l1_sum[i] += self.ft[j] as i32 * self.network.l1_weights[bucket][i][j] as i32;
-            //     }
-            // }
-
             let mut l1 = Aligned::<f32, L1>::uninit();
             for i in 0..L1 {
                 let s = (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i])
                     .clamp(ZEROF, ONEF);
-                l1[i] = s * s;
+                l1[i] = s;
             }
 
             //- l1 -> l2
@@ -192,7 +179,7 @@ impl NNUE {
             let mut l2 = Aligned::<f32, L2>::uninit();
             for i in 0..L2 {
                 let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
-                l2[i] = s * s;
+                l2[i] = s;
             }
 
             // TODO: this might be slow
@@ -223,15 +210,15 @@ impl NNUE {
             let acc = &self.halfka.side[self.halfka.head].vals[stm ^ side];
             let acc_threats = &self.threats.side[self.threats.head].vals[stm ^ side];
 
-            for i in 0..HL_NO_PST / 2 {
+            for i in 0..HL / 2 {
                 let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
-                let x1 = (acc[i + HL_NO_PST / 2] + acc_threats[i + HL_NO_PST / 2]).clamp(ZERO, ONE);
-                self.ft[side * HL_NO_PST / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                let x1 = (acc[i + HL / 2] + acc_threats[i + HL / 2]).clamp(ZERO, ONE);
+                self.ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
             }
         }
     }
 
-    pub fn sort_ft(&self) -> &Aligned<u8, HL_NO_PST> {
+    pub fn sort_ft(&self) -> &Aligned<u8, HL> {
         &self.ft
     }
 }
@@ -438,6 +425,6 @@ mod tests {
         .unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 35);
+        assert_eq!(eval, 41);
     }
 }

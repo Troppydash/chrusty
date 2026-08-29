@@ -419,7 +419,7 @@ impl Engine {
 
         self.stack[ss].pv_list.clear();
 
-        if self.nodes % 8192 == 0 {
+        if self.nodes % 4096 == 0 {
             self.timer.write().unwrap().check();
             if self.nodes >= self.timer.read().unwrap().max_nodes {
                 self.timer.write().unwrap().force_stop();
@@ -1286,7 +1286,7 @@ impl Engine {
 
         // iterative deepening
         let mut depth = 1;
-        while depth < self.timer.read().unwrap().max_depth {
+        while depth <= self.timer.read().unwrap().max_depth {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
@@ -1318,7 +1318,9 @@ impl Engine {
                 let reduced_depth = (depth - fail_highs).max(1);
                 let score =
                     self.negamax(&pos, alpha, beta, reduced_depth, SS_SIZE_PRE, true, false);
-                self.sort_root_moves();
+                if fail_highs <= 1 {
+                    self.sort_root_moves();
+                }
 
                 if self.timer.read().unwrap().stopped() {
                     break;
@@ -1352,23 +1354,24 @@ impl Engine {
             let best_score = self.root_moves[0].score;
             let mut factors = 1.0;
             if depth > 1 {
-              if best != last_best_move {
-                    instability = (instability + 1).min(6);
+                if best != last_best_move {
+                    instability = (instability + 1).min(8);
                 } else {
                     instability = 0;
                 }
 
                 let instability_factor = instability as f64 * 0.02;
                 let score_factor =
-                    ((best_score as f64 - last_best_score as f64) * -0.002).clamp(-0.2, 0.4);
+                    ((best_score as f64 - last_best_score as f64) * -0.002).clamp(-0.3, 0.3);
 
                 let prev_score_factor = if let Some(prev_score) = self.prev_score {
-                    ((best_score as f64 - prev_score as f64) * -0.002).clamp(-0.2, 0.4)
+                    ((best_score as f64 - prev_score as f64) * -0.002).clamp(-0.3, 0.3)
                 } else {
                     0.0
                 };
 
-                let nodes_factor = 0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64;
+                let nodes_factor =
+                    (0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64).clamp(-0.4, 0.4);
                 factors *= (1.0 + instability_factor)
                     * (1.0 + score_factor)
                     * (1.0 + prev_score_factor)

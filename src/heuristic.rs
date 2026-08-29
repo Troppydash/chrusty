@@ -146,7 +146,13 @@ impl Heuristic {
     }
 
     pub fn next_search(&mut self) {
-        self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
+        for i in 2..MAX_DEPTH_USIZE {
+            self.killer_moves[i - 2] = self.killer_moves[i];
+        }
+        // shift by 2
+        for i in 2..LOW_PLY {
+            self.low_ply[i - 2] = self.low_ply[i];
+        }
     }
 
     pub fn clear(&mut self) {
@@ -189,7 +195,7 @@ impl Heuristic {
         // self.pinners_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
         //     .into_boxed_slice()
         //     .try_into()
-            // .unwrap();
+        // .unwrap();
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {

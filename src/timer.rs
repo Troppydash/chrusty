@@ -1,10 +1,10 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 
 #[derive(Debug)]
 pub struct Timer {
-    start: i128,
+    start: Instant,
     duration: i128,
     stopped: bool,
     // constants
@@ -16,7 +16,7 @@ pub struct Timer {
 impl Timer {
     pub fn new() -> Self {
         Self {
-            start: 0,
+            start: Instant::now(),
             duration: MAX_TIME,
             stopped: false,
             max_depth: MAX_DEPTH,
@@ -25,15 +25,12 @@ impl Timer {
         }
     }
 
-    fn now() -> i128 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i128
+    fn elapsed(&self) -> i128 {
+        self.start.elapsed().as_millis() as i128
     }
 
     pub fn start(&mut self, duration: i128) {
-        self.start = Self::now();
+        self.start = Instant::now();
         self.duration = duration;
         self.stopped = false;
     }
@@ -43,7 +40,7 @@ impl Timer {
             return;
         }
 
-        if Self::now() >= self.start + self.duration {
+        if self.elapsed() >= self.duration {
             self.stopped = true;
         }
     }
@@ -57,11 +54,11 @@ impl Timer {
     }
 
     pub fn test(&self, duration: i128) -> bool {
-        Self::now() >= self.start + duration
+        self.elapsed() >= duration
     }
 
     pub fn delta(&self) -> i128 {
-        Self::now() - self.start
+        self.elapsed()
     }
 
     /// Returns (opt_time, max_time)

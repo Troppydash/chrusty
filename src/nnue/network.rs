@@ -6,6 +6,7 @@ use std::ops::DerefMut;
 
 use crate::ext::ColoredPiece;
 use crate::nnue::ti;
+use crate::nnue::ti::FULL_THREATS;
 use crate::nnue::update::ThreatDelta;
 use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
@@ -15,29 +16,56 @@ use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
-pub const HL_NO_PST: usize = 1024;
+pub const HL: usize = 1024;
 pub const L1: usize = 32;
 pub const L2: usize = 32;
-pub const KINGS: usize = 10;
 pub const OUTPUTS: usize = 8;
-pub const HL: usize = HL_NO_PST;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
-pub const FT_SHIFT: usize = 9;
+pub const FT_SHIFT: usize = 8;
 pub const SCALE: i32 = 400;
 
-pub const THREATS: usize = 34440;
-
-const KING_BUCKET: [usize; 64] = [
-    0, 1, 2, 3, 3, 2, 1, 0, //
-    4, 4, 5, 5, 5, 5, 4, 4, //
-    6, 6, 6, 6, 6, 6, 6, 6, //
-    7, 7, 7, 7, 7, 7, 7, 7, //
-    8, 8, 8, 8, 8, 8, 8, 8, //
-    8, 8, 8, 8, 8, 8, 8, 8, //
-    9, 9, 9, 9, 9, 9, 9, 9, //
-    9, 9, 9, 9, 9, 9, 9, 9,
+const HALF_KING_BUCKET: [usize; 32] = [
+    0, 1, 2, 3, //
+    4, 5, 6, 7, //
+    8, 8, 9, 9, //
+    10, 10, 11, 11, //
+    12, 12, 13, 13, //
+    12, 12, 13, 13, //
+    14, 14, 15, 15, //
+    14, 14, 15, 15, //
 ];
+
+const KING_BUCKET: [usize; 64] = {
+    let mut table = [0; 64];
+    let mut sq = 0;
+
+    while sq < 64 {
+        let rank = sq / 8;
+        let file = sq % 8;
+
+        let mirrored_file = if file < 4 { file } else { 7 - file };
+
+        let index_32 = rank * 4 + mirrored_file;
+        table[sq] = HALF_KING_BUCKET[index_32];
+
+        sq += 1;
+    }
+
+    table
+};
+
+pub const KINGS: usize = {
+    let mut i = 0;
+    let mut m = 0;
+    while i < 64 {
+        if KING_BUCKET[i] > m {
+            m = KING_BUCKET[i];
+        }
+        i += 1;
+    }
+    m + 1
+};
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -214,7 +242,7 @@ impl SimdOps {
 
 pub struct Permute {
     // mapping[i] = j means that move jth HL neuron to i
-    pub mapping: [usize; HL_NO_PST],
+    pub mapping: [usize; HL],
 }
 
 impl Permute {
@@ -230,16 +258,16 @@ impl Permute {
         file.write_all(bytes).unwrap();
     }
 
-    pub fn new(mut mapping: [usize; HL_NO_PST]) -> Self {
-        for i in 0..(HL_NO_PST / 2) {
-            mapping[i + HL_NO_PST / 2] = mapping[i] + HL_NO_PST / 2;
+    pub fn new(mut mapping: [usize; HL]) -> Self {
+        for i in 0..(HL / 2) {
+            mapping[i + HL / 2] = mapping[i] + HL / 2;
         }
         Self { mapping }
     }
 
     pub fn default() -> Self {
-        let mut mapping = [0; HL_NO_PST];
-        for i in 0..HL_NO_PST {
+        let mut mapping = [0; HL];
+        for i in 0..HL {
             mapping[i] = i;
         }
         Self::new(mapping)
@@ -265,11 +293,11 @@ pub struct RawNetwork {
     // default output sizing is (outputs, inputs)
     // not-transposed
     feature_weights: [[[i16; HL]; 768]; KINGS],
-    threat_weights: [[i16; HL]; THREATS],
+    threat_weights: [[i8; HL]; FULL_THREATS],
     feature_bias: [i16; HL],
 
     // transposed
-    l1_weights: [[[i8; HL_NO_PST]; L1]; OUTPUTS],
+    l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
@@ -312,7 +340,7 @@ impl RawNetwork {
 
         /*
            This part is a bit confusing but it actually ends up working.
-           Using HL = HL_NO_PST
+           Using HL = HL
 
            We enforce that mapping[i+HL/2] = mapping[i]+HL/2 for symmetry.
            The network looks like
@@ -330,7 +358,7 @@ impl RawNetwork {
            get mapped to mapping[HL/2+i] = HL/2+j = j + HL/2 which is exactly correct.
         */
 
-        for i in 0..HL_NO_PST {
+        for i in 0..HL {
             let j = permute.mapping[i];
             self.feature_bias[i] = old.feature_bias[j];
 
@@ -340,7 +368,7 @@ impl RawNetwork {
                 }
             }
 
-            for k in 0..THREATS {
+            for k in 0..FULL_THREATS {
                 self.threat_weights[k][i] = old.threat_weights[k][j];
             }
 
@@ -356,11 +384,11 @@ impl RawNetwork {
 #[repr(C, align(64))]
 pub struct Network {
     pub feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
-    pub threat_weights: [Aligned<i8, HL>; THREATS],
+    pub threat_weights: [Aligned<i8, HL>; FULL_THREATS],
     pub feature_bias: Aligned<i16, HL>,
 
-    pub l1_weights: [[Aligned<i8, { 4 * L1 }>; HL_NO_PST / 4]; OUTPUTS],
-    // pub l1_weights: [[[i8; HL_NO_PST]; L1]; OUTPUTS],
+    pub l1_weights: [[Aligned<i8, { 4 * L1 }>; HL / 4]; OUTPUTS],
+    // pub l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
@@ -383,28 +411,18 @@ impl Network {
             }
         }
 
-        let mut clamped = 0;
-        for a in 0..THREATS {
+        for a in 0..FULL_THREATS {
             for b in 0..HL {
-                net.threat_weights[a][b] =
-                    raw.threat_weights[a][b].clamp(i8::MIN as i16, i8::MAX as i16) as i8;
-
-                if net.threat_weights[a][b] as i16 != raw.threat_weights[a][b] {
-                    clamped += 1;
-                }
+                net.threat_weights[a][b] = raw.threat_weights[a][b];
             }
         }
-        println!(
-            "info pct_threats_clamped {:.2}%",
-            (clamped * 100) as f32 / (THREATS * HL) as f32
-        );
 
         for a in 0..HL {
             net.feature_bias[a] = raw.feature_bias[a];
         }
 
         for bucket in 0..OUTPUTS {
-            for c in 0..(HL_NO_PST / 4) {
+            for c in 0..(HL / 4) {
                 for j in 0..L1 {
                     for k in 0..4 {
                         net.l1_weights[bucket][c][j * 4 + k] = raw.l1_weights[bucket][j][c * 4 + k];
@@ -412,13 +430,6 @@ impl Network {
                 }
             }
         }
-        // for bucket in 0..OUTPUTS {
-        // for c in 0..L1 {
-        // for j in 0..HL_NO_PST {
-        // net.l1_weights[bucket][c][j] = raw.l1_weights[bucket][c][j];
-        // }
-        // }
-        // }
 
         for a in 0..OUTPUTS {
             for b in 0..L1 {
@@ -501,44 +512,26 @@ impl Network {
             square = square.flip_file();
         }
 
-        let index768 = (if piece.color == side { 0 } else { 6 } + piece.piece as usize) * 64
+        let index768 = ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64
             + square.relative_to(side) as usize;
         &self.feature_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
-    }
-
-    fn threat_feature_lookup_from_threat(
-        &self,
-        king_sq: Square,
-        side: Color,
-        threat_delta: ThreatDelta,
-    ) -> &Aligned<i8, HL> {
-        let (attacker, attacker_square, target, target_square, attacker_color) = threat_delta.get();
-        &self.threat_feature_lookup(
-            king_sq,
-            side,
-            attacker_color,
-            attacker,
-            attacker_square,
-            target,
-            target_square,
-        )
     }
 
     fn threat_feature_lookup_index_from_threat(
         &self,
         king_sq: Square,
         side: Color,
-        threat_delta: ThreatDelta,
-    ) -> usize {
-        let (attacker, attacker_square, target, target_square, attacker_color) = threat_delta.get();
+        delta: &ThreatDelta,
+    ) -> i32 {
         self.threat_feature_lookup_index(
             king_sq,
             side,
-            attacker_color,
-            attacker,
-            attacker_square,
-            target,
-            target_square,
+            delta.attacker.color,
+            delta.target.color,
+            delta.attacker.piece,
+            delta.attacker_sq,
+            delta.target.piece,
+            delta.target_sq,
         )
     }
 
@@ -547,11 +540,16 @@ impl Network {
         king_sq: Square,
         side: Color,
         attacker_color: Color,
+        target_color: Color,
         attacker: Piece,
         mut attacker_square: Square,
         target: Piece,
         mut target_square: Square,
-    ) -> usize {
+    ) -> i32 {
+        if !ti::is_feature(attacker, target) {
+            return -1;
+        }
+
         debug_assert!(attacker != Piece::King);
         debug_assert!(target != Piece::King);
         if (king_sq as u16 & 0b100) != 0 {
@@ -559,40 +557,14 @@ impl Network {
             target_square = target_square.flip_file();
         }
 
-        let index = ti::threat_feature_index(
+        ti::threat_feature_index(
+            side == attacker_color,
+            attacker_color != target_color,
             attacker as usize,
             attacker_square.relative_to(side) as usize,
             target_square.relative_to(side) as usize,
             target as usize,
-        );
-
-        (if attacker_color == side {
-            0
-        } else {
-            THREATS / 2
-        }) + index
-    }
-
-    pub fn threat_feature_lookup(
-        &self,
-        king_sq: Square,
-        side: Color,
-        attacker_color: Color,
-        attacker: Piece,
-        attacker_square: Square,
-        target: Piece,
-        target_square: Square,
-    ) -> &Aligned<i8, HL> {
-        let index = self.threat_feature_lookup_index(
-            king_sq,
-            side,
-            attacker_color,
-            attacker,
-            attacker_square,
-            target,
-            target_square,
-        );
-        &self.threat_weights[index]
+        ) as i32
     }
 
     pub fn apply_update(
@@ -690,15 +662,21 @@ impl Network {
         let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
         let mut subs: ArrayVec<usize, 96> = ArrayVec::new();
         for add in update.adds.iter() {
-            adds.push(self.threat_feature_lookup_index_from_threat(king_sq, side, add.clone()));
+            let i = self.threat_feature_lookup_index_from_threat(king_sq, side, add);
+            if i >= 0 {
+                adds.push(i as usize);
+            }
         }
         for sub in update.subs.iter() {
-            subs.push(self.threat_feature_lookup_index_from_threat(king_sq, side, sub.clone()));
+            let i = self.threat_feature_lookup_index_from_threat(king_sq, side, sub);
+            if i >= 0 {
+                subs.push(i as usize);
+            }
         }
 
         unsafe {
             let mut acc = [_mm512_setzero_si512(); 8];
-            for i in (0..HL_NO_PST).step_by(32 * 8) {
+            for i in (0..HL).step_by(32 * 8) {
                 for k in 0..8 {
                     acc[k] = *(base.as_ptr().add(i + k * 32) as *const __m512i);
                 }

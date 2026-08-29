@@ -13,7 +13,7 @@ use sfbinpack::{
 
 use crate::nnue::{
     NNUE,
-    network::{HL_NO_PST, Permute},
+    network::{HL, Permute},
 };
 
 fn filter(entry: &TrainingDataEntry) -> bool {
@@ -52,7 +52,7 @@ fn benchmark(mut net: NNUE, boards: &Vec<Board>) -> f64 {
         net.sort_eval(board);
 
         let ft = net.sort_ft();
-        for i in (0..HL_NO_PST).step_by(4) {
+        for i in (0..HL).step_by(4) {
             let mut all_zero = true;
             for k in 0..4 {
                 if ft[i + k] > 0 {
@@ -67,21 +67,21 @@ fn benchmark(mut net: NNUE, boards: &Vec<Board>) -> f64 {
         }
     }
 
-    sparseness as f64 / (HL_NO_PST / 4 * boards.len()) as f64
+    sparseness as f64 / (HL / 4 * boards.len()) as f64
 }
 
-pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL_NO_PST] {
+pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
     let file = File::open(path).unwrap();
     let mut reader =
         sfbinpack::CompressedTrainingDataEntryReader::new(BufReader::new(file)).unwrap();
 
-    let half_hl = HL_NO_PST / 2;
+    let half_hl = HL / 2;
 
     let mut net = NNUE::new();
     let mut co_matrix = vec![0u64; half_hl * half_hl];
     let mut counts = vec![0u64; half_hl];
 
-    // Collect co-occurrence statistics for 0..HL_NO_PST / 2
+    // Collect co-occurrence statistics for 0..HL / 2
     let mut it = 0;
     while it < iter {
         let entry = reader.next();
@@ -120,12 +120,12 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL_NO_P
     }
 
     // Initialize mapping with identity mapping for the full array
-    let mut mapping = [0usize; HL_NO_PST];
-    for i in 0..HL_NO_PST {
+    let mut mapping = [0usize; HL];
+    for i in 0..HL {
         mapping[i] = i;
     }
 
-    // Greedy 4-element block packing strictly on 0..HL_NO_PST / 2
+    // Greedy 4-element block packing strictly on 0..HL / 2
     let mut used = vec![false; half_hl];
     let mut write_head = 0;
 
@@ -211,8 +211,8 @@ pub fn start(path: &str, iter: usize) {
     //     let mut a = 0;
     //     let mut b = 0;
     //     loop {
-    //         a = rng.next_u64() as usize % (HL_NO_PST / 2);
-    //         b = rng.next_u64() as usize % (HL_NO_PST / 2);
+    //         a = rng.next_u64() as usize % (HL / 2);
+    //         b = rng.next_u64() as usize % (HL / 2);
     //         if a != b {
     //             break;
     //         }

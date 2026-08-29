@@ -272,6 +272,7 @@ pub fn start(args: Vec<String>) {
                 match parts[2] {
                     "Threads" => {}
                     "Hash" => {
+                        async_engine.wait();
                         let size = parts[4].parse::<usize>().unwrap();
                         async_engine.resize_table(size);
                     }

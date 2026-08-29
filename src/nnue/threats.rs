@@ -1,6 +1,4 @@
-use std::{
-    arch::x86_64::*,
-};
+use std::arch::x86_64::*;
 
 use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
@@ -8,7 +6,7 @@ use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
 use crate::{
     ext::{BitBoardExt, ColoredPiece, ExtBoard, ExtMove, MoveType},
     nnue::{
-        network::{Aligned, HL, HL_NO_PST, KINGS, Network, SimdOps},
+        network::{Aligned, HL, KINGS, Network, SimdOps},
         update::{ThreatDelta, ThreatDeltaUpdates, ThreatUpdate},
     },
     param::MAX_DEPTH_USIZE,
@@ -137,8 +135,6 @@ impl Threats {
         let rook = cozy_chess::get_rook_moves(sq, occ);
         let queen = bishop | rook;
 
-        let ntm = board.colors(!piece.color);
-
         // remove outgoing
         let attacks = match piece.piece {
             Piece::Pawn => pawn,
@@ -148,35 +144,25 @@ impl Threats {
             Piece::Queen => queen,
             Piece::King => unreachable!(),
         };
-        for target_sq in attacks & ntm & mask & !(board.pieces(Piece::King)) {
+        for target_sq in attacks & occ & mask & !(board.pieces(Piece::King)) {
             let piece2: ColoredPiece = board.color_piece_on(target_sq).unwrap();
-            out.push(ThreatDelta::new(
-                piece.piece,
-                sq,
-                piece2.piece,
-                target_sq,
-                piece.color,
-            ));
+            out.push(ThreatDelta::new(piece, sq, piece2, target_sq));
         }
 
-        if also_incoming {
-            // remove incoming
-            let incoming = (pawn & board.pieces(Piece::Pawn))
-                | (knight & board.pieces(Piece::Knight))
-                | (bishop & board.pieces(Piece::Bishop))
-                | (rook & board.pieces(Piece::Rook))
-                | (queen & board.pieces(Piece::Queen));
+        // remove incoming
+        let incoming_pawns = (cozy_chess::get_pawn_attacks(sq, Color::Black)
+            & board.colored_pieces(Color::White, Piece::Pawn))
+            | (cozy_chess::get_pawn_attacks(sq, Color::White)
+                & board.colored_pieces(Color::Black, Piece::Pawn));
+        let incoming = incoming_pawns
+            | (knight & board.pieces(Piece::Knight))
+            | (bishop & board.pieces(Piece::Bishop))
+            | (rook & board.pieces(Piece::Rook))
+            | (queen & board.pieces(Piece::Queen));
 
-            for in_sq in incoming & ntm & mask {
-                let in_piece = board.color_piece_on(in_sq).unwrap();
-                out.push(ThreatDelta::new(
-                    in_piece.piece,
-                    in_sq,
-                    piece.piece,
-                    sq,
-                    in_piece.color,
-                ));
-            }
+        for in_sq in incoming & occ & mask {
+            let in_piece = board.color_piece_on(in_sq).unwrap();
+            out.push(ThreatDelta::new(in_piece, in_sq, piece, sq));
         }
     }
 
@@ -203,8 +189,7 @@ impl Threats {
                 let pa = new_board.color_piece_on(a).unwrap();
                 let pb = new_board.color_piece_on(b).unwrap();
 
-                if pa.color == pb.color
-                    || pa.piece == Piece::King
+                if pa.piece == Piece::King
                     || pb.piece == Piece::King
                     || ignore_sq.has(a)
                     || ignore_sq.has(b)
@@ -213,11 +198,11 @@ impl Threats {
                 }
 
                 if ty.has(a) {
-                    out.push(ThreatDelta::new(pa.piece, a, pb.piece, b, pa.color));
+                    out.push(ThreatDelta::new(pa, a, pb, b));
                 }
 
                 if ty.has(b) {
-                    out.push(ThreatDelta::new(pb.piece, b, pa.piece, a, pb.color));
+                    out.push(ThreatDelta::new(pb, b, pa, a));
                 }
             }
         }
@@ -248,18 +233,12 @@ impl Threats {
 
                     for slider_sq in diag_sliders {
                         let piece = new_board.color_piece_on(slider_sq).unwrap();
-                        let enemy_targets = valid_targets & new_board.colors(!piece.color);
+                        let enemy_targets = valid_targets & new_occ;
 
                         for att_sq in enemy_targets {
                             if cozy_chess::get_between_rays(slider_sq, att_sq).has(vacated_sq) {
                                 let att_piece = new_board.color_piece_on(att_sq).unwrap();
-                                out.push(ThreatDelta::new(
-                                    piece.piece,
-                                    slider_sq,
-                                    att_piece.piece,
-                                    att_sq,
-                                    piece.color,
-                                ));
+                                out.push(ThreatDelta::new(piece, slider_sq, att_piece, att_sq));
                             }
                         }
                     }
@@ -278,7 +257,7 @@ impl Threats {
 
                 for slider_sq in ortho_sliders {
                     let piece = new_board.color_piece_on(slider_sq).unwrap();
-                    let enemy_targets = valid_targets & new_board.colors(!piece.color);
+                    let enemy_targets = valid_targets & new_occ;
 
                     for att_sq in enemy_targets {
                         if !(cozy_chess::get_between_rays(slider_sq, att_sq)
@@ -286,13 +265,7 @@ impl Threats {
                         .is_empty()
                         {
                             let att_piece = new_board.color_piece_on(att_sq).unwrap();
-                            out.push(ThreatDelta::new(
-                                piece.piece,
-                                slider_sq,
-                                att_piece.piece,
-                                att_sq,
-                                piece.color,
-                            ));
+                            out.push(ThreatDelta::new(piece, slider_sq, att_piece, att_sq));
                         }
                     }
                 }
@@ -324,13 +297,7 @@ impl Threats {
 
                 Self::record_sq_inout(board, from, BitBoard::FULL, true, &mut threats.subs);
                 if is_cap {
-                    Self::record_sq_inout(
-                        board,
-                        to,
-                        BitBoard::FULL & !from.bitboard(),
-                        true,
-                        &mut threats.subs,
-                    );
+                    Self::record_sq_inout(board, to, !from.bitboard(), true, &mut threats.subs);
                 }
 
                 Self::record_sq_inout(&new_board, to, BitBoard::FULL, true, &mut threats.adds);
@@ -348,21 +315,7 @@ impl Threats {
                 let (king_to, rook_to) = board.castle_to(m);
 
                 Self::record_sq_inout(board, rook_from, BitBoard::FULL, true, &mut threats.subs);
-
-                Self::record_sq_inout(
-                    &new_board,
-                    rook_to,
-                    BitBoard::FULL,
-                    false,
-                    &mut threats.adds,
-                );
-
-                // if threats.subs.len() > 0 {
-                //     println!("{:?} {}", threats, board);
-                // }
-
-                // guaranteed nothing attacking and starts attacking rook/king
-                // guaranteed no discovered attacks or blocked attacks
+                Self::record_sq_inout(&new_board, rook_to, BitBoard::FULL, true, &mut threats.adds);
             }
             MoveType::ENPASSENT => {
                 Self::record_sq_inout(board, m.from, BitBoard::FULL, true, &mut threats.subs);
@@ -400,7 +353,6 @@ impl Threats {
 
     fn refresh(&mut self, side: Color, board: &Board, network: &Box<Network>) {
         let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
-
         let occ = board.occupied();
         for sq1 in occ & !board.pieces(Piece::King) {
             let piece1 = board.color_piece_on(sq1).unwrap();
@@ -416,23 +368,27 @@ impl Threats {
                 Piece::King => BitBoard::EMPTY,
             };
 
-            for sq2 in board.colors(!piece1.color) & !board.pieces(Piece::King) & attacks {
+            for sq2 in occ & !board.pieces(Piece::King) & attacks {
                 let piece2 = board.color_piece_on(sq2).unwrap();
-                adds.push(network.threat_feature_lookup_index(
+                let i = network.threat_feature_lookup_index(
                     board.king(side),
                     side,
                     piece1.color,
+                    piece2.color,
                     piece1.piece,
                     sq1,
                     piece2.piece,
                     sq2,
-                ));
+                );
+                if i >= 0 {
+                    adds.push(i as usize);
+                }
             }
         }
 
         unsafe {
             let out = self.side[self.head].vals[side as usize].as_mut_ptr();
-            for i in (0..HL_NO_PST).step_by(32 * 8) {
+            for i in (0..HL).step_by(32 * 8) {
                 let mut acc = [_mm512_setzero_si512(); 8];
                 let mut add_idx = 0;
 
@@ -477,13 +433,7 @@ impl Threats {
                 continue;
             }
 
-            // if board.hash() % 4 == 0 {
-            // self.refresh(side,board, network);
-            // return;
-            // }
-
             let mut base = self.head;
-            // let mut counts = 0;
             loop {
                 if Network::needs_refresh_threat(
                     self.side[base].king_sq[side as usize],
