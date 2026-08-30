@@ -9,6 +9,7 @@ use crate::{
     heuristic::{Heuristic, LOW_PLY},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
     see,
+    threats::Threats,
 };
 
 enum Stage {
@@ -430,12 +431,21 @@ impl Movepick {
     }
 
     fn score_quiets(&mut self, skip_killers: bool) {
-        let occ = self.pos.occupied();
-        let stm = self.pos.side_to_move();
-        let opp_king = self.pos.king(!stm);
-        let knight_attacks = cozy_chess::get_knight_moves(opp_king);
-        let bishop_attacks = cozy_chess::get_bishop_moves(opp_king, occ);
-        let rook_attacks = cozy_chess::get_rook_moves(opp_king, occ);
+        let threats = Threats::build(&self.pos);
+        let threatened = [
+            BitBoard::EMPTY,                      // P
+            threats.by_opp[Piece::Pawn as usize], // N
+            threats.by_opp[Piece::Pawn as usize], // B
+            threats.by_opp[Piece::Pawn as usize]
+                | threats.by_opp[Piece::Knight as usize]
+                | threats.by_opp[Piece::Bishop as usize], // R
+            threats.by_opp[Piece::Pawn as usize]
+                | threats.by_opp[Piece::Knight as usize]
+                | threats.by_opp[Piece::Bishop as usize]
+                | threats.by_opp[Piece::Rook as usize], // Q
+            BitBoard::EMPTY,
+        ];
+        let escape = [0, 3000, 3000, 5000, 7000, 0];
 
         let counter = self
             .get_heuristic()
@@ -465,6 +475,12 @@ impl Movepick {
                 score += 10000;
             }
 
+            if m == killers[0] {
+                score += 20000;
+            } else if m == killers[1] {
+                score += 15000;
+            }
+
             if self.ply < LOW_PLY as i8 {
                 score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
                     / (1 + self.ply as i32);
@@ -472,23 +488,19 @@ impl Movepick {
 
             score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
 
-            // TODO: improve this
+            ///// Threats /////
             let piece = self.pos.piece_on(m.from).unwrap();
-            let check = match piece {
-                Piece::Knight => !(m.to.bitboard() & knight_attacks).is_empty(),
-                Piece::Bishop => !(m.to.bitboard() & bishop_attacks).is_empty(),
-                Piece::Rook => !(m.to.bitboard() & rook_attacks).is_empty(),
-                Piece::Queen => !(m.to.bitboard() & (bishop_attacks | rook_attacks)).is_empty(),
-                _ => false,
-            };
-            if check {
-                score += 1000;
+            // moving into threat
+            if threatened[piece as usize].has(m.to) {
+                score -= 3000;
             }
-
-            if m == killers[0] {
-                score += 20000;
-            } else if m == killers[1] {
-                score += 15000;
+            // escaping from threat
+            if threatened[piece as usize].has(m.from) {
+                score += escape[piece as usize];
+            }
+            // checks
+            if threats.checks[piece as usize].has(m.to) {
+                score += 5000;
             }
 
             self.moves.get_mut(i).score = score;

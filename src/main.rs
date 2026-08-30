@@ -19,6 +19,7 @@ mod tb;
 mod timer;
 mod tt;
 mod uci;
+mod threats;
 
 fn main() {
     cuckoo::init();
