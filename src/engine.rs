@@ -307,6 +307,7 @@ impl Engine {
             }
 
             move_count += 1;
+            self.table.get().prefetch(pos.new_hash(next_move.inner));
 
             if !is_loss(best_score) {
                 //- delta pruning
@@ -345,8 +346,8 @@ impl Engine {
                 }
             }
 
+
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
-            self.table.get().prefetch(new_pos.correct_hash());
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth - 1, ss + 1, is_pv);
             self.unmake_move(pos, key, ss);
 
@@ -688,8 +689,8 @@ impl Engine {
                     + ((tt_static - beta) as i32 / 500).clamp(0, 3)
                     + is_tt_capture as i32;
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
+                self.table.get().prefetch(pos.new_hash(Move::NULL_MOVE));
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
-                self.table.get().prefetch(new_pos.correct_hash());
                 let score = -self.negamax(
                     &new_pos,
                     -beta,
@@ -765,9 +766,8 @@ impl Engine {
                     }
 
                     move_count += 1;
-
+                    self.table.get().prefetch(pos.new_hash(next_move.inner));
                     let new_pos = self.make_move(pos, next_move.inner, key, ss);
-                    self.table.get().prefetch(new_pos.correct_hash());
                     let mut score = -self.qsearch(
                         &new_pos,
                         -probcut_beta,
@@ -857,6 +857,7 @@ impl Engine {
             let is_quiet = pos.is_quiet(next_move.inner);
             move_count += 1;
             let old_nodes = self.nodes;
+            self.table.get().prefetch(pos.new_hash(next_move.inner));
 
             //- low depth pruning
             if !is_root && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
@@ -929,6 +930,7 @@ impl Engine {
                 }
             }
 
+
             //- singular extension
             let mut extension = 0;
             if !is_root
@@ -986,7 +988,6 @@ impl Engine {
             }
 
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
-            self.table.get().prefetch(new_pos.correct_hash());
             let mut new_depth = (depth + extension - 1).max(0);
             let mut score = 0;
 

@@ -1,7 +1,5 @@
 use std::{
-    alloc::{Layout, alloc_zeroed, dealloc},
-    arch::x86_64::{_MM_HINT_T0, _MM_HINT_T1, _mm_prefetch},
-    ptr::{NonNull, null_mut},
+    alloc::{Layout, alloc_zeroed, dealloc}, arch::x86_64::{_MM_HINT_ET0, _MM_HINT_T0, _MM_HINT_T1, _mm_prefetch}, ptr::{NonNull, null_mut},
 };
 
 use cozy_chess::Move;
@@ -35,11 +33,11 @@ pub fn get_can_use(value: i16, flag: u8, alpha: i16, beta: i16) -> bool {
     return false;
 }
 
-fn key_matches(key: u64, hash: u64) -> bool {
-    key as u64 == hash
+fn key_matches(key: u64, hash: u16) -> bool {
+    key as u16 == hash
 }
 
-const NUM_ENTRIES: usize = 4;
+const NUM_ENTRIES: usize = 3;
 pub struct EntryValue {
     pub hit: bool,
     pub can_use: bool,
@@ -53,7 +51,7 @@ pub struct EntryValue {
 
 #[derive(Clone, Copy)]
 pub struct Entry {
-    hash: u64,
+    hash: u16,
     pv: u16,
     depth: i8,
     static_score: i16,
@@ -156,7 +154,7 @@ impl Entry {
             || depth + 4 + 2 * (is_pv as i8) > self.depth
             || age_diff >= 1
         {
-            self.hash = key as u64;
+            self.hash = key as u16;
             self.depth = depth;
             self.static_score = static_score;
 
@@ -186,7 +184,7 @@ impl Entry {
 }
 
 #[derive(Clone, Copy)]
-#[repr(C, align(64))]
+#[repr(C, align(32))]
 pub struct Bucket {
     values: [Entry; NUM_ENTRIES],
 }
@@ -295,7 +293,7 @@ impl Table {
     pub fn prefetch(&self, key: u64) {
         let index = ((key as u128 * self.size as u128) >> 64) as usize;
         unsafe {
-            _mm_prefetch(self.buckets.as_ptr().add(index) as *const i8, _MM_HINT_T0);
+            _mm_prefetch(self.buckets.as_ptr().add(index) as *const i8, _MM_HINT_ET0);
         }
     }
 

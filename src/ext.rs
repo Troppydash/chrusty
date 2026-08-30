@@ -194,6 +194,7 @@ pub trait ExtBoard {
     fn opp_pinned_checkers(&self) -> (BitBoard, BitBoard);
     fn opp_pinned_pinners(&self) -> (BitBoard, BitBoard);
     fn pinners(&self) -> BitBoard;
+    fn new_hash(&self, m: Move) -> u64;
 }
 
 impl ExtBoard for Board {
@@ -480,6 +481,27 @@ impl ExtBoard for Board {
         }
 
         return pinners;
+    }
+
+    fn new_hash(&self, m: Move) -> u64 {
+        let mut hash = self.correct_hash();
+
+        if !m.is_null() {
+            let piece = self.color_piece_on(m.from).unwrap();
+            hash ^= zobrist_pst(piece.color, piece.piece, m.from);
+
+            if let Some(piece) = self.color_piece_on(m.to) {
+                hash ^= zobrist_pst(piece.color, piece.piece, m.to);
+            }
+
+            if let Some(promotion) = m.promotion {
+                hash ^= zobrist_pst(piece.color, promotion, m.to);
+            } else {
+                hash ^= zobrist_pst(piece.color, piece.piece, m.to);
+            }
+        }
+
+        hash ^ ZOBRIST.black_to_move
     }
 }
 
