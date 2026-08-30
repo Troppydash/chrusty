@@ -9,6 +9,7 @@ use crate::{
     heuristic::{Heuristic, LOW_PLY},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
     see,
+    stack::SearchStack,
     threats::Threats,
 };
 
@@ -113,8 +114,8 @@ pub struct Movepick {
     // this is needed to prevent a refcell which is expensive
     heuristic: *const Heuristic,
     probcut_margin: i32,
-    prev_move: Move,
-    prev_piece: Option<ColoredPiece>,
+    stack: *const SearchStack,
+    ss: usize,
     pawn_key: u64,
 
     // internal //
@@ -134,8 +135,8 @@ impl Movepick {
         pv: Move,
         ply: i8,
         depth: i8,
-        prev_move: Move,
-        prev_piece: Option<ColoredPiece>,
+        stack: &[SearchStack],
+        ss: usize,
         pawn_key: u64,
         heuristic: &Heuristic,
     ) -> Self {
@@ -146,8 +147,8 @@ impl Movepick {
             depth,
             heuristic,
             probcut_margin: 0,
-            prev_move,
-            prev_piece,
+            stack: stack.as_ptr(),
+            ss,
             pawn_key,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
@@ -163,8 +164,8 @@ impl Movepick {
         pv: Move,
         ply: i8,
         depth: i8,
-        prev_move: Move,
-        prev_piece: Option<ColoredPiece>,
+        stack: &[SearchStack],
+        ss: usize,
         pawn_key: u64,
         heuristic: &Heuristic,
         in_check: bool,
@@ -176,8 +177,8 @@ impl Movepick {
             depth,
             heuristic,
             probcut_margin: 0,
-            prev_move,
-            prev_piece,
+            stack: stack.as_ptr(),
+            ss,
             pawn_key,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
@@ -193,6 +194,8 @@ impl Movepick {
         pv: Move,
         ply: i8,
         depth: i8,
+        stack: &[SearchStack],
+        ss: usize,
         probcut_margin: i32,
         heuristic: &Heuristic,
     ) -> Self {
@@ -203,8 +206,8 @@ impl Movepick {
             depth,
             heuristic,
             probcut_margin,
-            prev_move: Move::NULL_MOVE,
-            prev_piece: None,
+            stack: stack.as_ptr(),
+            ss,
             pawn_key: 0,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
@@ -446,10 +449,10 @@ impl Movepick {
             BitBoard::EMPTY,
         ];
         let escape = [0, 3000, 3000, 5000, 7000, 0];
-
-        let counter = self
-            .get_heuristic()
-            .get_counter(self.prev_move, self.prev_piece);
+        let prev_move = unsafe { (*self.stack.add(self.ss - 1)).m };
+        let prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
+        let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
+        let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -471,9 +474,9 @@ impl Movepick {
 
             let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
 
-            if self.moves.get(i).inner == counter {
-                score += 10000;
-            }
+            // if self.moves.get(i).inner == counter {
+            //     score += 10000;
+            // }
 
             if m == killers[0] {
                 score += 20000;
@@ -487,6 +490,20 @@ impl Movepick {
             }
 
             score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
+
+            score += (1024
+                * heuristic
+                    .get_cont_hist(get_cont_hist_prev(1), &self.pos, m)
+                    .get() as i32
+                + 900
+                    * heuristic
+                        .get_cont_hist(get_cont_hist_prev(2), &self.pos, m)
+                        .get() as i32
+                + 700
+                    * heuristic
+                        .get_cont_hist(get_cont_hist_prev(4), &self.pos, m)
+                        .get() as i32)
+                / 2048;
 
             ///// Threats /////
             let piece = self.pos.piece_on(m.from).unwrap();
@@ -723,8 +740,6 @@ impl Movepick {
 
 #[cfg(test)]
 mod tests {
-    use crate::pesto;
-
     use super::*;
 
     fn diff_movegen(fen: &str) {
@@ -737,15 +752,16 @@ mod tests {
             false
         });
 
-        let heuristic = Heuristic::new();
+        let fake_stack: Box<[SearchStack]> = vec![SearchStack::new(); 10].into_boxed_slice();
+        let heuristic = Box::new(Heuristic::new());
         for mut mp in vec![
             Movepick::new_negamax(
                 pos.clone(),
                 Move::NULL_MOVE,
                 0,
                 0,
-                Move::NULL_MOVE,
-                None,
+                &fake_stack,
+                9,
                 0,
                 &heuristic,
             ),
@@ -754,8 +770,8 @@ mod tests {
                 Move::NULL_MOVE,
                 0,
                 0,
-                Move::NULL_MOVE,
-                None,
+                &fake_stack,
+                9,
                 0,
                 &heuristic,
                 true,

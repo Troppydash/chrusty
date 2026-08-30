@@ -3,6 +3,7 @@ use cozy_chess::{BitBoard, Board, Color, Move, Piece};
 
 use crate::{
     ext::{BitBoardExt, ColoredPiece, ExtBoard, ExtMove, MoveType, zobrist_pst},
+    heuristic::ContHist,
     param::{MAX_DEPTH_USIZE, VALUE_NONE},
 };
 
@@ -61,6 +62,7 @@ pub struct SearchStack {
     pub verify_null: bool,
     pub piece: Option<ColoredPiece>,
     pub cont_corrhist: (usize, usize),
+    pub cont_hist: ContHist,
 }
 
 impl SearchStack {
@@ -76,6 +78,7 @@ impl SearchStack {
             verify_null: false,
             piece: None,
             cont_corrhist: (12, 0),
+            cont_hist: (0, 12, 0),
         }
     }
 
@@ -91,6 +94,7 @@ impl SearchStack {
             verify_null: false,
             piece: None,
             cont_corrhist: (12, 0),
+            cont_hist: (0, 12, 0),
         }
     }
 }

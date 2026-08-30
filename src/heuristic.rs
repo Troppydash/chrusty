@@ -3,6 +3,7 @@ use cozy_chess::{Board, Move};
 use crate::{
     ext::{ColoredPiece, ExtBoard, ExtMove, MoveList, index_with_option},
     param::*,
+    stack::SearchStack,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -27,15 +28,16 @@ impl<const LIMIT: i16> History<LIMIT> {
 }
 
 pub const CORR_LIMIT: i16 = 1024;
-type MainHistory = History<20000>;
-type CaptureHistory = History<20000>;
-type PawnHistory = History<20000>;
+pub const HISTORY_LIMIT: i16 = 20000;
+type MainHistory = History<HISTORY_LIMIT>;
+type CaptureHistory = History<HISTORY_LIMIT>;
+type PawnHistory = History<HISTORY_LIMIT>;
 pub type PawnCorr = History<CORR_LIMIT>;
 pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
 pub const PAWN_HASH: usize = 1 << 14;
-
-// TODO: cont hist
+// (is_cap, piece, to)
+pub type ContHist = (usize, usize, usize);
 
 pub struct Heuristic {
     // lmr[move_count][depth]
@@ -62,7 +64,8 @@ pub struct Heuristic {
     minor_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
     // cont corrhist [colored_piece][to][colored_piece][to]
     cont_corrhist: Box<[[[[PawnCorr; 64]; 12]; 64]; 13]>,
-    // pinners_corrhist: Box<[[PawnCorr; 2]; PAWN_HASH]>,
+    // [is_cap][colored_piece][from][colored_piece][to]
+    cont_hist: Box<[[[[[MainHistory; 64]; 12]; 64]; 13]; 2]>,
 }
 
 impl Heuristic {
@@ -122,10 +125,14 @@ impl Heuristic {
             .try_into()
             .unwrap();
 
-        // let pinners_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
-        //     .into_boxed_slice()
-        //     .try_into()
-        //     .unwrap();
+        let cont_hist = unsafe {
+            let total_elements = 2 * 13 * 64 * 12 * 64;
+            let flat_vec: Vec<MainHistory> = std::iter::repeat_with(MainHistory::new)
+                .take(total_elements)
+                .collect();
+            let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
+            Box::from_raw(raw_ptr as *mut [[[[[MainHistory; 64]; 12]; 64]; 13]; 2])
+        };
 
         Self {
             lmr,
@@ -141,7 +148,7 @@ impl Heuristic {
             major_corrhist,
             minor_corrhist,
             cont_corrhist,
-            // pinners_corrhist,
+            cont_hist,
         }
     }
 
@@ -192,10 +199,15 @@ impl Heuristic {
             .into_boxed_slice()
             .try_into()
             .unwrap();
-        // self.pinners_corrhist = vec![[PawnCorr::new(); 2]; PAWN_HASH]
-        //     .into_boxed_slice()
-        //     .try_into()
-        // .unwrap();
+
+        self.cont_hist = unsafe {
+            let total_elements = 2 * 13 * 64 * 12 * 64;
+            let flat_vec: Vec<MainHistory> = std::iter::repeat_with(MainHistory::new)
+                .take(total_elements)
+                .collect();
+            let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
+            Box::from_raw(raw_ptr as *mut [[[[[MainHistory; 64]; 12]; 64]; 13]; 2])
+        };
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
@@ -314,9 +326,58 @@ impl Heuristic {
         &mut self.cont_corrhist[idx.0][idx.1]
     }
 
-    // pub fn get_pinners_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
-    //     &mut self.pinners_corrhist[key as usize % PAWN_HASH][pos.side_to_move() as usize]
-    // }
+    pub fn get_cont_hist_index(&self, pos: &Board, m: Move) -> ContHist {
+        if m.is_null() {
+            (0, 12, m.to as usize)
+        } else {
+            let is_cap = pos.piece_on(m.to).is_some();
+            (
+                is_cap as usize,
+                pos.color_piece_on(m.from).unwrap().index(),
+                m.to as usize,
+            )
+        }
+    }
+
+    pub fn get_cont_hist(&self, prev: ContHist, pos: &Board, m: Move) -> &MainHistory {
+        debug_assert!(!m.is_null());
+
+        &self.cont_hist[prev.0][prev.1][prev.2][pos.color_piece_on(m.from).unwrap().index()]
+            [m.to as usize]
+    }
+
+    pub fn get_cont_hist_mut(&mut self, prev: ContHist, pos: &Board, m: Move) -> &mut MainHistory {
+        debug_assert!(!m.is_null());
+
+        &mut self.cont_hist[prev.0][prev.1][prev.2][pos.color_piece_on(m.from).unwrap().index()]
+            [m.to as usize]
+    }
+
+    pub fn add_cont_history(
+        &mut self,
+        pos: &Board,
+        m: Move,
+        stack: &[SearchStack],
+        ss: usize,
+        bonus: i16,
+    ) {
+        if !stack[ss - 1].m.is_null() {
+            self.get_cont_hist_mut(stack[ss - 1].cont_hist, pos, m)
+                .add(bonus);
+        }
+        if !stack[ss - 2].m.is_null() {
+            self.get_cont_hist_mut(stack[ss - 2].cont_hist, pos, m)
+                .add(bonus);
+        }
+        if !stack[ss - 4].m.is_null() {
+            self.get_cont_hist_mut(stack[ss - 4].cont_hist, pos, m)
+                .add(bonus / 2);
+        }
+        // if !stack[ss - 6].m.is_null() {
+        //     self.get_cont_hist_mut(stack[ss - 6].cont_hist, pos, m)
+        //         .add(bonus / 2);
+        // }
+    }
 
     pub fn update_history(
         &mut self,
@@ -325,13 +386,16 @@ impl Heuristic {
         div: i32,
         ply: i8,
         best_move: Move,
-        prev_move: Move,
-        prev_piece: Option<ColoredPiece>,
+        stack: &[SearchStack],
+        ss: usize,
         pawn_key: u64,
         captures: &MoveList,
         quiets: &MoveList,
     ) {
         debug_assert!(!best_move.is_null(), "best move null in history update");
+
+        let prev_move = stack[ss - 1].m;
+        let prev_piece = stack[ss - 1].piece;
 
         let bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
         let malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
@@ -342,6 +406,7 @@ impl Heuristic {
                 self.get_low_ply_mut(pos, best_move, ply).add(bonus);
             }
             self.get_pawn_mut(pos, best_move, pawn_key).add(bonus);
+            self.add_cont_history(pos, best_move, stack, ss, bonus);
 
             for m in quiets.iter() {
                 debug_assert!(!m.is_null());
@@ -352,6 +417,7 @@ impl Heuristic {
                 }
 
                 self.get_pawn_mut(pos, *m, pawn_key).add(-malus);
+                self.add_cont_history(pos, *m, stack, ss, -malus);
             }
 
             let killers = self.get_killers_mut(ply);

@@ -118,6 +118,7 @@ impl Engine {
         self.stack[ss].m = m.clone();
         self.key_stack.push(key);
         self.pawn_key.push(pos, m);
+        self.stack[ss].cont_hist = self.heuristic.get_cont_hist_index(pos, m);
 
         let mut new_pos = pos.clone();
         if m.is_null() {
@@ -293,8 +294,8 @@ impl Engine {
             tt_data.pv,
             ply,
             depth,
-            self.stack[ss - 1].m,
-            self.stack[ss - 1].piece,
+            &self.stack,
+            ss,
             self.pawn_key.get(),
             &self.heuristic,
             in_check,
@@ -742,6 +743,8 @@ impl Engine {
                     tt_move,
                     ply,
                     depth,
+                    &self.stack,
+                    ss,
                     margin,
                     &self.heuristic,
                 );
@@ -836,8 +839,8 @@ impl Engine {
             tt_data.pv,
             ply,
             depth,
-            self.stack[ss - 1].m,
-            self.stack[ss - 1].piece,
+            &self.stack,
+            ss,
             self.pawn_key.get(),
             &self.heuristic,
         );
@@ -1156,21 +1159,8 @@ impl Engine {
                 1,
                 ply,
                 best_move,
-                self.stack[ss - 1].m,
-                self.stack[ss - 1].piece,
-                self.pawn_key.get(),
-                &captures,
-                &quiets,
-            );
-        } else if !best_move.is_null() && !pos.is_quiet(best_move) {
-            self.heuristic.update_history(
-                pos,
-                depth,
-                4,
-                ply,
-                best_move,
-                self.stack[ss - 1].m,
-                self.stack[ss - 1].piece,
+                &self.stack,
+                ss,
                 self.pawn_key.get(),
                 &captures,
                 &quiets,
