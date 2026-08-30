@@ -1,3 +1,7 @@
+use cozy_chess::Board;
+
+use crate::{ext::ExtBoard, stack::KeyStack};
+
 const REP_SIZE: usize = 1 << 15;
 const UNSET: u64 = 1;
 
@@ -119,6 +123,27 @@ impl RepTable {
             c.clear();
         }
     }
+}
+
+pub fn is_rep(pos: &Board, ply: usize, stack: &KeyStack) -> bool {
+    let dist = usize::min(pos.halfmove_clock() as usize, stack.head as usize);
+    let mut count = 0;
+    let hash = pos.correct_hash();
+    for i in (2..=dist).step_by(2) {
+        let x = stack.keys[stack.head - i];
+        if x == hash {
+            if i < ply {
+                return true;
+            }
+
+            count += 1;
+            if count > 1 {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 #[cfg(test)]

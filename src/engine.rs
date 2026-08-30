@@ -13,7 +13,7 @@ use crate::{
     movepick::Movepick,
     nnue::{NNUE, network::Permute},
     param::*,
-    rep::RepTable,
+    rep::{RepTable, is_rep},
     see::{self, see_ge},
     sort,
     spsa::Parameters,
@@ -115,7 +115,6 @@ impl Engine {
     }
 
     fn make_move(&mut self, pos: &Board, m: Move, key: u64, ss: usize) -> Board {
-        self.rep.add(key);
         self.stack[ss].m = m.clone();
         self.key_stack.push(key);
         self.pawn_key.push(pos, m);
@@ -140,7 +139,6 @@ impl Engine {
         if !self.stack[ss].m.is_null() {
             self.nnue.unmake_move();
         }
-        self.rep.remove(key);
         self.key_stack.pop();
         self.pawn_key.pop();
     }
@@ -194,7 +192,7 @@ impl Engine {
             return VALUE_DRAW;
         }
 
-        if self.rep.check(key) {
+        if is_rep(pos, ply as usize, &self.key_stack) {
             return VALUE_DRAW;
         }
 
@@ -471,7 +469,7 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
-            if self.rep.check(key) {
+            if is_rep(pos, ply as usize, &self.key_stack) {
                 return VALUE_DRAW;
             }
 
@@ -1299,7 +1297,6 @@ impl Engine {
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
         self.nodes = 0;
         self.tb_hits = 0;
-        self.rep.clear();
         self.key_stack.clear();
         self.table.get().next_search();
         self.heuristic.next_search();
@@ -1308,7 +1305,6 @@ impl Engine {
         let mut pos = startpos;
         for m in moves.iter() {
             let key = pos.correct_hash();
-            self.rep.add_history(key);
             if pos.halfmove_clock() == 0 {
                 self.key_stack.clear();
             };
