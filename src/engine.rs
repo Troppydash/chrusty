@@ -346,7 +346,6 @@ impl Engine {
                 }
             }
 
-
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth - 1, ss + 1, is_pv);
             self.unmake_move(pos, key, ss);
@@ -930,7 +929,6 @@ impl Engine {
                 }
             }
 
-
             //- singular extension
             let mut extension = 0;
             if !is_root
@@ -1313,6 +1311,26 @@ impl Engine {
         }
         self.root_moves = root_moves.into_boxed_slice();
         assert!(!self.root_moves.is_empty(), "root moves is empty");
+
+        // poll root
+        if TableBase::static_test_root(&pos)
+            && let Some(tb) = &self.tb
+            && tb.test(&pos)
+            && let Some((score, m)) = tb.query_root(&pos)
+        {
+            println!(
+                "info depth {} score cp {} time {} pv {}",
+                MAX_DEPTH,
+                score,
+                0,
+                m.to_uci(&pos)
+            );
+            println!("bestmove {}", m.to_uci(&pos));
+            return SearchResult {
+                root: RootMove::new(&m),
+                depth: MAX_DEPTH,
+            };
+        }
 
         // search stack
         for i in 0..SS_SIZE_PRE {
