@@ -18,6 +18,7 @@ use crate::{
     sort,
     spsa::Parameters,
     stack::{KeyStack, PawnKey, PvList, SearchStack},
+    tb::TableBase,
     timer::Timer,
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
 };
@@ -56,6 +57,7 @@ pub struct Engine {
     heuristic: Box<Heuristic>,
     nodes: i64,
     prev_score: Option<i16>,
+    tb_hits: i64,
     // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
@@ -64,6 +66,7 @@ pub struct Engine {
     table: TablePtr,
     nnue: NNUE,
     settings: Parameters,
+    tb: Option<TableBase>,
 }
 
 impl Engine {
@@ -75,17 +78,23 @@ impl Engine {
             heuristic: Box::new(Heuristic::new()),
             nodes: 0,
             prev_score: None,
+            tb_hits: 0,
             root_moves: vec![].into_boxed_slice(),
             timer,
             rep: RepTable::new(),
             table,
             nnue: NNUE::build(&Permute::load()),
             settings: Parameters::default(),
+            tb: None,
         }
     }
 
     pub fn set_settings(&mut self, settings: &Parameters) {
         self.settings = settings.clone();
+    }
+
+    pub fn set_tb(&mut self, tb: Option<TableBase>) {
+        self.tb = tb;
     }
 
     pub fn newgame(&mut self) {
@@ -583,6 +592,48 @@ impl Engine {
             );
         }
 
+        //- syzygy
+        let max_score = VALUE_INF;
+        let mut best_score = -VALUE_INF;
+        if !has_excluded
+            && !is_root
+            && TableBase::static_test(pos)
+            && let Some(tb) = &self.tb
+            && tb.test(pos)
+            && let Some(wdl) = tb.query(pos)
+        {
+            self.tb_hits += 1;
+            let tb_score = VALUE_SYZYGY - ply as i16;
+            let (score, flag) = if wdl < -1 {
+                (-tb_score, FLAG_ALPHA)
+            } else if wdl > 1 {
+                (tb_score, FLAG_BETA)
+            } else {
+                (VALUE_DRAW, FLAG_EXACT)
+            };
+
+            if get_can_use(score, flag, alpha, beta) {
+                writer.set(
+                    key,
+                    Move::NULL_MOVE,
+                    ply,
+                    i16::min(MAX_DEPTH as i16, depth as i16 + 5) as i8,
+                    flag,
+                    score,
+                    VALUE_NONE,
+                    self.stack[ss].tt_pv,
+                    tt_age,
+                );
+
+                return score;
+            }
+
+            if flag == FLAG_BETA {
+                best_score = score;
+                alpha = alpha.max(score);
+            }
+        }
+
         let mut improving = false;
         if in_check {
             improving = false;
@@ -775,7 +826,6 @@ impl Engine {
         }
 
         let mut move_count = 0;
-        let mut best_score = -VALUE_INF;
         let mut best_move = Move::NULL_MOVE;
 
         let mut quiets = MoveList::new();
@@ -1089,6 +1139,10 @@ impl Engine {
             }
         }
 
+        if is_pv {
+            best_score = best_score.min(max_score);
+        }
+
         if move_count == 0 {
             if has_excluded {
                 best_score = alpha;
@@ -1244,6 +1298,7 @@ impl Engine {
 
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {
         self.nodes = 0;
+        self.tb_hits = 0;
         self.rep.clear();
         self.key_stack.clear();
         self.table.get().next_search();
@@ -1403,8 +1458,14 @@ impl Engine {
                 format!("cp {}", score)
             };
             print!(
-                "info depth {} score {} nodes {} time {} nps {} pv",
-                depth, score_str, self.nodes, delta, nps,
+                "info depth {} score {} nodes {} time {} nps {} hashfull {} tbhits {} pv",
+                depth,
+                score_str,
+                self.nodes,
+                delta,
+                nps,
+                self.table.clone().get().hashfull(),
+                self.tb_hits
             );
 
             let mut next_pos = pos.clone();

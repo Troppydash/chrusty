@@ -260,7 +260,11 @@ impl Table {
         table
     }
 
-    fn index(&mut self, i: usize) -> &mut Bucket {
+    fn index(&self, i: usize) -> &Bucket {
+        unsafe { &*self.buckets.as_ptr().add(i) }
+    }
+
+    fn index_mut(&mut self, i: usize) -> &mut Bucket {
         unsafe { &mut *self.buckets.as_ptr().add(i) }
     }
 
@@ -274,7 +278,7 @@ impl Table {
     pub fn clear(&mut self) {
         self.age = 0;
         for i in 0..self.size {
-            self.index(i).clear();
+            self.index_mut(i).clear();
         }
     }
 
@@ -285,7 +289,7 @@ impl Table {
     pub fn get(&mut self, key: u64) -> (Entry, &mut Entry) {
         let index = ((key as u128 * self.size as u128) >> 64) as usize;
         let age = self.age;
-        self.index(index).get(key, age)
+        self.index_mut(index).get(key, age)
     }
 
     pub fn prefetch(&self, key: u64) {
@@ -309,6 +313,20 @@ impl Table {
         };
         self.age = 0;
         self.clear();
+    }
+
+    pub fn hashfull(&self) -> i64 {
+        let mut count = 0i64;
+        for i in 0..100 {
+            for j in 0..NUM_ENTRIES {
+                let entry = &self.index(i).values[j];
+                if entry.get_age() == self.age && entry.depth > UNINIT_DEPTH {
+                    count += 1;
+                }
+            }
+        }
+
+        count * 10 / NUM_ENTRIES as i64
     }
 }
 

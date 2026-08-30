@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 arrayvec = "0.7.7"
+pyrrhic-rs = "0.2.0"
 rand = "0.10.2"
 rustyline = "18.0.1"
 sfbinpack = "0.6.5"

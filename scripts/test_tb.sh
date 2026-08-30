@@ -11,15 +11,15 @@ if [[ -z "$NEW" || -z "$OLD" ]]; then
 fi
 
 CONCURRENCY=$3
-LOG_FILE="./bench/logs/${NEW}_vs_${OLD}"
+LOG_FILE="./bench/logs/${NEW}_vs_${OLD}_tb"
 mkdir -p $LOG_FILE
 ./bench/fastchess/fastchess \
-  -engine cmd=./bench/${NEW}/chrusty name=${NEW} option.Hash=32 \
+  -engine cmd=./bench/${NEW}/chrusty name=${NEW} option.Hash=32 option.SyzygyPath=/home/troppydash/Downloads/Syzygy345 \
   -engine cmd=./bench/${OLD}/chrusty name=${OLD} option.Hash=32 \
   -openings file=./bench/fastchess/UHO_Lichess_4852_v1.epd format=epd order=random \
   -each tc=20+0.2 \
   -srand $RANDOM \
-  -resign movecount=3 score=900 -draw movenumber=40 movecount=6 score=10 \
+  -resign movecount=3 score=1500 -draw movenumber=40 movecount=6 score=10 \
   -sprt elo0=0 elo1=5 alpha=0.15 beta=0.15 \
   -rounds 10000 -concurrency $CONCURRENCY \
   -pgnout notation=san nodes=true file=$LOG_FILE/pgn append=false \

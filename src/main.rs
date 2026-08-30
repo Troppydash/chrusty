@@ -12,12 +12,13 @@ mod param;
 mod pesto;
 mod rep;
 mod see;
+mod sort;
 mod spsa;
 mod stack;
+mod tb;
 mod timer;
 mod tt;
 mod uci;
-mod sort;
 
 fn main() {
     cuckoo::init();

@@ -1,6 +1,7 @@
 use crate::ext::ExtMove;
 use crate::nnue::NNUE;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
+use crate::tb::TableBase;
 use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
 use crate::{Engine, sort, spsa};
@@ -103,6 +104,15 @@ impl AsyncEngine {
         self.parameter.uci_apply(name, value);
         self.engine.lock().unwrap().set_settings(&self.parameter);
     }
+
+    fn set_tb(&mut self, path: &str) {
+        // force drop tb
+        self.engine.lock().unwrap().set_tb(None);
+        self.engine
+            .lock()
+            .unwrap()
+            .set_tb(Some(TableBase::new(path)));
+    }
 }
 
 impl Drop for AsyncEngine {
@@ -137,6 +147,7 @@ pub fn start(args: Vec<String>) {
                     "option name Hash type spin default {} min 8 max 16000",
                     DEFAULT_TT_SIZE
                 );
+                println!("option name SyzygyPath type string default <empty>");
 
                 println!("{}", spsa::Parameters::uci_text());
                 println!("uciok");
@@ -275,6 +286,10 @@ pub fn start(args: Vec<String>) {
                         async_engine.wait();
                         let size = parts[4].parse::<usize>().unwrap();
                         async_engine.resize_table(size);
+                    }
+                    "SyzygyPath" => {
+                        async_engine.wait();
+                        async_engine.set_tb(parts[4]);
                     }
                     _ => {
                         if parts[2].starts_with("p_") {
