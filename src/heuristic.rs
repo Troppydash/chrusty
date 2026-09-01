@@ -41,7 +41,7 @@ pub type ContHist = (usize, usize, usize);
 
 pub struct Heuristic {
     // lmr[move_count][depth]
-    lmr: Box<[[i8; LMR_DEPTH]; LMR_MOVE_COUNT]>,
+    lmr: Box<[[i32; LMR_DEPTH]; LMR_MOVE_COUNT]>,
     // history heuristic [side][from][to]
     main_history: Box<[[[MainHistory; 64]; 64]; 2]>,
     // capture history [colored_piece][to][captured_piece]
@@ -74,10 +74,11 @@ impl Heuristic {
         for move_count in 0..LMR_MOVE_COUNT {
             for depth in 0..LMR_DEPTH {
                 if move_count <= 1 || depth <= 1 {
-                    lmr[move_count][depth] = 1;
+                    lmr[move_count][depth] = 0;
                 } else {
-                    lmr[move_count][depth] =
-                        (0.99 + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14) as i8;
+                    lmr[move_count][depth] = ((0.99
+                        + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14)
+                        * 1024.) as i32;
                 }
             }
         }
@@ -210,7 +211,7 @@ impl Heuristic {
         };
     }
 
-    pub fn get_lmr(&self, move_count: usize, depth: i8) -> i8 {
+    pub fn get_lmr(&self, move_count: usize, depth: i8) -> i32 {
         debug_assert!(depth >= 0);
         self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]
     }

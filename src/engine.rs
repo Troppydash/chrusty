@@ -20,7 +20,7 @@ use crate::{
     stack::{KeyStack, PawnKey, PvList, SearchStack},
     tb::TableBase,
     timer::Timer,
-    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_can_use},
+    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_50mr_key, get_can_use},
 };
 
 #[derive(Clone, Debug)]
@@ -181,6 +181,7 @@ impl Engine {
         }
 
         let key = pos.correct_hash();
+        let tt_key = key ^ get_50mr_key(pos.halfmove_clock() as usize);
         if pos.has_insufficient_material() {
             return VALUE_DRAW;
         }
@@ -216,8 +217,8 @@ impl Engine {
         let table = self.table.clone();
         let table = table.get();
         let tt_age = table.get_age();
-        let (reader, writer) = table.get(key);
-        let mut tt_data = reader.get(key, ply, QDEPTH, alpha, beta);
+        let (reader, writer) = table.get(tt_key);
+        let mut tt_data = reader.get(tt_key, ply, QDEPTH, alpha, beta);
 
         //- tt parsing
         tt_data.pv = if tt_data.hit && !tt_data.pv.is_null() && pos.is_legal(tt_data.pv) {
@@ -258,7 +259,7 @@ impl Engine {
                 best_score = self.static_correction(pos, unadjusted_static, ss);
 
                 writer.set(
-                    key,
+                    tt_key,
                     Move::NULL_MOVE,
                     ply,
                     UNSEARCH_DEPTH,
@@ -392,7 +393,7 @@ impl Engine {
         };
 
         writer.set(
-            key,
+            tt_key,
             best_move,
             ply,
             QDEPTH,
@@ -455,6 +456,7 @@ impl Engine {
         }
 
         let key = pos.correct_hash();
+        let tt_key = key ^ get_50mr_key(pos.halfmove_clock() as usize);
 
         //- simple draw checks
         if !is_root {
@@ -495,8 +497,8 @@ impl Engine {
         let table = self.table.clone();
         let table = table.get();
         let tt_age = table.get_age();
-        let (reader, writer) = table.get(key);
-        let mut tt_data = reader.get(key, ply, depth, alpha, beta);
+        let (reader, writer) = table.get(tt_key);
+        let mut tt_data = reader.get(tt_key, ply, depth, alpha, beta);
 
         //- tt parsing
         let excluded = self.stack[ss].excluded;
@@ -579,7 +581,7 @@ impl Engine {
             complexity = (unadjusted_static as i32 - self.stack[ss].adjusted_static as i32).abs();
 
             writer.set(
-                key,
+                tt_key,
                 Move::NULL_MOVE,
                 ply,
                 UNSEARCH_DEPTH,
@@ -613,7 +615,7 @@ impl Engine {
 
             if get_can_use(score, flag, alpha, beta) {
                 writer.set(
-                    key,
+                    tt_key,
                     Move::NULL_MOVE,
                     ply,
                     i16::min(MAX_DEPTH as i16, depth as i16 + 5) as i8,
@@ -795,7 +797,7 @@ impl Engine {
                     if score >= probcut_beta {
                         if !has_excluded {
                             writer.set(
-                                key,
+                                tt_key,
                                 next_move.inner,
                                 ply,
                                 probcut_depth,
@@ -859,17 +861,11 @@ impl Engine {
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
             //- low depth pruning
-            if !is_root && pos.has_non_pawns(pos.side_to_move()) && !is_loss(best_score) {
-                let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32 * 1024;
-                reduction += !improving as i32 * self.settings.p_lmr_improving;
-                reduction -= (next_move.get_score() * self.settings.p_lmr_history
-                    / if is_quiet {
-                        self.settings.p_lmr_quiet_div
-                    } else {
-                        self.settings.p_lmr_capture_div
-                    }) as i32;
-                reduction /= 1024;
-                let lmr_depth = (depth as i32 - reduction).clamp(1, depth as i32 + 1);
+            if !is_root
+                && !is_loss(best_score)
+                && !in_check
+            {
+                let lmr_depth = depth as i32;
 
                 //- see pruning
                 let see_margin = if is_quiet {
@@ -896,9 +892,7 @@ impl Engine {
 
                 //- futility pruning
                 if is_quiet
-                    && quiets.len() > 1
-                    && lmr_depth < 14
-                    && !in_check
+                    && lmr_depth < 12
                     && (tt_static as i32
                         + self.settings.p_lowdepth_fut_quiet_base
                         + self.settings.p_lowdepth_fut_quiet_depth * lmr_depth)
@@ -910,8 +904,7 @@ impl Engine {
 
                 //- capture futility pruning
                 if !is_quiet
-                    && lmr_depth < 14
-                    && !in_check
+                    && lmr_depth < 12
                     && (tt_static as i32
                         + self.settings.p_lowdepth_fut_capture_base
                         + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
@@ -991,7 +984,7 @@ impl Engine {
 
             //- late move reduction
             if depth >= 2 && move_count > 1 + 2 * is_root as usize {
-                let mut reduction = self.heuristic.get_lmr(move_count, depth) as i32 * 1024;
+                let mut reduction = self.heuristic.get_lmr(move_count, depth);
 
                 // check extension
                 if self.stack[ss].conseq_checks < 4 && new_pos.in_check() {
@@ -1047,8 +1040,11 @@ impl Engine {
 
                 if score > alpha && reduced_depth < new_depth {
                     //- re-search adjustments
-                    if (score as i32) > (best_score as i32 + 50 + new_depth as i32 * 2) {
+                    if (score as i32) > (best_score as i32 + 50) {
                         new_depth += 1;
+                    }
+                      if (score as i32) < (best_score as i32 + 5) {
+                        new_depth -= 1;
                     }
 
                     if reduced_depth < new_depth {
@@ -1182,7 +1178,7 @@ impl Engine {
         if !has_excluded {
             //- tt update
             writer.set(
-                key,
+                tt_key,
                 best_move,
                 ply,
                 depth,

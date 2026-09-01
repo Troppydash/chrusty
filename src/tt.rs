@@ -1,5 +1,7 @@
 use std::{
-    alloc::{Layout, alloc_zeroed, dealloc}, arch::x86_64::{_MM_HINT_ET0, _MM_HINT_T0, _MM_HINT_T1, _mm_prefetch}, ptr::{NonNull, null_mut},
+    alloc::{Layout, alloc_zeroed, dealloc},
+    arch::x86_64::{_MM_HINT_ET0, _MM_HINT_T0, _MM_HINT_T1, _mm_prefetch},
+    ptr::{NonNull, null_mut},
 };
 
 use cozy_chess::Move;
@@ -350,3 +352,38 @@ impl TablePtr {
 }
 unsafe impl Send for TablePtr {}
 unsafe impl Sync for TablePtr {}
+
+const fn lcg_next(state: u64) -> (u64, u64) {
+    // Multiplier and increment from Knuth's MMIX
+    let next_state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    (next_state, next_state)
+}
+
+pub const fn get_50mr_key(half_move_clock: usize) -> u64 {
+    const BASE: usize = 101;
+    const STEP: usize = 16;
+    const KEYS: [u64; 101] = {
+        let mut state = 1337;
+
+        let mut keys = [0; 101];
+        let mut base = BASE;
+        while base < 101 {
+            let mut i = 0;
+            let (value, new_state) = lcg_next(state);
+            state = new_state;
+            while i < STEP {
+                if base + i < 101 {
+                    keys[base + i] = value;
+                }
+                i += 1;
+            }
+            base += STEP;
+        }
+
+        keys
+    };
+
+    KEYS[half_move_clock]
+}
