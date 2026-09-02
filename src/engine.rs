@@ -310,11 +310,10 @@ impl Engine {
             move_count += 1;
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
-            if !is_loss(best_score) {
+            if !is_loss(best_score) && !in_check {
                 //- delta pruning
                 // TODO: optimize
                 if !pos.is_quiet(next_move.inner)
-                    && !in_check
                     && futility_base as i32
                         + pesto_value(
                             pos,
@@ -861,10 +860,7 @@ impl Engine {
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
             //- low depth pruning
-            if !is_root
-                && !is_loss(best_score)
-                && !in_check
-            {
+            if !is_root && !is_loss(best_score) && !in_check {
                 let lmr_depth = depth as i32;
 
                 //- see pruning
@@ -1043,7 +1039,7 @@ impl Engine {
                     if (score as i32) > (best_score as i32 + 50) {
                         new_depth += 1;
                     }
-                      if (score as i32) < (best_score as i32 + 5) {
+                    if (score as i32) < (best_score as i32 + 5) {
                         new_depth -= 1;
                     }
 

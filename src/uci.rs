@@ -148,6 +148,7 @@ pub fn start(args: Vec<String>) {
                     DEFAULT_TT_SIZE
                 );
                 println!("option name SyzygyPath type string default <empty>");
+                println!("option name ClearHash type button");
 
                 println!("{}", spsa::Parameters::uci_text());
                 println!("uciok");
@@ -290,6 +291,10 @@ pub fn start(args: Vec<String>) {
                     "SyzygyPath" => {
                         async_engine.wait();
                         async_engine.set_tb(parts[4]);
+                    }
+                    "ClearHash" => {
+                        async_engine.wait();
+                        async_engine.newgame();
                     }
                     _ => {
                         if parts[2].starts_with("p_") {
