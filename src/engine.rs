@@ -1144,9 +1144,11 @@ impl Engine {
                 best_score = VALUE_DRAW;
             }
         } else if best_score >= beta {
+            let history_depth =
+                depth + (best_score as i32 > beta as i32 + 200) as i8;
             self.heuristic.update_history(
                 pos,
-                depth,
+                history_depth,
                 1,
                 ply,
                 best_move,
