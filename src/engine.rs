@@ -58,6 +58,7 @@ pub struct Engine {
     nodes: i64,
     prev_score: Option<i16>,
     tb_hits: i64,
+    startpos: Board,
     // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
@@ -79,6 +80,7 @@ impl Engine {
             nodes: 0,
             prev_score: None,
             tb_hits: 0,
+            startpos: Board::startpos(),
             root_moves: vec![].into_boxed_slice(),
             timer,
             rep: RepTable::new(),
@@ -153,6 +155,14 @@ impl Engine {
         return score as i16;
     }
 
+    fn contempt(&self, pos: &Board) -> i16 {
+        if self.startpos.side_to_move() == pos.side_to_move() {
+            -CONTEMPT
+        } else {
+            CONTEMPT
+        }
+    }
+
     fn qsearch(
         &mut self,
         pos: &Board,
@@ -195,7 +205,7 @@ impl Engine {
         }
 
         if is_rep(pos, ply as usize, &self.key_stack) {
-            return VALUE_DRAW;
+            return self.contempt(pos);
         }
 
         // mate score pruning
@@ -205,8 +215,8 @@ impl Engine {
             return alpha;
         }
 
-        if alpha < 0 && cuckoo::is_upcoming_rep(pos, &self.key_stack, ply) {
-            alpha = 0;
+        if alpha < self.contempt(pos) && cuckoo::is_upcoming_rep(pos, &self.key_stack, ply) {
+            alpha = self.contempt(pos);
             if alpha >= beta {
                 return alpha;
             }
@@ -459,7 +469,7 @@ impl Engine {
             }
 
             if is_rep(pos, ply as usize, &self.key_stack) {
-                return VALUE_DRAW;
+                return self.contempt(pos);
             }
 
             //- mate score pruning
@@ -470,8 +480,8 @@ impl Engine {
             }
 
             //- cuckoo
-            if alpha < 0 && cuckoo::is_upcoming_rep(pos, &self.key_stack, ply) {
-                alpha = 0;
+            if alpha < self.contempt(pos) && cuckoo::is_upcoming_rep(pos, &self.key_stack, ply) {
+                alpha = self.contempt(pos);
                 if alpha >= beta {
                     return alpha;
                 }
@@ -814,9 +824,9 @@ impl Engine {
                 }
 
                 // fut prune
-                // if move_count >= 5
+                // if move_count >= 4
                 //     && !is_decisive(alpha)
-                //     && (best_score as i32) < (alpha as i32 - 300 - 300 * depth as i32)
+                //     && (best_score as i32) < (alpha as i32 - 200 - 200 * depth as i32)
                 // {
                 //     return best_score;
                 // }
@@ -1297,6 +1307,7 @@ impl Engine {
             pos.play_unchecked(*m);
         }
 
+        self.startpos = pos.clone();
         self.nnue.init(&pos);
         self.pawn_key.init(&pos);
 

@@ -496,6 +496,7 @@ impl Movepick {
         let prev_move = unsafe { (*self.stack.add(self.ss - 1)).m };
         let prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
+        // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -517,15 +518,14 @@ impl Movepick {
 
             let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
 
-            // if self.moves.get(i).inner == counter {
-            //     score += 10000;
-            // }
-
             if m == killers[0] {
                 score += 20000;
             } else if m == killers[1] {
                 score += 15000;
             }
+            //  else if self.moves.get(i).inner == counter {
+            //     score += 10000;
+            // }
 
             if self.ply < LOW_PLY as i8 {
                 score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32

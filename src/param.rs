@@ -58,6 +58,7 @@ pub const ASP_WINDOW: i32 = 10;
 pub const ASP_WINDOW_SCORE_SCALE: i32 = 13000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 4;
 pub const ASP_WINDOW_SCALE: i32 = 3;
+pub const CONTEMPT: i16 = 20;
 
 #[inline]
 pub fn pesto_value(pos: &Board, colored_piece: ColoredPiece, sq: Square) -> i32 {
