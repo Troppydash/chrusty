@@ -312,29 +312,17 @@ impl Engine {
 
             if !is_loss(best_score) && !in_check {
                 //- delta pruning
+                let capture_value = pesto_value(
+                    pos,
+                    ColoredPiece::new(!pos.side_to_move(), pos.get_captured(next_move.inner)),
+                    next_move.inner.to,
+                );
                 if !pos.is_quiet(next_move.inner)
-                    && futility_base as i32
-                        + pesto_value(
-                            pos,
-                            ColoredPiece::new(
-                                !pos.side_to_move(),
-                                pos.get_captured(next_move.inner),
-                            ),
-                            next_move.inner.to,
-                        )
-                        <= alpha as i32
+                    && futility_base as i32 + capture_value <= alpha as i32
                     && !see::see_ge(pos, next_move.inner, 0)
                 {
-                    let futility_best_score = (futility_base as i32
-                        + pesto_value(
-                            pos,
-                            ColoredPiece::new(
-                                !pos.side_to_move(),
-                                pos.get_captured(next_move.inner),
-                            ),
-                            next_move.inner.to,
-                        ))
-                    .min(VALUE_EVAL as i32) as i16;
+                    let futility_best_score =
+                        (futility_base as i32 + capture_value).min(VALUE_EVAL as i32) as i16;
                     best_score = best_score.max(futility_best_score);
                     continue;
                 }
@@ -706,7 +694,17 @@ impl Engine {
                 }
 
                 if score >= beta && !is_win(score) {
-                    return score;
+                    if depth < 12 {
+                        self.stack[ss].verify_null = true;
+                        let verified =
+                            self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, true);
+                        self.stack[ss].verify_null = false;
+                        if verified >= beta {
+                            return verified;
+                        }
+                    } else {
+                        return score;
+                    }
                 }
             }
 
