@@ -312,7 +312,6 @@ impl Engine {
 
             if !is_loss(best_score) && !in_check {
                 //- delta pruning
-                // TODO: optimize
                 if !pos.is_quiet(next_move.inner)
                     && futility_base as i32
                         + pesto_value(
@@ -859,6 +858,12 @@ impl Engine {
             let old_nodes = self.nodes;
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
+            let history = if is_quiet {
+                movepick.score_quiet(next_move.inner)
+            } else {
+                movepick.score_capture(next_move.inner)
+            };
+
             //- low depth pruning
             if !is_root && !is_loss(best_score) && !in_check {
                 let lmr_depth = depth as i32;
@@ -1011,7 +1016,7 @@ impl Engine {
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
 
                 // history adjustment
-                let scaled_history_score = next_move.get_score() * self.settings.p_lmr_history
+                let scaled_history_score = history * self.settings.p_lmr_history
                     / if is_quiet {
                         self.settings.p_lmr_quiet_div
                     } else {
@@ -1144,8 +1149,7 @@ impl Engine {
                 best_score = VALUE_DRAW;
             }
         } else if best_score >= beta {
-            let history_depth =
-                depth + (best_score as i32 > beta as i32 + 200) as i8;
+            let history_depth = depth + (best_score as i32 > beta as i32 + 200) as i8;
             self.heuristic.update_history(
                 pos,
                 history_depth,

@@ -391,6 +391,50 @@ impl Movepick {
             });
     }
 
+    pub fn score_capture(&self, m: Move) -> i32 {
+        let heuristic = self.get_heuristic();
+        let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
+
+        let captured = self.pos.get_captured(m);
+        score += MVV_MULTIPLIER
+            * pesto_value(
+                &self.pos,
+                ColoredPiece::new(!self.pos.side_to_move(), captured),
+                m.to,
+            );
+
+        score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
+        score
+    }
+
+    pub fn score_quiet(&self, m: Move) -> i32 {
+        let heuristic = self.get_heuristic();
+        let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
+        let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
+        if self.ply < LOW_PLY as i8 {
+            score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
+                / (1 + self.ply as i32);
+        }
+
+        score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
+
+        score += (1024
+            * heuristic
+                .get_cont_hist(get_cont_hist_prev(1), &self.pos, m)
+                .get() as i32
+            + 900
+                * heuristic
+                    .get_cont_hist(get_cont_hist_prev(2), &self.pos, m)
+                    .get() as i32
+            + 700
+                * heuristic
+                    .get_cont_hist(get_cont_hist_prev(4), &self.pos, m)
+                    .get() as i32)
+            / 2048;
+
+        score
+    }
+
     fn score_captures(&mut self) {
         let mut i = 0;
         while i < self.moves.len() {
@@ -452,7 +496,6 @@ impl Movepick {
         let prev_move = unsafe { (*self.stack.add(self.ss - 1)).m };
         let prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
-        let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -657,7 +700,7 @@ impl Movepick {
                         return next_move;
                     }
 
-                    if self.depth <= -3 {
+                    if self.depth <= -10 {
                         return ScoredMove::NULL_MOVE;
                     }
                     self.stage = Stage::QQuietCheckInit;
@@ -669,7 +712,9 @@ impl Movepick {
                 }
 
                 Stage::QQuietCheck => {
-                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
+                        moves[i].score > BAD_QUIET_SCORE
+                    });
                     if !next_move.is_null() {
                         return next_move;
                     }
