@@ -210,9 +210,9 @@ impl Bucket {
         let mut best_slot = 0;
         for i in 1..NUM_ENTRIES {
             let best_slot_score = self.values[best_slot].depth
-                - ((MAX_AGE + age - self.values[best_slot].get_age()) % MAX_AGE) as i8;
-            let slot_score =
-                self.values[i].depth - ((MAX_AGE + age - self.values[i].get_age()) % MAX_AGE) as i8;
+                - 2 * ((MAX_AGE + age - self.values[best_slot].get_age()) % MAX_AGE) as i8;
+            let slot_score = self.values[i].depth
+                - 2 * ((MAX_AGE + age - self.values[i].get_age()) % MAX_AGE) as i8;
             if slot_score < best_slot_score {
                 best_slot = i;
             }

@@ -421,4 +421,5 @@ mod tests {
         let eval = net.evaluate(&board);
         assert_eq!(eval, 31);
     }
+
 }
