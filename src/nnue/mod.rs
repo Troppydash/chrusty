@@ -122,13 +122,13 @@ impl NNUE {
             for b in (0..HL).step_by(64) {
                 let v = *(self.ft.as_ptr().add(b) as *const __m512i);
 
-                // skip if all 64 u8 are zero
-                if _mm512_test_epi64_mask(v, v) == 0 {
+                // 1 if non zero
+                let mask = _mm512_test_epi32_mask(v, v);
+                if mask == 0 {
                     base = _mm_add_epi16(base, _mm_set1_epi16(16));
                     continue;
                 }
 
-                let mask = _mm512_cmpgt_epu32_mask(v, _mm512_setzero_si512());
                 for lookup in (0..16).step_by(8) {
                     debug_assert!(n + 16 <= HL / 4);
                     let slice = ((mask >> lookup) & 0xff) as u8;
@@ -161,16 +161,17 @@ impl NNUE {
                 *(l1_sum.as_mut_ptr().add(q) as *mut __m512i) = l1_sum_acc[q / STEP];
             }
 
-            let mut l1 = Aligned::<f32, L1>::uninit();
+            let mut l1 = Aligned::<f32, { L1 * 2 }>::uninit();
             for i in 0..L1 {
-                let s = (l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i])
-                    .clamp(ZEROF, ONEF);
-                l1[i] = s;
+                let s = l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i];
+                let c = s.clamp(ZEROF, ONEF);
+                l1[i] = c;
+                l1[i + L1] = c * c;
             }
 
             //- l1 -> l2
             let mut l2_sum = Aligned::<f32, L2>::zeroed();
-            for i in 0..L1 {
+            for i in 0..(L1 * 2) {
                 for j in 0..L2 {
                     l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
                 }
@@ -182,19 +183,12 @@ impl NNUE {
                 l2[i] = s;
             }
 
-            // TODO: this might be slow
-
             //- l2 -> output
-
-            // let mut output = self.network.output_bias[bucket];
-            // for i in 0..L2 {
-            //     output += l2[i] * self.network.output_weights[bucket][i];
-            // }
             let mut out = _mm512_setzero_ps();
             let out_weights = self.network.output_weights[bucket].as_ptr();
             for i in (0..L2).step_by(16) {
-                let l2_vec = _mm512_load_ps(l2.as_ptr().add(i));
-                let w_vec = _mm512_load_ps(out_weights.add(i));
+                let l2_vec = *(l2.as_ptr().add(i) as *const __m512);
+                let w_vec = *(out_weights.add(i) as *const __m512);
                 out = _mm512_fmadd_ps(l2_vec, w_vec, out);
             }
             let output = _mm512_reduce_add_ps(out) + self.network.output_bias[bucket];

@@ -17,7 +17,7 @@ use std::mem;
 use std::ptr;
 
 pub const HL: usize = 768;
-pub const L1: usize = 32;
+pub const L1: usize = 16;
 pub const L2: usize = 32;
 pub const OUTPUTS: usize = 8;
 pub const QA: i32 = 255;
@@ -66,6 +66,17 @@ pub const KINGS: usize = {
     }
     m + 1
 };
+
+const OUTPUT_BUCKETS: [usize; 33] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, //
+    1, 1, 1, 1, //
+    2, 2, 2, 2, //
+    3, 3, 3, //
+    4, 4, 4, //
+    5, 5, 5, //
+    6, 6, 6, //
+    7, 7, 7, 7, //
+];
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -301,7 +312,7 @@ pub struct RawNetwork {
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
-    l2_weights: [[[f32; L1]; L2]; OUTPUTS],
+    l2_weights: [[[f32; L1 * 2]; L2]; OUTPUTS],
     l2_bias: [[f32; L2]; OUTPUTS],
 
     // transposed
@@ -392,7 +403,7 @@ pub struct Network {
     pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
-    pub l2_weights: [[Aligned<f32, L2>; L1]; OUTPUTS],
+    pub l2_weights: [[Aligned<f32, L2>; L1 * 2]; OUTPUTS],
     pub l2_bias: [Aligned<f32, L2>; OUTPUTS],
 
     pub output_weights: [Aligned<f32, L2>; OUTPUTS],
@@ -440,7 +451,7 @@ impl Network {
         // also transpose weights
         for i in 0..OUTPUTS {
             for j in 0..L2 {
-                for k in 0..L1 {
+                for k in 0..(L1 * 2) {
                     net.l2_weights[i][k][j] = raw.l2_weights[i][j][k];
                 }
             }
@@ -498,7 +509,7 @@ impl Network {
     }
 
     pub fn get_output_bucket(board: &Board) -> usize {
-        ((board.occupied().len() - 2) / 4) as usize
+        OUTPUT_BUCKETS[board.occupied().len() as usize]
     }
 
     pub fn feature_lookup(

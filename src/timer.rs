@@ -71,7 +71,7 @@ impl Timer {
             0.21 * time as f64 / time_left as f64,
         );
         let opt_time = i128::max(10, (opt_scale * time_left as f64) as i128);
-        let max_time = i128::min(opt_time * 6, time * 80 / 100 - overhead).max(10);
+        let max_time = i128::min(opt_time * 4, time * 80 / 100 - overhead).max(10);
         (opt_time, max_time)
     }
 }

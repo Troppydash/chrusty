@@ -16,6 +16,8 @@ use crate::nnue::{
     network::{HL, Permute},
 };
 
+// TODO: improve this asw
+
 fn filter(entry: &TrainingDataEntry) -> bool {
     entry.ply >= 14 && !entry.pos.is_checked(entry.pos.side_to_move()) && entry.score.abs() < 10000
 }
