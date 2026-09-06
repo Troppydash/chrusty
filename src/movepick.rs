@@ -545,6 +545,10 @@ impl Movepick {
                 + 700
                     * heuristic
                         .get_cont_hist(get_cont_hist_prev(4), &self.pos, m)
+                        .get() as i32
+                + 400
+                    * heuristic
+                        .get_cont_hist(get_cont_hist_prev(6), &self.pos, m)
                         .get() as i32)
                 / 2048;
 

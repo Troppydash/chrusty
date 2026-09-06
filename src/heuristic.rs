@@ -375,10 +375,10 @@ impl Heuristic {
             self.get_cont_hist_mut(stack[ss - 4].cont_hist, pos, m)
                 .add(bonus / 2);
         }
-        // if !stack[ss - 6].m.is_null() {
-        //     self.get_cont_hist_mut(stack[ss - 6].cont_hist, pos, m)
-        //         .add(bonus / 2);
-        // }
+        if !stack[ss - 6].m.is_null() {
+            self.get_cont_hist_mut(stack[ss - 6].cont_hist, pos, m)
+                .add(bonus / 4);
+        }
     }
 
     pub fn update_history(
