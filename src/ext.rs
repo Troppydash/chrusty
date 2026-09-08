@@ -211,7 +211,7 @@ impl ExtBoard for Board {
         match self.piece_on(m.to) {
             Some(piece) => piece,
             None => {
-                debug_assert!(m.promotion == Some(Queen) || self.is_ep(m));
+                debug_assert!(m.promotion == Some(Queen) || self.is_ep(m), "{:?}", m);
                 Piece::Pawn
             }
         }

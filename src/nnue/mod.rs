@@ -1,11 +1,14 @@
 use std::{arch::x86_64::*, mem::MaybeUninit};
 
-use cozy_chess::{Board, Move};
+use cozy_chess::{Board, Move, Square};
 
-use crate::nnue::{
-    halfka::HalfKA,
-    network::{Aligned, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
-    threats::Threats,
+use crate::{
+    nnue::{
+        halfka::HalfKA,
+        network::{Aligned, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
+        threats::Threats,
+    },
+    param::{MAX_DEPTH, MAX_DEPTH_USIZE},
 };
 
 mod halfka;
@@ -14,16 +17,46 @@ mod threats;
 mod ti;
 mod update;
 
+#[derive(Clone)]
+struct Stack {
+    valid: bool,
+    ft: Aligned<u8, HL>,
+    idx_n: usize,
+    idx: Aligned<u16, { HL / 4 }>,
+    cm_from: Aligned<f32, { network::CM }>,
+    cm_to: Aligned<f32, { network::CM }>,
+}
+
+impl Stack {
+    pub fn new() -> Self {
+        Self {
+            valid: false,
+            ft: Aligned::<u8, HL>::zeroed(),
+            idx_n: 0,
+            idx: Aligned::zeroed(),
+            cm_from: Aligned::zeroed(),
+            cm_to: Aligned::zeroed(),
+        }
+    }
+}
+
 pub struct NNUE {
     network: Box<Network>,
     halfka: HalfKA,
     threats: Threats,
     nnz_table: [[u16; 8]; 256],
     // this is just a temp cache
-    ft: Aligned<u8, HL>,
+    head: usize,
+    stack: Box<[Stack]>,
 }
 
 impl NNUE {
+    const DIVISOR: f32 = (1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32) as f32;
+
+    pub fn head(&self) -> (usize, usize, usize) {
+        (self.head, self.halfka.head, self.threats.head)
+    }
+
     pub fn build(permute: &Permute) -> Self {
         let mut raw = RawNetwork::load();
         raw.permute(permute);
@@ -46,7 +79,8 @@ impl NNUE {
             halfka: HalfKA::new(),
             threats: Threats::new(),
             nnz_table,
-            ft: Aligned::<u8, HL>::zeroed(),
+            head: 0,
+            stack: vec![Stack::new(); MAX_DEPTH_USIZE].into_boxed_slice(),
         };
         net.clear();
         net
@@ -59,6 +93,8 @@ impl NNUE {
     pub fn init(&mut self, board: &Board) {
         self.halfka.init(board, &self.network);
         self.threats.init(board, &self.network);
+        self.head = 0;
+        self.stack[self.head].valid = false;
     }
 
     pub fn clear(&mut self) {
@@ -66,13 +102,26 @@ impl NNUE {
     }
 
     pub fn catchup(&mut self, board: &Board) {
-        self.halfka.catchup(board, &self.network);
-        self.threats.catchup(board, &self.network);
+        self.halfka.catchup(self.halfka.head, board, &self.network);
+        self.threats
+            .catchup(self.threats.head, board, &self.network);
+    }
+
+    pub fn catchup_at(&mut self, head: (usize, usize, usize), board: &Board) {
+        self.halfka.catchup(head.1, board, &self.network);
+        self.threats.catchup(head.2, board, &self.network);
     }
 
     pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) {
         self.halfka.make_move(board, m);
         self.threats.make_move(board, new_board, m);
+        self.head += 1;
+        self.stack[self.head].valid = false;
+    }
+
+    pub fn make_null_move(&mut self) {
+        self.head += 1;
+        self.stack[self.head].valid = false;
     }
 
     pub fn make_move_slow(&mut self, board: &Board, m: Move) {
@@ -84,71 +133,135 @@ impl NNUE {
     pub fn unmake_move(&mut self) {
         self.halfka.unmake_move();
         self.threats.unmake_move();
+        self.head -= 1;
+    }
+
+    pub fn unmake_null_move(&mut self) {
+        self.head -= 1;
     }
 
     pub fn evaluate(&mut self, board: &Board) -> i32 {
         self.catchup(board);
-        unsafe { self.avx512_evaluate(board) }
+        unsafe { self.evaluate_value(self.head(), board) }
     }
 
-    #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
-    unsafe fn avx512_evaluate(&mut self, board: &Board) -> i32 {
-        let bucket = Network::get_output_bucket(board);
+    unsafe fn evaluate_head(&mut self, head: (usize, usize, usize), board: &Board) {
         let stm = board.side_to_move() as usize;
+        self.stack[head.0].valid = true;
 
         unsafe {
-            const DIVISOR: f32 = (1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32) as f32;
             const ZERO: i16 = 0i16;
             const ONE: i16 = QA as i16;
-            const ZEROF: f32 = 0.0f32;
-            const ONEF: f32 = 1.0f32;
+            let ft = &mut self.stack[head.0].ft;
+            let idx_n = &mut self.stack[head.0].idx_n;
+            let idx = &mut self.stack[head.0].idx;
 
             //- ft cleanup
             for side in 0..=1 {
-                let acc = &self.halfka.side[self.halfka.head].vals[stm ^ side];
-                let acc_threats = &self.threats.side[self.threats.head].vals[stm ^ side];
+                let acc = &self.halfka.side[head.1].vals[stm ^ side];
+                let acc_threats = &self.threats.side[head.2].vals[stm ^ side];
 
                 for i in 0..HL / 2 {
                     let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
                     let x1 = (acc[i + HL / 2] + acc_threats[i + HL / 2]).clamp(ZERO, ONE);
-                    self.ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                    ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
                 }
             }
 
-            let mut idx = Aligned::<u16, { HL / 4 }>::uninit();
             let mut base = _mm_setzero_si128();
             let lookup_inc = _mm_set1_epi16(8);
-            let mut n = 0;
+            *idx_n = 0;
             for b in (0..HL).step_by(64) {
-                let v = *(self.ft.as_ptr().add(b) as *const __m512i);
+                let v = *(ft.as_ptr().add(b) as *const __m512i);
 
                 // 1 if non zero
                 let mask = _mm512_test_epi32_mask(v, v);
-                if mask == 0 {
-                    base = _mm_add_epi16(base, _mm_set1_epi16(16));
-                    continue;
-                }
-
                 for lookup in (0..16).step_by(8) {
-                    debug_assert!(n + 16 <= HL / 4);
+                    debug_assert!(*idx_n + 16 <= HL / 4);
                     let slice = ((mask >> lookup) & 0xff) as u8;
                     let indices =
                         _mm_loadu_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
                     _mm_storeu_si128(
-                        idx.as_mut_ptr().add(n) as *mut __m128i,
+                        idx.as_mut_ptr().add(*idx_n) as *mut __m128i,
                         _mm_add_epi16(base, indices),
                     );
-                    n += slice.count_ones() as usize;
+                    *idx_n += slice.count_ones() as usize;
                     base = _mm_add_epi16(base, lookup_inc);
                 }
             }
+        }
+    }
+
+    pub fn evaluate_policy(&mut self, head: (usize, usize, usize), board: &Board) {
+        if !self.stack[head.0].valid {
+            self.catchup_at(head, board);
+
+            unsafe {
+                self.evaluate_head(head, board);
+            }
+        }
+        let bucket = Network::get_output_bucket(board);
+
+        unsafe {
+            let ft = &self.stack[head.0].ft;
+            let idx_n = &self.stack[head.0].idx_n;
+            let idx = &self.stack[head.0].idx;
+
+            const STEP: usize = 16;
+            let mut from_acc = [_mm512_setzero_epi32(); CM / STEP];
+            let mut to_acc = [_mm512_setzero_epi32(); CM / STEP];
+            let from_weights = &self.network.cm_from_weights[bucket];
+            let to_weights = &self.network.cm_to_weights[bucket];
+            for t in 0..*idx_n {
+                let c = idx[t] as usize;
+                let f = _mm512_set1_epi32(*(ft.as_ptr() as *const i32).add(c));
+
+                let w_from = from_weights[c].as_ptr() as *const __m512i;
+                let w_to = to_weights[c].as_ptr() as *const __m512i;
+                for q in (0..CM).step_by(STEP) {
+                    from_acc[q / STEP] =
+                        _mm512_dpbusd_epi32(from_acc[q / STEP], f, *(w_from.add(q / STEP)));
+                    to_acc[q / STEP] =
+                        _mm512_dpbusd_epi32(to_acc[q / STEP], f, *(w_to.add(q / STEP)));
+                }
+            }
+
+            let mut from_sum = Aligned::<i32, { CM }>::uninit();
+            let mut to_sum = Aligned::<i32, { CM }>::uninit();
+            for q in (0..CM).step_by(STEP) {
+                *(from_sum.as_mut_ptr().add(q) as *mut __m512i) = from_acc[q / STEP];
+                *(to_sum.as_mut_ptr().add(q) as *mut __m512i) = to_acc[q / STEP];
+            }
+
+            for i in 0..CM {
+                self.stack[head.0].cm_from[i] =
+                    from_sum[i] as f32 * Self::DIVISOR + self.network.cm_from_bias[bucket][i];
+                self.stack[head.0].cm_to[i] =
+                    to_sum[i] as f32 * Self::DIVISOR + self.network.cm_to_bias[bucket][i];
+            }
+        }
+    }
+
+    #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
+    unsafe fn evaluate_value(&mut self, head: (usize, usize, usize), board: &Board) -> i32 {
+        let bucket = Network::get_output_bucket(board);
+
+        unsafe {
+            const ZEROF: f32 = 0.0f32;
+            const ONEF: f32 = 1.0f32;
+
+            self.evaluate_head(head, board);
+
+            let ft = &self.stack[head.0].ft;
+            let idx_n = &self.stack[head.0].idx_n;
+            let idx = &self.stack[head.0].idx;
 
             const STEP: usize = 16;
             let mut l1_sum_acc = [_mm512_setzero_epi32(); L1 / STEP];
             let l1_weights = &self.network.l1_weights[bucket];
-            for t in 0..n {
+            for t in 0..*idx_n {
                 let c = idx[t] as usize;
-                let f = _mm512_set1_epi32(*(self.ft.as_ptr() as *const i32).add(c));
+                let f = _mm512_set1_epi32(*(ft.as_ptr() as *const i32).add(c));
                 let w = l1_weights[c].as_ptr() as *const __m512i;
                 for q in (0..L1).step_by(STEP) {
                     l1_sum_acc[q / STEP] =
@@ -163,7 +276,7 @@ impl NNUE {
 
             let mut l1 = Aligned::<f32, { L1 * 2 }>::uninit();
             for i in 0..L1 {
-                let s = l1_sum[i] as f32 * DIVISOR + self.network.l1_bias[bucket][i];
+                let s = l1_sum[i] as f32 * Self::DIVISOR + self.network.l1_bias[bucket][i];
                 let c = s.clamp(ZEROF, ONEF);
                 l1[i] = c;
                 l1[i + L1] = c * c;
@@ -196,6 +309,10 @@ impl NNUE {
         }
     }
 
+    pub fn get_cm(&self, head: usize) -> (&Aligned<f32, CM>, &Aligned<f32, CM>) {
+        (&self.stack[head].cm_from, &self.stack[head].cm_to)
+    }
+
     pub fn sort_eval(&mut self, board: &Board) {
         let stm = board.side_to_move() as usize;
         const ZERO: i16 = 0i16;
@@ -207,19 +324,22 @@ impl NNUE {
             for i in 0..HL / 2 {
                 let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
                 let x1 = (acc[i + HL / 2] + acc_threats[i + HL / 2]).clamp(ZERO, ONE);
-                self.ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                self.stack[self.head].ft[side * HL / 2 + i] =
+                    ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
             }
         }
     }
 
     pub fn sort_ft(&self) -> &Aligned<u8, HL> {
-        &self.ft
+        &self.stack[self.head].ft
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use cozy_chess::GameStatus;
+    use std::ops::Deref;
+
+    use cozy_chess::{Color, GameStatus};
 
     use crate::ext::ExtBoard;
 
@@ -422,4 +542,69 @@ mod tests {
         assert_eq!(eval, 31);
     }
 
+    fn grid_to_string(grid: &[f32], board: &Board) -> String {
+        let mut out = "".to_string();
+        for i in 0..CM {
+            let i = if board.side_to_move() == Color::White {
+                i ^ 56
+            } else {
+                i
+            };
+            if board.colors(board.side_to_move()).has(Square::ALL[i]) {
+                out += &format!("{:.2}", grid[i]);
+            } else {
+                out += "0.00";
+            }
+            out += " ";
+
+            if i % 8 == 7 {
+                out += "\n";
+            }
+        }
+
+        out
+    }
+
+
+    fn grid_to_string2(grid: &[f32], board: &Board) -> String {
+        let mut out = "".to_string();
+        for i in 0..CM {
+            let i = if board.side_to_move() == Color::White {
+                i ^ 56
+            } else {
+                i
+            };
+            if !board.occupied().has(Square::ALL[i]) {
+                out += &format!("{:.2}", grid[i]);
+            } else {
+                out += "0.00";
+            }
+            out += " ";
+
+            if i % 8 == 7 {
+                out += "\n";
+            }
+        }
+
+        out
+    }
+
+
+    #[test]
+    fn test_cm() {
+        let mut net = NNUE::new();
+        let board = Board::from_fen(
+            // "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r1b1kb1r/ppq2ppp/2n2n2/8/3Q4/4BN2/PPP2PPP/RN2KB1R w KQkq - 2 9",
+            false,
+        )
+        .unwrap();
+        net.init(&board);
+        net.evaluate_policy(net.head(), &board);
+
+        let (cm_from, cm_to) = net.get_cm(net.head);
+
+        let cm_from = grid_to_string(cm_from.deref(), &board);
+        assert!(cm_from == "", "\n{}", cm_from);
+    }
 }

@@ -126,6 +126,8 @@ impl Engine {
         if m.is_null() {
             self.stack[ss].piece = None;
             self.stack[ss].cont_corrhist = (12, 0);
+            self.nnue.make_null_move();
+
             new_pos.null_move().unwrap()
         } else {
             self.stack[ss].piece = Some(pos.color_piece_on(m.from).unwrap());
@@ -141,6 +143,8 @@ impl Engine {
     fn unmake_move(&mut self, pos: &Board, key: u64, ss: usize) {
         if !self.stack[ss].m.is_null() {
             self.nnue.unmake_move();
+        } else {
+            self.nnue.unmake_null_move();
         }
         self.key_stack.pop();
         self.pawn_key.pop();
@@ -173,6 +177,17 @@ impl Engine {
         is_pv: bool,
     ) -> i16 {
         self.nodes += 1;
+
+        if self.nodes % 4096 == 0 {
+            self.timer.write().unwrap().check();
+            if self.nodes >= self.timer.read().unwrap().max_nodes {
+                self.timer.write().unwrap().force_stop();
+            }
+        }
+
+        if self.timer.read().unwrap().stopped() {
+            return 0;
+        }
 
         // note that we don't check timer in qsearch
         let ply = self.stack[ss].ply;
@@ -322,12 +337,13 @@ impl Engine {
 
             if !is_loss(best_score) && !in_check {
                 //- delta pruning
-                let capture_value = pesto_value(
-                    pos,
-                    ColoredPiece::new(!pos.side_to_move(), pos.get_captured(next_move.inner)),
-                    next_move.inner.to,
-                );
+
                 if !pos.is_quiet(next_move.inner)
+                    && let capture_value = pesto_value(
+                        pos,
+                        ColoredPiece::new(!pos.side_to_move(), pos.get_captured(next_move.inner)),
+                        next_move.inner.to,
+                    )
                     && futility_base as i32 + capture_value <= alpha as i32
                     && !see::see_ge(pos, next_move.inner, 0)
                 {
@@ -850,6 +866,7 @@ impl Engine {
             ss,
             self.pawn_key.get(),
             &self.heuristic,
+            Some(&mut self.nnue),
         );
         loop {
             let next_move = movepick.next_move();

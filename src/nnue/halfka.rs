@@ -275,19 +275,19 @@ impl HalfKA {
         self.side[self.head].is_clean[side as usize] = true;
     }
 
-    pub fn catchup(&mut self, board: &Board, network: &Box<Network>) {
+    pub fn catchup(&mut self, head: usize, board: &Board, network: &Box<Network>) {
         for side in 0..=1 {
-            if self.side[self.head].is_clean[side] {
+            if self.side[head].is_clean[side] {
                 continue;
             }
 
-            let mut base = self.head;
+            let mut base = head;
             loop {
                 // full refresh check
                 if Network::needs_refresh(
                     Color::ALL[side],
                     self.side[base].up.king_sq[side],
-                    self.side[self.head].up.king_sq[side],
+                    self.side[head].up.king_sq[side],
                 ) {
                     self.refresh(board, Color::ALL[side], network);
                     break;
@@ -295,7 +295,7 @@ impl HalfKA {
 
                 // else check for incremental update
                 if self.side[base].is_clean[side] {
-                    for i in base + 1..=self.head {
+                    for i in base + 1..=head {
                         let (base, next) = self.side.split_at_mut(i);
 
                         network.apply_update(
@@ -307,7 +307,7 @@ impl HalfKA {
                         self.side[i].is_clean[side] = true;
                     }
 
-                    self.side[self.head].is_clean[side] = true;
+                    self.side[head].is_clean[side] = true;
                     break;
                 }
 

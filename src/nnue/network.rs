@@ -24,6 +24,7 @@ pub const QA: i32 = 255;
 pub const QB: i32 = 128;
 pub const FT_SHIFT: usize = 8;
 pub const SCALE: i32 = 400;
+pub const CM: usize = 64;
 
 const HALF_KING_BUCKET: [usize; 32] = [
     0, 1, 2, 3, //
@@ -312,6 +313,14 @@ pub struct RawNetwork {
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
+    cm_from_weights: [[[i8; HL]; CM]; OUTPUTS],
+    cm_from_bias: [[f32; CM]; OUTPUTS],
+
+    // transposed
+    cm_to_weights: [[[i8; HL]; CM]; OUTPUTS],
+    cm_to_bias: [[f32; CM]; OUTPUTS],
+
+    // transposed
     l2_weights: [[[f32; L1 * 2]; L2]; OUTPUTS],
     l2_bias: [[f32; L2]; OUTPUTS],
 
@@ -388,6 +397,14 @@ impl RawNetwork {
                     self.l1_weights[output][l1_idx][i] = old.l1_weights[output][l1_idx][j];
                 }
             }
+
+            for output in 0..OUTPUTS {
+                for l1_idx in 0..CM {
+                    self.cm_from_weights[output][l1_idx][i] =
+                        old.cm_from_weights[output][l1_idx][j];
+                    self.cm_to_weights[output][l1_idx][i] = old.cm_to_weights[output][l1_idx][j];
+                }
+            }
         }
     }
 }
@@ -399,8 +416,13 @@ pub struct Network {
     pub feature_bias: Aligned<i16, HL>,
 
     pub l1_weights: [[Aligned<i8, { 4 * L1 }>; HL / 4]; OUTPUTS],
-    // pub l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
+
+    pub cm_from_weights: [[Aligned<i8, { 4 * CM }>; HL / 4]; OUTPUTS],
+    pub cm_from_bias: [Aligned<f32, CM>; OUTPUTS],
+
+    pub cm_to_weights: [[Aligned<i8, { 4 * CM }>; HL / 4]; OUTPUTS],
+    pub cm_to_bias: [Aligned<f32, CM>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
     pub l2_weights: [[Aligned<f32, L2>; L1 * 2]; OUTPUTS],
@@ -445,6 +467,25 @@ impl Network {
         for a in 0..OUTPUTS {
             for b in 0..L1 {
                 net.l1_bias[a][b] = raw.l1_bias[a][b];
+            }
+        }
+
+        for bucket in 0..OUTPUTS {
+            for c in 0..(HL / 4) {
+                for j in 0..CM {
+                    for k in 0..4 {
+                        net.cm_from_weights[bucket][c][j * 4 + k] =
+                            raw.cm_from_weights[bucket][j][c * 4 + k];
+                        net.cm_to_weights[bucket][c][j * 4 + k] =
+                            raw.cm_to_weights[bucket][j][c * 4 + k];
+                    }
+                }
+            }
+        }
+        for a in 0..OUTPUTS {
+            for b in 0..CM {
+                net.cm_from_bias[a][b] = raw.cm_from_bias[a][b];
+                net.cm_to_bias[a][b] = raw.cm_to_bias[a][b];
             }
         }
 

@@ -1,12 +1,13 @@
 use cozy_chess::{
     BitBoard, Board,
-    Color::{Black, White},
-    Move, Piece, Rank,
+    Color::{self, Black, White},
+    Move, Piece, Rank, Square,
 };
 
 use crate::{
     ext::{ColoredPiece, ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
     heuristic::{Heuristic, LOW_PLY},
+    nnue::{NNUE, network::CM},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
     see,
     stack::SearchStack,
@@ -118,6 +119,10 @@ pub struct Movepick {
     ss: usize,
     pawn_key: u64,
 
+    // nnue cm
+    nnue: Option<*mut NNUE>,
+    nnue_head: (usize, usize, usize),
+
     // internal //
     moves: DynamicScoredMoveList,
     stage: Stage,
@@ -139,7 +144,9 @@ impl Movepick {
         ss: usize,
         pawn_key: u64,
         heuristic: &Heuristic,
+        nnue: Option<&mut NNUE>,
     ) -> Self {
+        let nnue_head = nnue.as_ref().map_or_default(|nnue| nnue.head());
         Self {
             pos,
             pv,
@@ -150,6 +157,8 @@ impl Movepick {
             stack: stack.as_ptr(),
             ss,
             pawn_key,
+            nnue: nnue.map(|nnue| nnue as *mut NNUE),
+            nnue_head,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             skip_quiets: false,
@@ -180,6 +189,8 @@ impl Movepick {
             stack: stack.as_ptr(),
             ss,
             pawn_key,
+            nnue: None,
+            nnue_head: (0, 0, 0),
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             skip_quiets: false,
@@ -209,6 +220,8 @@ impl Movepick {
             stack: stack.as_ptr(),
             ss,
             pawn_key: 0,
+            nnue: None,
+            nnue_head: (0, 0, 0),
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
             skip_quiets: false,
@@ -477,6 +490,56 @@ impl Movepick {
         }
     }
 
+    fn sigmoid(x: f32) -> f32 {
+        1.0 / (1.0 + f32::exp(-x))
+    }
+
+    fn grid_to_string(grid: &[f32], board: &Board) -> String {
+        let mut out = "".to_string();
+        for i in 0..CM {
+            let i = if board.side_to_move() == Color::White {
+                i ^ 56
+            } else {
+                i
+            };
+            if board.colors(board.side_to_move()).has(Square::ALL[i]) {
+                out += &format!("{:.2}", grid[i]);
+            } else {
+                out += "0.00";
+            }
+            out += " ";
+
+            if i % 8 == 7 {
+                out += "\n";
+            }
+        }
+
+        out
+    }
+
+    fn grid_to_string2(grid: &[f32], board: &Board) -> String {
+        let mut out = "".to_string();
+        for i in 0..CM {
+            let i = if board.side_to_move() == Color::White {
+                i ^ 56
+            } else {
+                i
+            };
+            if !board.occupied().has(Square::ALL[i]) {
+                out += &format!("{:.2}", grid[i]);
+            } else {
+                out += "0.00";
+            }
+            out += " ";
+
+            if i % 8 == 7 {
+                out += "\n";
+            }
+        }
+
+        out
+    }
+
     fn score_quiets(&mut self, skip_killers: bool) {
         let threats = Threats::build(&self.pos);
         let threatened = [
@@ -497,6 +560,35 @@ impl Movepick {
         let prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
         // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
+
+        let mut policy_from = [0.; CM];
+        let mut policy_to = [0f32; CM];
+        let mut using_policy = false;
+        if self.depth <= 6
+            && !self.pos.in_check()
+            && let Some(nnue) = self.nnue
+        {
+            using_policy = true;
+            let nnue = unsafe { &mut *nnue };
+            nnue.evaluate_policy(self.nnue_head, &self.pos);
+            let (cm_from, cm_to) = nnue.get_cm(self.nnue_head.0);
+            for sq in self.pos.colors(self.pos.side_to_move()) {
+                let cm_sq = sq.relative_to(self.pos.side_to_move());
+                policy_from[sq as usize] = cm_from[cm_sq as usize];
+            }
+
+            for sq in !self.pos.occupied() {
+                let cm_sq = sq.relative_to(self.pos.side_to_move());
+                policy_to[sq as usize] = cm_to[cm_sq as usize];
+            }
+
+            // println!(
+            //     "{}\n{}\n{}",
+            //     self.pos,
+            //     Self::grid_to_string(&cm_from, &self.pos),
+            //     Self::grid_to_string2(&cm_to, &self.pos),
+            // )
+        }
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -565,6 +657,20 @@ impl Movepick {
             // checks
             if threats.checks[piece as usize].has(m.to) {
                 score += 5000;
+            }
+
+            if using_policy {
+                let value_from = policy_from[m.from as usize];
+                let value_to = policy_to[m.to as usize];
+                // let value = value_from * value_to;
+                // let history = (1000.0 * f32::ln(value / (1.0 - value))) as i32;
+                let component = (5000.0 * (value_from  + value_to + 1.5)) as i32 / (self.depth as i32).max(1);
+                score += component;
+
+                // println!("{}", component);
+                // if value > 2000 {
+                //     println!("{} {}", self.pos, m);
+                // }
             }
 
             self.moves.get_mut(i).score = score;
@@ -813,6 +919,7 @@ mod tests {
                 9,
                 0,
                 &heuristic,
+                None,
             ),
             Movepick::new_qsearch(
                 pos.clone(),

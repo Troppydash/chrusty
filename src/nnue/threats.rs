@@ -362,24 +362,24 @@ impl Threats {
         self.side[self.head].is_clean[side as usize] = true;
     }
 
-    pub fn catchup(&mut self, board: &Board, network: &Box<Network>) {
+    pub fn catchup(&mut self, head: usize, board: &Board, network: &Box<Network>) {
         for side in Color::ALL {
-            if self.side[self.head].is_clean[side as usize] {
+            if self.side[head].is_clean[side as usize] {
                 continue;
             }
 
-            let mut base = self.head;
+            let mut base = head;
             loop {
                 if Network::needs_refresh_threat(
                     self.side[base].king_sq[side as usize],
-                    self.side[self.head].king_sq[side as usize],
+                    self.side[head].king_sq[side as usize],
                 ) {
                     self.refresh(side, board, network);
                     break;
                 }
 
                 if self.side[base].is_clean[side as usize] {
-                    for i in base + 1..=self.head {
+                    for i in base + 1..=head {
                         let (base, next) = self.side.split_at_mut(i);
                         network.threat_apply_update(
                             &mut next[0].vals[side as usize],
@@ -391,7 +391,7 @@ impl Threats {
                         next[0].is_clean[side as usize] = true;
                     }
 
-                    self.side[self.head].is_clean[side as usize] = true;
+                    self.side[head].is_clean[side as usize] = true;
                     break;
                 }
 
