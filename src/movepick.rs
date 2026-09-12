@@ -45,6 +45,12 @@ enum Stage {
     ProbcutCapture,
 }
 
+enum Pick {
+    Select,
+    Skip,
+    Break,
+}
+
 struct DynamicScoredMoveList {
     moves: ScoredMoveList,
     ptr: usize,
@@ -60,7 +66,7 @@ impl DynamicScoredMoveList {
 
     fn pick<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
     where
-        F: FnMut(&mut ScoredMoveList, usize) -> bool,
+        F: FnMut(&mut ScoredMoveList, usize) -> Pick,
     {
         debug_assert!(end <= self.moves.len());
         while self.ptr < end {
@@ -74,8 +80,38 @@ impl DynamicScoredMoveList {
 
             let ok = filter(&mut self.moves, self.ptr);
             self.ptr += 1;
-            if ok {
-                return self.moves[self.ptr - 1];
+            match ok {
+                Pick::Select => {
+                    return self.moves[self.ptr - 1];
+                }
+                Pick::Skip => {}
+                Pick::Break => {
+                    self.ptr = end;
+                    return ScoredMove::NULL_MOVE;
+                }
+            }
+        }
+
+        ScoredMove::NULL_MOVE
+    }
+
+    fn pick_no_shuffle<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
+    where
+        F: FnMut(&mut ScoredMoveList, usize) -> Pick,
+    {
+        debug_assert!(end <= self.moves.len());
+        while self.ptr < end {
+            let ok = filter(&mut self.moves, self.ptr);
+            self.ptr += 1;
+            match ok {
+                Pick::Select => {
+                    return self.moves[self.ptr - 1];
+                }
+                Pick::Skip => {}
+                Pick::Break => {
+                    self.ptr = end;
+                    return ScoredMove::NULL_MOVE;
+                }
             }
         }
 
@@ -127,11 +163,14 @@ pub struct Movepick {
     moves: DynamicScoredMoveList,
     stage: Stage,
     skip_quiets: bool,
+    use_policy: bool,
+    policy_from: [f32; CM],
+    policy_to: [f32; CM],
 
     // only used for [negamax] //
     captures_end: usize,
     bad_capture_len: usize,
-    bad_quiet_len: usize,
+    good_quiet_len: usize,
 }
 
 impl Movepick {
@@ -162,9 +201,12 @@ impl Movepick {
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             skip_quiets: false,
+            use_policy: false,
+            policy_from: [0.; CM],
+            policy_to: [0.; CM],
             captures_end: 0,
             bad_capture_len: 0,
-            bad_quiet_len: 0,
+            good_quiet_len: 0,
         }
     }
 
@@ -194,9 +236,12 @@ impl Movepick {
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             skip_quiets: false,
+            use_policy: false,
+            policy_from: [0.; CM],
+            policy_to: [0.; CM],
             captures_end: 0,
             bad_capture_len: 0,
-            bad_quiet_len: 0,
+            good_quiet_len: 0,
         }
     }
 
@@ -225,9 +270,12 @@ impl Movepick {
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
             skip_quiets: false,
+            use_policy: false,
+            policy_from: [0.; CM],
+            policy_to: [0.; CM],
             captures_end: 0,
             bad_capture_len: 0,
-            bad_quiet_len: 0,
+            good_quiet_len: 0,
         }
     }
 
@@ -442,6 +490,10 @@ impl Movepick {
             + 700
                 * heuristic
                     .get_cont_hist(get_cont_hist_prev(4), &self.pos, m)
+                    .get() as i32
+            + 400
+                * heuristic
+                    .get_cont_hist(get_cont_hist_prev(6), &self.pos, m)
                     .get() as i32)
             / 2048;
 
@@ -561,25 +613,21 @@ impl Movepick {
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
         // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
 
-        let mut policy_from = [0.; CM];
-        let mut policy_to = [0f32; CM];
-        let mut using_policy = false;
         if self.depth <= 6
             && !self.pos.in_check()
             && let Some(nnue) = self.nnue
         {
-            using_policy = true;
+            self.use_policy = true;
             let nnue = unsafe { &mut *nnue };
-            nnue.evaluate_policy(self.nnue_head, &self.pos);
-            let (cm_from, cm_to) = nnue.get_cm(self.nnue_head.0);
+            let (cm_from, cm_to) = nnue.cm(self.nnue_head, &self.pos);
             for sq in self.pos.colors(self.pos.side_to_move()) {
                 let cm_sq = sq.relative_to(self.pos.side_to_move());
-                policy_from[sq as usize] = cm_from[cm_sq as usize];
+                self.policy_from[sq as usize] = cm_from[cm_sq as usize] as f32;
             }
 
             for sq in !self.pos.occupied() {
                 let cm_sq = sq.relative_to(self.pos.side_to_move());
-                policy_to[sq as usize] = cm_to[cm_sq as usize];
+                self.policy_to[sq as usize] = cm_to[cm_sq as usize] as f32;
             }
 
             // println!(
@@ -645,32 +693,29 @@ impl Movepick {
                 / 2048;
 
             ///// Threats /////
+            let mut threats_score = 0;
             let piece = self.pos.piece_on(m.from).unwrap();
             // moving into threat
             if threatened[piece as usize].has(m.to) {
-                score -= 3000;
+                threats_score -= 3000;
             }
             // escaping from threat
             if threatened[piece as usize].has(m.from) {
-                score += escape[piece as usize];
+                threats_score += escape[piece as usize];
             }
             // checks
             if threats.checks[piece as usize].has(m.to) {
-                score += 5000;
+                threats_score += 5000;
             }
 
-            if using_policy {
-                let value_from = policy_from[m.from as usize];
-                let value_to = policy_to[m.to as usize];
-                // let value = value_from * value_to;
-                // let history = (1000.0 * f32::ln(value / (1.0 - value))) as i32;
-                let component = (5000.0 * (value_from  + value_to + 1.5)) as i32 / (self.depth as i32).max(1);
-                score += component;
+            score += threats_score;
 
-                // println!("{}", component);
-                // if value > 2000 {
-                //     println!("{} {}", self.pos, m);
-                // }
+            if self.use_policy {
+                let value_from = self.policy_from[m.from as usize];
+                let value_to = self.policy_to[m.to as usize];
+                let component =
+                    (5000.0 * (value_from + value_to + 1.5)) as i32 / (self.depth as i32).max(1);
+                score += component;
             }
 
             self.moves.get_mut(i).score = score;
@@ -706,10 +751,10 @@ impl Movepick {
                         {
                             moves.swap(i, self.bad_capture_len);
                             self.bad_capture_len += 1;
-                            return false;
+                            return Pick::Skip;
                         }
 
-                        true
+                        Pick::Select
                     });
 
                     if !next_move.is_null() {
@@ -722,11 +767,7 @@ impl Movepick {
                     if !self.skip_quiets {
                         let killers = self.get_heuristic().get_killers(self.ply).clone();
                         for m in killers {
-                            if !m.is_null()
-                                && m != self.pv
-                                && self.pos.is_legal(m)
-                                && self.pos.is_quiet(m)
-                            {
+                            if !m.is_null() && m != self.pv {
                                 self.moves.push(ScoredMove::new(m, 10000));
                             }
                         }
@@ -736,7 +777,17 @@ impl Movepick {
                 }
                 Stage::Killers => {
                     if !self.skip_quiets {
-                        let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                        let next_move = self.moves.pick_no_shuffle(self.moves.len(), |moves, i| {
+                            self.good_quiet_len += 1;
+
+                            if self.pos.is_legal(moves[i].inner)
+                                && self.pos.is_quiet(moves[i].inner)
+                            {
+                                Pick::Select
+                            } else {
+                                Pick::Skip
+                            }
+                        });
                         if !next_move.is_null() {
                             return next_move;
                         }
@@ -756,12 +807,11 @@ impl Movepick {
                     if !self.skip_quiets {
                         let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                             if moves[i].score < BAD_QUIET_SCORE {
-                                moves.swap(i, self.captures_end + self.bad_quiet_len);
-                                self.bad_quiet_len += 1;
-                                return false;
+                                return Pick::Break;
                             }
 
-                            return true;
+                            self.good_quiet_len += 1;
+                            return Pick::Select;
                         });
 
                         if !next_move.is_null() {
@@ -773,19 +823,20 @@ impl Movepick {
                     self.stage = Stage::BadCapture;
                 }
                 Stage::BadCapture => {
-                    let next_move = self.moves.pick(self.bad_capture_len, |_moves, _i| true);
+                    let next_move = self
+                        .moves
+                        .pick_no_shuffle(self.bad_capture_len, |_moves, _i| Pick::Select);
                     if !next_move.is_null() {
                         return next_move;
                     }
 
-                    self.moves.shift(self.captures_end);
+                    self.moves.shift(self.captures_end + self.good_quiet_len);
                     self.stage = Stage::BadQuiet;
                 }
                 Stage::BadQuiet => {
                     if !self.skip_quiets {
-                        let next_move = self
-                            .moves
-                            .pick(self.bad_quiet_len + self.captures_end, |_moves, _i| true);
+                        let next_move =
+                            self.moves.pick(self.moves.len(), |_moves, _i| Pick::Select);
                         if !next_move.is_null() {
                             return next_move;
                         }
@@ -805,7 +856,7 @@ impl Movepick {
                     self.stage = Stage::QCapture;
                 }
                 Stage::QCapture => {
-                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| Pick::Select);
                     if !next_move.is_null() {
                         return next_move;
                     }
@@ -823,7 +874,11 @@ impl Movepick {
 
                 Stage::QQuietCheck => {
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
-                        moves[i].score > BAD_QUIET_SCORE
+                        if moves[i].score < BAD_QUIET_SCORE {
+                            Pick::Break
+                        } else {
+                            Pick::Select
+                        }
                     });
                     if !next_move.is_null() {
                         return next_move;
@@ -844,7 +899,7 @@ impl Movepick {
                     self.stage = Stage::ECapture;
                 }
                 Stage::ECapture => {
-                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| Pick::Select);
                     if !next_move.is_null() {
                         return next_move;
                     }
@@ -858,7 +913,7 @@ impl Movepick {
                     self.stage = Stage::EQuiet;
                 }
                 Stage::EQuiet => {
-                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| true);
+                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| Pick::Select);
                     if !next_move.is_null() {
                         return next_move;
                     }
@@ -879,8 +934,13 @@ impl Movepick {
                 Stage::ProbcutCapture => {
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         let m = moves[i];
-                        see::see_ge(&self.pos, m.inner, self.probcut_margin)
+                        if see::see_ge(&self.pos, m.inner, self.probcut_margin)
                             && !m.inner.is_under_promotion()
+                        {
+                            Pick::Select
+                        } else {
+                            Pick::Skip
+                        }
                     });
                     if !next_move.is_null() {
                         return next_move;

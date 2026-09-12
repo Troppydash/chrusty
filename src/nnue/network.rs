@@ -81,7 +81,7 @@ const OUTPUT_BUCKETS: [usize; 33] = [
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
-pub struct Aligned<T, const N: usize>([T; N]);
+pub struct Aligned<T, const N: usize>(pub [T; N]);
 
 impl<T: Copy, const N: usize> Aligned<T, N> {
     pub fn uninit() -> Self {

@@ -7,22 +7,22 @@ pub const MAX_DEPTH_USIZE: usize = MAX_DEPTH as usize;
 pub const VALUE_NONE: i16 = 32701;
 pub const VALUE_INF: i16 = 32700;
 pub const VALUE_CHECKMATE: i16 = VALUE_INF - (MAX_DEPTH as i16) - 1;
-pub const VALUE_SYZYGY: i16 = VALUE_CHECKMATE - (MAX_DEPTH as i16) - 1;
-pub const VALUE_EVAL: i16 = VALUE_SYZYGY - 1;
+pub const VALUE_SYZYGY: i16 = VALUE_CHECKMATE - 1;
+pub const VALUE_EVAL: i16 = VALUE_SYZYGY - (MAX_DEPTH as i16) - 1;
 pub const VALUE_DRAW: i16 = 0;
 pub const MAX_TIME: i128 = 1_000_000_000_000_000;
 pub const MAX_NODES: i64 = 1_000_000_000_000_000;
 
 pub fn is_decisive(value: i16) -> bool {
-    value.abs() > VALUE_CHECKMATE
+    value.abs() > VALUE_EVAL
 }
 
 pub fn is_win(value: i16) -> bool {
-    value > VALUE_CHECKMATE
+    value > VALUE_EVAL
 }
 
 pub fn is_loss(value: i16) -> bool {
-    value < -VALUE_CHECKMATE
+    value < -VALUE_EVAL
 }
 
 pub fn win_in(ply: i8) -> i16 {
@@ -42,7 +42,7 @@ pub const UNSEARCH_DEPTH: i8 = -10;
 pub const UNINIT_DEPTH: i8 = -20;
 
 pub const MVV_MULTIPLIER: i32 = 8;
-pub const BAD_QUIET_SCORE: i32 = -20000;
+pub const BAD_QUIET_SCORE: i32 = -50000;
 pub const GOOD_CAPTURE_SEE_DIV: i32 = 32;
 
 pub const PROBCUT_DEPTH_MIN: i8 = 5;

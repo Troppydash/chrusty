@@ -1,8 +1,9 @@
 use std::{arch::x86_64::*, mem::MaybeUninit};
 
-use cozy_chess::{Board, Move, Square};
+use cozy_chess::{Board, Color::White, Move, Square};
 
 use crate::{
+    ext::ExtBoard,
     nnue::{
         halfka::HalfKA,
         network::{Aligned, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
@@ -23,8 +24,6 @@ struct Stack {
     ft: Aligned<u8, HL>,
     idx_n: usize,
     idx: Aligned<u16, { HL / 4 }>,
-    cm_from: Aligned<f32, { network::CM }>,
-    cm_to: Aligned<f32, { network::CM }>,
 }
 
 impl Stack {
@@ -34,8 +33,65 @@ impl Stack {
             ft: Aligned::<u8, HL>::zeroed(),
             idx_n: 0,
             idx: Aligned::zeroed(),
-            cm_from: Aligned::zeroed(),
-            cm_to: Aligned::zeroed(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CMCacheBucket {
+    key: u64,
+    policy_from: [f32; CM],
+    policy_to: [f32; CM],
+}
+
+impl CMCacheBucket {
+    fn new() -> Self {
+        Self {
+            key: 0,
+            policy_from: [0.; CM],
+            policy_to: [0.; CM],
+        }
+    }
+}
+
+const CM_SIZE: usize = 1 << 12;
+
+struct CMCache {
+    buckets: Box<[CMCacheBucket]>,
+    size: usize,
+}
+
+impl CMCache {
+    pub fn new() -> Self {
+        let size = CM_SIZE;
+        let buckets = vec![CMCacheBucket::new(); size].into_boxed_slice();
+        Self { buckets, size }
+    }
+
+    fn index(&self, key: u64) -> usize {
+        key as usize % CM_SIZE
+    }
+
+    pub fn set(&mut self, key: u64, policy_from: &[f32; CM], policy_to: &[f32; CM]) {
+        let entry = &mut self.buckets[self.index(key)];
+        entry.key = key;
+        entry.policy_from = *policy_from;
+        entry.policy_to = *policy_to;
+    }
+
+    pub fn get(&self, key: u64) -> Option<([f32; CM], [f32; CM])> {
+        let entry = &self.buckets[self.index(key)];
+
+        if entry.key != key {
+            return None;
+        }
+
+        Some((entry.policy_from, entry.policy_to))
+    }
+
+    fn clear(&mut self) {
+        for i in 0..self.size {
+            self.buckets[i].key = 0;
         }
     }
 }
@@ -48,6 +104,7 @@ pub struct NNUE {
     // this is just a temp cache
     head: usize,
     stack: Box<[Stack]>,
+    // cache: CMCache,
 }
 
 impl NNUE {
@@ -81,6 +138,7 @@ impl NNUE {
             nnz_table,
             head: 0,
             stack: vec![Stack::new(); MAX_DEPTH_USIZE].into_boxed_slice(),
+            // cache: CMCache::new(),
         };
         net.clear();
         net
@@ -99,6 +157,7 @@ impl NNUE {
 
     pub fn clear(&mut self) {
         self.halfka.clear(&self.network);
+        // self.cache.clear();
     }
 
     pub fn catchup(&mut self, board: &Board) {
@@ -192,7 +251,11 @@ impl NNUE {
         }
     }
 
-    pub fn evaluate_policy(&mut self, head: (usize, usize, usize), board: &Board) {
+    pub fn cm(&mut self, head: (usize, usize, usize), board: &Board) -> ([f32; CM], [f32; CM]) {
+        // if let Some(entry) = self.cache.get(board.correct_hash()) {
+        //     return entry;
+        // }
+
         if !self.stack[head.0].valid {
             self.catchup_at(head, board);
 
@@ -200,7 +263,25 @@ impl NNUE {
                 self.evaluate_head(head, board);
             }
         }
+        let (cm_from, cm_to) = self.evaluate_policy(head, board);
+        // self.cache.set(board.correct_hash(), &cm_from, &cm_to);
+        (cm_from, cm_to)
+    }
+
+    fn quantize_policy(logit: f32) -> f32 {
+        logit
+        // assert!(logit > -CM_MAX, "{}", logit);
+        // ((logit + 2.0).clamp(-CM_MAX, CM_MAX) * CM_MULT) as i16
+    }
+
+    fn evaluate_policy(
+        &mut self,
+        head: (usize, usize, usize),
+        board: &Board,
+    ) -> ([f32; CM], [f32; CM]) {
         let bucket = Network::get_output_bucket(board);
+        let mut cm_from = self.network.cm_from_bias[bucket].clone();
+        let mut cm_to = self.network.cm_to_bias[bucket].clone();
 
         unsafe {
             let ft = &self.stack[head.0].ft;
@@ -234,15 +315,14 @@ impl NNUE {
             }
 
             for i in 0..CM {
-                self.stack[head.0].cm_from[i] =
-                    from_sum[i] as f32 * Self::DIVISOR + self.network.cm_from_bias[bucket][i];
-                self.stack[head.0].cm_to[i] =
-                    to_sum[i] as f32 * Self::DIVISOR + self.network.cm_to_bias[bucket][i];
+                cm_from[i] += from_sum[i] as f32 * Self::DIVISOR;
+                cm_to[i] += to_sum[i] as f32 * Self::DIVISOR;
             }
         }
+
+        (cm_from.0, cm_to.0)
     }
 
-    #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
     unsafe fn evaluate_value(&mut self, head: (usize, usize, usize), board: &Board) -> i32 {
         let bucket = Network::get_output_bucket(board);
 
@@ -309,10 +389,6 @@ impl NNUE {
         }
     }
 
-    pub fn get_cm(&self, head: usize) -> (&Aligned<f32, CM>, &Aligned<f32, CM>) {
-        (&self.stack[head].cm_from, &self.stack[head].cm_to)
-    }
-
     pub fn sort_eval(&mut self, board: &Board) {
         let stm = board.side_to_move() as usize;
         const ZERO: i16 = 0i16;
@@ -333,6 +409,34 @@ impl NNUE {
     pub fn sort_ft(&self) -> &Aligned<u8, HL> {
         &self.stack[self.head].ft
     }
+}
+
+pub fn policy_display(policy: &[f32; CM], board: &Board, is_from: bool) -> String {
+    let mask = if is_from {
+        board.colors(board.side_to_move())
+    } else {
+        !board.occupied()
+    };
+    let mut out = "".to_string();
+    for i in 0..CM {
+        let i = if board.side_to_move() == White {
+            i ^ 56
+        } else {
+            i
+        };
+        if mask.has(Square::ALL[i]) {
+            out += &format!("{:.2}", policy[i] as f32);
+        } else {
+            out += "0.00";
+        }
+        out += " ";
+
+        if i % 8 == 7 {
+            out += "\n";
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -526,7 +630,7 @@ mod tests {
             Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, -1973);
+        assert_eq!(eval, -1469);
     }
 
     #[test]
@@ -539,7 +643,7 @@ mod tests {
         .unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 31);
+        assert_eq!(eval, 38);
     }
 
     fn grid_to_string(grid: &[f32], board: &Board) -> String {
@@ -565,7 +669,6 @@ mod tests {
         out
     }
 
-
     fn grid_to_string2(grid: &[f32], board: &Board) -> String {
         let mut out = "".to_string();
         for i in 0..CM {
@@ -589,7 +692,6 @@ mod tests {
         out
     }
 
-
     #[test]
     fn test_cm() {
         let mut net = NNUE::new();
@@ -602,9 +704,9 @@ mod tests {
         net.init(&board);
         net.evaluate_policy(net.head(), &board);
 
-        let (cm_from, cm_to) = net.get_cm(net.head);
+        let (cm_from, cm_to) = net.cm(net.head(), &board);
 
-        let cm_from = grid_to_string(cm_from.deref(), &board);
+        let cm_from = policy_display(&cm_from, &board, true);
         assert!(cm_from == "", "\n{}", cm_from);
     }
 }

@@ -699,7 +699,7 @@ impl Engine {
                 && self.stack[ss].adjusted_static >= beta
             {
                 let reduction = (6 + depth as i32 / 4)
-                    + ((tt_static - beta) as i32 / 500).clamp(0, 3)
+                    + ((tt_static as i32 - beta as i32) as i32 / 500).clamp(0, 3)
                     + is_tt_capture as i32;
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
                 self.table.get().prefetch(pos.new_hash(Move::NULL_MOVE));
@@ -740,24 +740,24 @@ impl Engine {
             }
 
             //- probcut
-            let probcut_beta = (beta as i32 + self.settings.p_probcut_beta)
-                .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
+            let probcut_beta = beta as i32 + self.settings.p_probcut_beta;
             if !is_pv
                 && depth >= PROBCUT_DEPTH_MIN
+                && probcut_beta < VALUE_EVAL as i32
                 && !is_decisive(beta)
                 && is_valid(tt_static)
                 &&
                     // also ignore when tt score is < probcut beta
-                 !(tt_data.hit
+                 !( tt_data.hit
                     && is_valid(tt_data.score)
                     && ((tt_data.score as i32) < probcut_beta)
                     && (tt_data.depth >= depth - 3))
             {
+                let mut tt_move = Move::NULL_MOVE;
                 let margin = (probcut_beta - tt_static as i32).clamp(-10000, 10000)
                     * self.settings.p_probcut_margin
                     / 1024;
 
-                let mut tt_move = Move::NULL_MOVE;
                 if is_tt_capture && see_ge(pos, tt_data.pv, margin) {
                     tt_move = tt_data.pv;
                 }
@@ -816,7 +816,7 @@ impl Engine {
                         return 0;
                     }
 
-                    if score >= probcut_beta {
+                    if score >= probcut_beta && !is_win(score) {
                         if !has_excluded {
                             writer.set(
                                 tt_key,
@@ -831,21 +831,11 @@ impl Engine {
                             );
                         }
 
-                        return (score as i32 - probcut_beta as i32 + beta as i32)
-                            .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32)
-                            as i16;
+                        return score;
                     }
 
                     best_score = best_score.max(score);
                 }
-
-                // fut prune
-                // if move_count >= 4
-                //     && !is_decisive(alpha)
-                //     && (best_score as i32) < (alpha as i32 - 200 - 200 * depth as i32)
-                // {
-                //     return best_score;
-                // }
             }
         }
 
@@ -1256,6 +1246,14 @@ impl Engine {
                     [self.stack[ss - 1].piece.unwrap().index()][prev.to as usize]
                     .add(bonus);
             }
+
+            let prev = self.stack[ss - 3].m;
+            if !prev.is_null() && !self.stack[ss - 4].m.is_null() {
+                self.heuristic
+                    .get_cont_corrhist(self.stack[ss - 4].cont_corrhist)
+                    [self.stack[ss - 3].piece.unwrap().index()][prev.to as usize]
+                    .add(bonus / 2);
+            }
         }
 
         best_score
@@ -1299,6 +1297,17 @@ impl Engine {
                     .heuristic
                     .get_cont_corrhist(self.stack[ss - 2].cont_corrhist)
                     [self.stack[ss - 1].piece.unwrap().index()][prev.to as usize]
+                    .get() as i32
+                / 512;
+        }
+
+        let prev = self.stack[ss - 3].m;
+        if !prev.is_null() {
+            static_score += 12
+                * self
+                    .heuristic
+                    .get_cont_corrhist(self.stack[ss - 4].cont_corrhist)
+                    [self.stack[ss - 3].piece.unwrap().index()][prev.to as usize]
                     .get() as i32
                 / 512;
         }
