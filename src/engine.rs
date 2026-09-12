@@ -896,8 +896,7 @@ impl Engine {
                 }
 
                 //- history prunes
-                if is_quiet && next_move.get_score() < -6000 * depth as i32 {
-                    movepick.skip_quiets();
+                if is_quiet && next_move.get_score() < -3000 * depth as i32 && depth < 5 {
                     continue;
                 }
 
@@ -1003,7 +1002,7 @@ impl Engine {
                 let mut reduction = self.heuristic.get_lmr(move_count, depth);
 
                 // check extension
-                if self.stack[ss].conseq_checks < 4 && new_pos.in_check() {
+                if pos.in_check() {
                     reduction -= self.settings.p_lmr_check;
                 }
 
@@ -1039,6 +1038,10 @@ impl Engine {
                     };
                 reduction -= scaled_history_score as i32;
 
+                if tt_data.hit && tt_data.flag == FLAG_EXACT {
+                    reduction += 1500;
+                }
+
                 reduction /= 1024;
                 let reduced_depth =
                     (new_depth as i32 - reduction).clamp(1, new_depth as i32 + 1) as i8;
@@ -1055,12 +1058,14 @@ impl Engine {
                 );
 
                 if score > alpha && reduced_depth < new_depth {
-                    //- re-search adjustments
-                    if (score as i32) > (best_score as i32 + 50) {
-                        new_depth += 1;
-                    }
-                    if (score as i32) < (best_score as i32 + 5) {
-                        new_depth -= 1;
+                    if !is_root {
+                        //- re-search adjustments
+                        if (score as i32) > (best_score as i32 + 50) {
+                            new_depth += 1;
+                        }
+                        if (score as i32) < (best_score as i32 + 5) {
+                            new_depth -= 1;
+                        }
                     }
 
                     if reduced_depth < new_depth {

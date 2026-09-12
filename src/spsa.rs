@@ -63,7 +63,7 @@ macro_rules! define {
 
 define! {
     p_test: i32 = 100, 0, 200, 10,
-    p_lmr_check: i32 = 522, 400, 1000, 300,
+    p_lmr_check: i32 = 900, 400, 1000, 300,
     p_lmr_cutnode: i32 = 1124, 1000, 1600, 300,
     p_lmr_capture: i32 = 525, 300, 700, 300,
     p_lmr_improving: i32 = 1372, 1000, 1600, 300,
