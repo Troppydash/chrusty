@@ -6,21 +6,7 @@ use std::{
 use cozy_chess::{Board, Move, Piece};
 
 use crate::{
-    cuckoo,
-    ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
-    helpers::avg,
-    heuristic::{CORR_LIMIT, Heuristic},
-    movepick::Movepick,
-    nnue::{NNUE, network::Permute},
-    param::*,
-    rep::{RepTable, is_rep},
-    see::{self, see_ge},
-    sort,
-    spsa::Parameters,
-    stack::{KeyStack, PawnKey, PvList, SearchStack},
-    tb::TableBase,
-    timer::Timer,
-    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_50mr_key, get_can_use},
+    cuckoo, ext::{ColoredPiece, ExtBoard, ExtMove, MoveList}, helpers::avg, heuristic::{CORR_LIMIT, Heuristic}, movepick::{Movepick, Stage}, nnue::{NNUE, network::Permute}, param::*, rep::{RepTable, is_rep}, see::{self, see_ge}, sort, spsa::Parameters, stack::{KeyStack, PawnKey, PvList, SearchStack}, tb::TableBase, timer::Timer, tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_50mr_key, get_can_use},
 };
 
 #[derive(Clone, Debug)]
@@ -325,6 +311,7 @@ impl Engine {
             self.pawn_key.get(),
             &self.heuristic,
             in_check,
+            Some(&mut self.nnue),
         );
         loop {
             let next_move = movepick.next_move();
@@ -906,33 +893,32 @@ impl Engine {
                 }
 
                 //- futility pruning
-                if is_quiet
-                    && lmr_depth < 12
-                    && (tt_static as i32
-                        + self.settings.p_lowdepth_fut_quiet_base
-                        + self.settings.p_lowdepth_fut_quiet_depth * lmr_depth)
-                        < (alpha as i32)
-                {
+                let futility_score = tt_static as i32
+                    + self.settings.p_lowdepth_fut_quiet_base
+                    + self.settings.p_lowdepth_fut_quiet_depth * lmr_depth;
+                if is_quiet && lmr_depth < 14 && futility_score < (alpha as i32) {
+                    if !is_decisive(best_score) && futility_score > best_score as i32 {
+                        best_score = futility_score as i16;
+                    }
+
                     movepick.skip_quiets();
                     continue;
                 }
 
                 //- capture futility pruning
-                if !is_quiet
-                    && lmr_depth < 12
-                    && (tt_static as i32
-                        + self.settings.p_lowdepth_fut_capture_base
-                        + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
-                        + pesto_value(
-                            pos,
-                            ColoredPiece::new(
-                                !pos.side_to_move(),
-                                pos.get_captured(next_move.inner),
-                            ),
-                            next_move.inner.to,
-                        ))
-                        < (alpha as i32)
-                {
+                let capture_futility_score = tt_static as i32
+                    + self.settings.p_lowdepth_fut_capture_base
+                    + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
+                    + pesto_value(
+                        pos,
+                        ColoredPiece::new(!pos.side_to_move(), pos.get_captured(next_move.inner)),
+                        next_move.inner.to,
+                    );
+                if !is_quiet && movepick.stage == Stage::BadCapture && lmr_depth < 10 && capture_futility_score < (alpha as i32) {
+                    if !is_decisive(best_score) && futility_score > best_score as i32 {
+                        best_score = capture_futility_score as i16;
+                    }
+
                     continue;
                 }
             }

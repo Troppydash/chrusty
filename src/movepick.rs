@@ -14,7 +14,8 @@ use crate::{
     threats::Threats,
 };
 
-enum Stage {
+#[derive(PartialEq)]
+pub enum Stage {
     // negamax
     Pv = 0,
     CaptureInit,
@@ -161,7 +162,7 @@ pub struct Movepick {
 
     // internal //
     moves: DynamicScoredMoveList,
-    stage: Stage,
+    pub stage: Stage,
     skip_quiets: bool,
     use_policy: bool,
     policy_from: [f32; CM],
@@ -220,7 +221,10 @@ impl Movepick {
         pawn_key: u64,
         heuristic: &Heuristic,
         in_check: bool,
+        nnue: Option<&mut NNUE>,
     ) -> Self {
+        let nnue_head = nnue.as_ref().map_or_default(|nnue| nnue.head());
+
         Self {
             pos,
             pv,
@@ -231,8 +235,8 @@ impl Movepick {
             stack: stack.as_ptr(),
             ss,
             pawn_key,
-            nnue: None,
-            nnue_head: (0, 0, 0),
+            nnue: nnue.map(|nnue| nnue as *mut NNUE),
+            nnue_head,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             skip_quiets: false,
@@ -714,7 +718,7 @@ impl Movepick {
                 let value_from = self.policy_from[m.from as usize];
                 let value_to = self.policy_to[m.to as usize];
                 let component =
-                    (5000.0 * (value_from + value_to + 1.5)) as i32 / (self.depth as i32).max(1);
+                    (8000.0 * (value_from + value_to + 1.75)) as i32 / (self.depth as i32).max(1);
                 score += component;
             }
 
@@ -991,6 +995,7 @@ mod tests {
                 0,
                 &heuristic,
                 true,
+                None,
             ),
         ] {
             let mut mp_moves = vec![];
