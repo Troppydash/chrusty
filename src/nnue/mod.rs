@@ -695,7 +695,7 @@ mod tests {
         let mut net = NNUE::new();
         let board = Board::from_fen(
             // "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "r1b1kb1r/ppq2ppp/2n2n2/8/3Q4/4BN2/PPP2PPP/RN2KB1R w KQkq - 2 9",
+            "r1bqkbnr/pp2pppp/3p4/2p5/3NP3/2N5/PPP2PPP/R1BQKB1R b KQkq - 0 5",
             false,
         )
         .unwrap();

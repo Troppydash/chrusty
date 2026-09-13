@@ -619,11 +619,13 @@ impl Movepick {
 
         if self.depth <= 6
             && !self.pos.in_check()
+            && !(!self.pv.is_null() && self.pos.piece_on(self.pv.to).is_some())
             && let Some(nnue) = self.nnue
         {
             self.use_policy = true;
             let nnue = unsafe { &mut *nnue };
             let (cm_from, cm_to) = nnue.cm(self.nnue_head, &self.pos);
+            // TODO: make this loop faster maybe
             for sq in self.pos.colors(self.pos.side_to_move()) {
                 let cm_sq = sq.relative_to(self.pos.side_to_move());
                 self.policy_from[sq as usize] = cm_from[cm_sq as usize] as f32;
@@ -641,6 +643,9 @@ impl Movepick {
             //     Self::grid_to_string2(&cm_to, &self.pos),
             // )
         }
+
+        let mut best_policy = f32::MIN;
+        let mut best_policy_i = -1;
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -720,11 +725,21 @@ impl Movepick {
                 let component =
                     (8000.0 * (value_from + value_to + 1.75)) as i32 / (self.depth as i32).max(1);
                 score += component;
+
+                let policy = value_from + value_to;
+                if policy > best_policy {
+                    best_policy = policy;
+                    best_policy_i = i as i32;
+                }
             }
 
             self.moves.get_mut(i).score = score;
 
             i += 1;
+        }
+
+        if self.use_policy && best_policy_i >= 0 {
+            self.moves.get_mut(best_policy_i as usize).score += 10000;
         }
     }
 
