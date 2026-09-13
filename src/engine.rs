@@ -6,7 +6,21 @@ use std::{
 use cozy_chess::{Board, Move, Piece};
 
 use crate::{
-    cuckoo, ext::{ColoredPiece, ExtBoard, ExtMove, MoveList}, helpers::avg, heuristic::{CORR_LIMIT, Heuristic}, movepick::{Movepick, Stage}, nnue::{NNUE, network::Permute}, param::*, rep::{RepTable, is_rep}, see::{self, see_ge}, sort, spsa::Parameters, stack::{KeyStack, PawnKey, PvList, SearchStack}, tb::TableBase, timer::Timer, tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_50mr_key, get_can_use},
+    cuckoo,
+    ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
+    helpers::avg,
+    heuristic::{CORR_LIMIT, Heuristic},
+    movepick::{Movepick, Stage},
+    nnue::{NNUE, network::Permute},
+    param::*,
+    rep::{RepTable, is_rep},
+    see::{self, see_ge},
+    sort,
+    spsa::Parameters,
+    stack::{KeyStack, PawnKey, PvList, SearchStack},
+    tb::TableBase,
+    timer::Timer,
+    tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_50mr_key, get_can_use},
 };
 
 #[derive(Clone, Debug)]
@@ -647,6 +661,13 @@ impl Engine {
             improving = self.stack[ss].adjusted_static > self.stack[ss - 4].adjusted_static;
         }
 
+        let is_singular = tt_data.hit
+            && is_valid(tt_data.score)
+            && !is_decisive(tt_data.score)
+            && (tt_data.flag == FLAG_EXACT || tt_data.flag == FLAG_BETA)
+            && tt_data.depth >= depth - 3
+            && depth >= 5;
+
         if !is_root && !in_check {
             //- razoring
             if !is_pv
@@ -661,14 +682,12 @@ impl Engine {
             }
 
             //- static null move pruning
-            let margin = 0.max(70 * (depth - improving as i8) as i32);
+            let margin = 1.max(70 * (depth - improving as i8) as i32);
             if !is_pv
                 && is_valid(tt_static)
                 && !is_loss(beta)
                 && !is_win(tt_static)
                 && tt_static as i32 - margin >= beta as i32
-                && depth <= 14
-                && (tt_data.pv.is_null() || is_tt_capture)
             {
                 return avg(beta, tt_static);
             }
@@ -676,18 +695,19 @@ impl Engine {
             //- null move pruning
             let has_non_pawns = pos.has_non_pawns(pos.side_to_move());
             if cut_node
-                && !self.stack[ss].verify_null
+                && ply as i32 >= self.stack[0].nmp_min_ply
                 && !has_excluded
                 && has_non_pawns
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
-                && tt_static as i32 >= beta as i32 + 200 - 30 * depth as i32
+                && tt_static as i32 >= beta as i32 + (200 - 20 * depth as i32 + 100 * is_pv as i32).max(1)
                 && self.stack[ss].adjusted_static >= beta
             {
                 let reduction = (6 + depth as i32 / 4)
-                    + ((tt_static as i32 - beta as i32) as i32 / 500).clamp(0, 3)
-                    + is_tt_capture as i32;
+                    + ((self.stack[ss].adjusted_static as i32 - beta as i32) as i32 / 300)
+                        .clamp(0, 6)
+                    + improving as i32;
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
                 self.table.get().prefetch(pos.new_hash(Move::NULL_MOVE));
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
@@ -707,16 +727,22 @@ impl Engine {
                 }
 
                 if score >= beta && !is_win(score) {
-                    if depth < 12 {
-                        self.stack[ss].verify_null = true;
-                        let verified =
-                            self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, true);
-                        self.stack[ss].verify_null = false;
-                        if verified >= beta {
-                            return verified;
-                        }
-                    } else {
+                    if self.stack[0].nmp_min_ply > 0 || depth <= 15 {
                         return score;
+                    }
+
+                    // no nmp until [nmp_min_ply + extra], afterwards no verified search on nmp
+                    self.stack[0].nmp_min_ply = ply as i32 + 3 * reduced_depth as i32 / 4;
+                    let verified =
+                        self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, false);
+                    self.stack[0].nmp_min_ply = 0;
+
+                    if self.timer.read().unwrap().stopped() {
+                        return 0;
+                    }
+
+                    if verified >= beta {
+                        return verified;
                     }
                 }
             }
@@ -906,15 +932,22 @@ impl Engine {
                 }
 
                 //- capture futility pruning
-                let capture_futility_score = tt_static as i32
-                    + self.settings.p_lowdepth_fut_capture_base
-                    + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
-                    + pesto_value(
-                        pos,
-                        ColoredPiece::new(!pos.side_to_move(), pos.get_captured(next_move.inner)),
-                        next_move.inner.to,
-                    );
-                if !is_quiet && movepick.stage == Stage::BadCapture && lmr_depth < 10 && capture_futility_score < (alpha as i32) {
+                if !is_quiet
+                    && movepick.stage == Stage::BadCapture
+                    && lmr_depth < 10
+                    && let capture_futility_score = tt_static as i32
+                        + self.settings.p_lowdepth_fut_capture_base
+                        + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
+                        + pesto_value(
+                            pos,
+                            ColoredPiece::new(
+                                !pos.side_to_move(),
+                                pos.get_captured(next_move.inner),
+                            ),
+                            next_move.inner.to,
+                        )
+                    && capture_futility_score < (alpha as i32)
+                {
                     if !is_decisive(best_score) && futility_score > best_score as i32 {
                         best_score = capture_futility_score as i16;
                     }
@@ -925,15 +958,7 @@ impl Engine {
 
             //- singular extension
             let mut extension = 0;
-            if !is_root
-                && !has_excluded
-                && tt_data.pv == next_move.inner
-                && is_valid(tt_data.score)
-                && !is_decisive(tt_data.score)
-                && (tt_data.flag == FLAG_EXACT || tt_data.flag == FLAG_BETA)
-                && tt_data.depth >= depth - 3
-                && depth >= 5
-            {
+            if !is_root && !has_excluded && tt_data.pv == next_move.inner && is_singular {
                 let to_beat = tt_data.score - depth as i16;
                 let reduced_depth = (depth - 1) / 2;
                 self.stack[ss].excluded = tt_data.pv;
