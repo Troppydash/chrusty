@@ -11,15 +11,18 @@ use sfbinpack::{
     chess::{r#move::MoveType, piecetype::PieceType},
 };
 
-use crate::nnue::{
-    NNUE,
-    network::{HL, Permute},
+use crate::{
+    ext::ExtBoard,
+    nnue::{
+        NNUE,
+        network::{HL, Permute},
+    },
 };
 
 // TODO: improve this asw
 
 fn filter(entry: &TrainingDataEntry) -> bool {
-    entry.ply >= 14 && !entry.pos.is_checked(entry.pos.side_to_move()) && entry.score.abs() < 10000
+    !entry.pos.is_checked(entry.pos.side_to_move()) && entry.score.abs() < 2000
 }
 
 fn get_boards(file: &str, skip: usize, iter: usize) -> Vec<Board> {
@@ -47,6 +50,7 @@ fn get_boards(file: &str, skip: usize, iter: usize) -> Vec<Board> {
 
     boards
 }
+
 fn benchmark(mut net: NNUE, boards: &Vec<Board>) -> f64 {
     let mut sparseness = 0;
     for board in boards.iter() {
@@ -80,8 +84,10 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
     let half_hl = HL / 2;
 
     let mut net = NNUE::new();
-    let mut co_matrix = vec![0u64; half_hl * half_hl];
-    let mut counts = vec![0u64; half_hl];
+    // Exact activity signatures. Each sampled position owns one bit, with a
+    // separate u64 word for every group of 64 positions.
+    let words = iter.div_ceil(32);
+    let mut activity = vec![vec![0u64; words]; half_hl];
 
     // Collect co-occurrence statistics for 0..HL / 2
     let mut it = 0;
@@ -105,19 +111,15 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
         for i in 0..half_hl {
             if ft[i] > 0 {
                 active.push(i);
-                counts[i] += 1;
             }
         }
 
-        // Increment symmetric co-occurrence pairs
-        let len = active.len();
-        for i in 0..len {
-            let a = active[i];
-            for j in (i + 1)..len {
-                let b = active[j];
-                co_matrix[a * half_hl + b] += 1;
-                co_matrix[b * half_hl + a] += 1;
-            }
+        let hash = board.correct_hash();
+        let sample = it - 1;
+        let sample_word = sample / 32;
+        let sample_bit = 1u64 << (hash & 63);
+        for neuron in active {
+            activity[neuron][sample_word] |= sample_bit;
         }
     }
 
@@ -127,65 +129,101 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
         mapping[i] = i;
     }
 
-    // Greedy 4-element block packing strictly on 0..HL / 2
+    // Pack the first half into 4-neuron SIMD blocks.  A block is useful when
+    // its neurons are active in as few distinct positions as possible, so the
+    // objective is popcount(activity[a] | activity[b] | ...).
+    let mut blocks: Vec<[usize; 4]> = Vec::with_capacity(half_hl / 4);
     let mut used = vec![false; half_hl];
-    let mut write_head = 0;
 
-    while write_head < half_hl {
-        // Pick unmapped neuron with highest activity to anchor the block
-        let mut seed = None;
-        let mut max_count = 0;
-        for i in 0..half_hl {
-            if !used[i] && (seed.is_none() || counts[i] > max_count) {
-                max_count = counts[i];
-                seed = Some(i);
-            }
-        }
+    while blocks.len() * 4 < half_hl {
+        // Start with the densest remaining signature.  This makes the choice
+        // deterministic and gives later candidates a useful anchor.
+        let seed = (0..half_hl)
+            .filter(|&i| !used[i])
+            .max_by_key(|&i| activity[i].iter().map(|x| x.count_ones()).sum::<u32>())
+            .expect("there must be an unused feature");
 
-        let seed_idx = match seed {
-            Some(idx) => idx,
-            None => break,
-        };
+        let mut block = [seed; 4];
+        used[seed] = true;
 
-        let mut block = Vec::with_capacity(4);
-        block.push(seed_idx);
-        used[seed_idx] = true;
-
-        // Fill remaining slots in the 4-element block with highest shared co-occurrence
-        while block.len() < 4 && write_head + block.len() < half_hl {
-            let mut best_candidate = None;
-            let mut max_co = 0;
-
-            for candidate in 0..half_hl {
-                if used[candidate] {
+        for slot in 1..4 {
+            let mut candidate = None;
+            let mut best_score = usize::MAX;
+            let mut best_activity = 0;
+            for i in 0..half_hl {
+                if used[i] {
                     continue;
                 }
-
-                // Sum co-occurrence with all current block members
-                let co_sum: u64 = block
-                    .iter()
-                    .map(|&b| co_matrix[candidate * half_hl + b])
-                    .sum();
-
-                if best_candidate.is_none() || co_sum > max_co {
-                    max_co = co_sum;
-                    best_candidate = Some(candidate);
+                let mut score = 0;
+                for word in 0..words {
+                    let mut union = activity[i][word];
+                    for j in 0..slot {
+                        union |= activity[block[j]][word];
+                    }
+                    score += union.count_ones() as usize;
+                }
+                let active = activity[i].iter().map(|x| x.count_ones()).sum();
+                if score < best_score || (score == best_score && active > best_activity) {
+                    candidate = Some(i);
+                    best_score = score;
+                    best_activity = active;
                 }
             }
+            let candidate = candidate.expect("a 4-neuron block must be fillable");
+            block[slot] = candidate;
+            used[candidate] = true;
+        }
 
-            if let Some(candidate_idx) = best_candidate {
-                block.push(candidate_idx);
-                used[candidate_idx] = true;
-            } else {
-                break;
+        blocks.push(block);
+    }
+
+    // Greedy construction depends on the order in which blocks are seeded.
+    // Improve it with 2-opt swaps between blocks until no single swap lowers
+    // the union objective.
+    let block_score = |block: &[usize; 4]| -> u64 {
+        let mut score = 0;
+        for word in 0..words {
+            let mut union = 0;
+            for &neuron in block {
+                union |= activity[neuron][word];
+            }
+            score += union.count_ones() as u64;
+        }
+        score
+    };
+
+    loop {
+        let mut improved = false;
+        'search: for a in 0..blocks.len() {
+            for b in a + 1..blocks.len() {
+                let old_score = block_score(&blocks[a]) + block_score(&blocks[b]);
+                for ia in 0..4 {
+                    for ib in 0..4 {
+                        let old_a = blocks[a][ia];
+                        let old_b = blocks[b][ib];
+                        blocks[a][ia] = old_b;
+                        blocks[b][ib] = old_a;
+
+                        let new_score = block_score(&blocks[a]) + block_score(&blocks[b]);
+                        if new_score < old_score {
+                            improved = true;
+                            continue 'search;
+                        }
+
+                        // Undo a rejected swap.
+                        blocks[a][ia] = old_a;
+                        blocks[b][ib] = old_b;
+                    }
+                }
             }
         }
-
-        // Write permuted block into mapping
-        for &neuron in &block {
-            mapping[write_head] = neuron;
-            write_head += 1;
+        if !improved {
+            break;
         }
+    }
+
+    for (block_idx, block) in blocks.iter().enumerate() {
+        mapping[block_idx * 4..block_idx * 4 + 4].copy_from_slice(block);
     }
 
     mapping
@@ -199,39 +237,7 @@ pub fn start(path: &str, iter: usize) {
     let baseline = benchmark(net, &boards);
     println!("starting sparseness {}", baseline);
 
-    // let mut local_best = baseline;
-    // let mut mapping = Permute::load().mapping;
-
     let mapping = compute_co_occurrence_mapping(path, iter);
-    // let mut rng = rand::rng();
-    // for it in 0..10000 {
-    //     if it % 100 == 0 {
-    //         println!("iter {}, best {}, old {}", it, local_best, baseline);
-    //     }
-
-    //     let mut new_mapping = mapping;
-    //     let mut a = 0;
-    //     let mut b = 0;
-    //     loop {
-    //         a = rng.next_u64() as usize % (HL / 2);
-    //         b = rng.next_u64() as usize % (HL / 2);
-    //         if a != b {
-    //             break;
-    //         }
-    //     }
-
-    //     new_mapping[a] = mapping[b];
-    //     new_mapping[b] = mapping[a];
-
-    //     let net = NNUE::build(&Permute::new(new_mapping.clone()));
-    //     let score = benchmark(net, &boards);
-    //     if score > local_best {
-    //         mapping = new_mapping;
-    //         local_best = score;
-    //         Permute::new(mapping).save();
-    //         println!("improve {}", score);
-    //     }
-    // }
 
     let net = NNUE::build(&Permute::new(mapping));
     println!("ending sparseness {}", benchmark(net, &boards));

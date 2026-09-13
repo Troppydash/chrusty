@@ -107,6 +107,24 @@ impl<T, const N: usize> DerefMut for Aligned<T, N> {
     }
 }
 
+#[repr(C, align(16))]
+#[derive(Copy, Clone)]
+pub struct Aligned16(pub [u16; 8]);
+
+impl Deref for Aligned16 {
+    type Target = [u16];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Aligned16 {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 pub struct SimdOps;
 impl SimdOps {
     #[inline(always)]

@@ -3,13 +3,9 @@ use std::{arch::x86_64::*, mem::MaybeUninit};
 use cozy_chess::{Board, Color::White, Move, Square};
 
 use crate::{
-    ext::ExtBoard,
-    nnue::{
-        halfka::HalfKA,
-        network::{Aligned, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE},
-        threats::Threats,
-    },
-    param::{MAX_DEPTH, MAX_DEPTH_USIZE},
+    ext::ExtBoard, nnue::{
+        halfka::HalfKA, network::{Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE}, threats::Threats,
+    }, param::{MAX_DEPTH, MAX_DEPTH_USIZE},
 };
 
 mod halfka;
@@ -100,7 +96,7 @@ pub struct NNUE {
     network: Box<Network>,
     halfka: HalfKA,
     threats: Threats,
-    nnz_table: [[u16; 8]; 256],
+    nnz_table: [Aligned16; 256],
     // this is just a temp cache
     head: usize,
     stack: Box<[Stack]>,
@@ -108,7 +104,9 @@ pub struct NNUE {
 }
 
 impl NNUE {
-    const DIVISOR: f32 = (1.0 / ((QA * QA * QB) >> FT_SHIFT) as f32) as f32;
+    // const FT_SHIFT_SCALE: f32 = QA as f32 / (1 << FT_SHIFT) as f32;
+    const FT_TUNE : f32 = 1.0;
+    const DIVISOR: f32 = Self::FT_TUNE / ((1 << FT_SHIFT) as f32 * (QB as f32));
 
     pub fn head(&self) -> (usize, usize, usize) {
         (self.head, self.halfka.head, self.threats.head)
@@ -119,7 +117,7 @@ impl NNUE {
         raw.permute(permute);
 
         // nnz_table[bits][i] = ith bit in bits offset
-        let mut nnz_table: [[u16; 8]; 256] = [[0u16; 8]; 256];
+        let mut nnz_table: [Aligned16; 256] = [Aligned16([0u16; 8]); 256];
         for i in 0..256 {
             let mut j = 0;
             let mut bits = i as u8;
@@ -239,7 +237,7 @@ impl NNUE {
                     debug_assert!(*idx_n + 16 <= HL / 4);
                     let slice = ((mask >> lookup) & 0xff) as u8;
                     let indices =
-                        _mm_loadu_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
+                        _mm_load_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
                     _mm_storeu_si128(
                         idx.as_mut_ptr().add(*idx_n) as *mut __m128i,
                         _mm_add_epi16(base, indices),

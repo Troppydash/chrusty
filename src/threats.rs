@@ -30,7 +30,7 @@ impl Threats {
 
         let king = pos.king(!pos.side_to_move());
         let mut checks = [
-            cozy_chess::get_pawn_attacks(king, !pos.side_to_move()),
+            BitBoard::EMPTY,
             cozy_chess::get_knight_moves(king),
             cozy_chess::get_bishop_moves(king, occ),
             cozy_chess::get_rook_moves(king, occ),

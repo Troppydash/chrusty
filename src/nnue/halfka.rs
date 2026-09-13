@@ -219,6 +219,27 @@ impl HalfKA {
 
         let entry = &mut self.finny.entries[mirrored as usize][bucket];
 
+        let mut count = 0;
+        'outer: for color in 0..=1 {
+            for piece in 0..6 {
+                let old_bb =
+                    entry.bycolor[side as usize][color] & entry.bypiece[side as usize][piece];
+                let new_bb = board.colored_pieces(Color::ALL[color], Piece::ALL[piece]);
+                let added = new_bb & !old_bb;
+                let removed = old_bb & !new_bb;
+                count += added.len().max(removed.len());
+                if count > board.occupied().len() {
+                    break 'outer;
+                }
+            }
+        }
+
+        if count > board.occupied().len() {
+            SimdOps::fused_copy(&mut entry.acc.vals[side as usize], &network.feature_bias);
+            entry.bycolor[side as usize] = [BitBoard::EMPTY; 2];
+            entry.bypiece[side as usize] = [BitBoard::EMPTY; 6];
+        }
+
         for color in 0..=1 {
             for piece in 0..6 {
                 // TODO: we can also improve this
