@@ -22,6 +22,7 @@ pub const L2: usize = 32;
 pub const OUTPUTS: usize = 8;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
+pub const QPST: i32 = 128 * 128;
 pub const FT_SHIFT: usize = 8;
 pub const SCALE: i32 = 400;
 pub const CM: usize = 64;
@@ -138,11 +139,26 @@ impl SimdOps {
     }
 
     #[inline(always)]
+    pub fn fused_copy32(out: &mut [i32; OUTPUTS], in_vec: &[i16; OUTPUTS]) {
+        for i in 0..OUTPUTS {
+            out[i] = in_vec[i] as i32;
+        }
+    }
+
+    #[inline(always)]
     pub fn fused_add(out: &mut Aligned<i16, HL>, add: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] += add[i];
         }
     }
+
+    #[inline(always)]
+    pub fn fused_add32(out: &mut [i32; OUTPUTS], add: &[i16; OUTPUTS]) {
+        for i in 0..OUTPUTS {
+            out[i] += add[i] as i32;
+        }
+    }
+
     #[inline(always)]
     pub fn fused_add2(out: &mut Aligned<i16, HL>, add: &Aligned<i8, HL>) {
         for i in 0..HL {
@@ -191,6 +207,13 @@ impl SimdOps {
     }
 
     #[inline(always)]
+    pub fn fused_sub32(out: &mut [i32; OUTPUTS], sub: &[i16; OUTPUTS]) {
+        for i in 0..OUTPUTS {
+            out[i] -= sub[i] as i32;
+        }
+    }
+
+    #[inline(always)]
     pub fn fused_sub2(out: &mut Aligned<i16, HL>, sub: &Aligned<i8, HL>) {
         for i in 0..HL {
             out[i] -= sub[i] as i16;
@@ -220,6 +243,13 @@ impl SimdOps {
     }
 
     #[inline(always)]
+    pub fn fused_add_sub32(out: &mut [i32; OUTPUTS], add: &[i16; OUTPUTS], sub: &[i16; OUTPUTS]) {
+        for i in 0..OUTPUTS {
+            out[i] += add[i] as i32 - sub[i] as i32;
+        }
+    }
+
+    #[inline(always)]
     pub fn fused_add_sub2(
         out: &mut Aligned<i16, HL>,
         add: &Aligned<i8, HL>,
@@ -243,6 +273,18 @@ impl SimdOps {
     }
 
     #[inline(always)]
+    pub fn fused_add_sub_base32(
+        out: &mut [i32; OUTPUTS],
+        base: &[i32; OUTPUTS],
+        add: &[i16; OUTPUTS],
+        sub: &[i16; OUTPUTS],
+    ) {
+        for i in 0..OUTPUTS {
+            out[i] = base[i] + add[i] as i32 - sub[i] as i32;
+        }
+    }
+
+    #[inline(always)]
     pub fn fused_add_sub_sub_base(
         out: &mut Aligned<i16, HL>,
         base: &Aligned<i16, HL>,
@@ -252,6 +294,19 @@ impl SimdOps {
     ) {
         for i in 0..HL {
             out[i] = base[i] + add[i] - sub1[i] - sub2[i];
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_add_sub_sub_base32(
+        out: &mut [i32; OUTPUTS],
+        base: &[i32; OUTPUTS],
+        add: &[i16; OUTPUTS],
+        sub1: &[i16; OUTPUTS],
+        sub2: &[i16; OUTPUTS],
+    ) {
+        for i in 0..OUTPUTS {
+            out[i] = base[i] + add[i] as i32 - sub1[i] as i32 - sub2[i] as i32;
         }
     }
 
@@ -266,6 +321,20 @@ impl SimdOps {
     ) {
         for i in 0..HL {
             out[i] = base[i] + add1[i] + add2[i] - sub1[i] - sub2[i];
+        }
+    }
+
+    #[inline(always)]
+    pub fn fused_add_add_sub_sub_base32(
+        out: &mut [i32; OUTPUTS],
+        base: &[i32; OUTPUTS],
+        add1: &[i16; OUTPUTS],
+        add2: &[i16; OUTPUTS],
+        sub1: &[i16; OUTPUTS],
+        sub2: &[i16; OUTPUTS],
+    ) {
+        for i in 0..OUTPUTS {
+            out[i] = base[i] + add1[i] as i32 + add2[i] as i32 - sub1[i] as i32 - sub2[i] as i32;
         }
     }
 }
@@ -322,6 +391,9 @@ impl Permute {
 pub struct RawNetwork {
     // default output sizing is (outputs, inputs)
     // not-transposed
+    pst_weights: [[[i16; OUTPUTS]; 768]; KINGS],
+    pst_bias: [i16; OUTPUTS],
+
     feature_weights: [[[i16; HL]; 768]; KINGS],
     threat_weights: [[i8; HL]; FULL_THREATS],
     feature_bias: [i16; HL],
@@ -429,6 +501,9 @@ impl RawNetwork {
 
 #[repr(C, align(64))]
 pub struct Network {
+    pub pst_weights: [[[i16; OUTPUTS]; 768]; KINGS],
+    pub pst_bias: [i16; OUTPUTS],
+
     pub feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
     pub threat_weights: [Aligned<i8, HL>; FULL_THREATS],
     pub feature_bias: Aligned<i16, HL>,
@@ -453,6 +528,18 @@ pub struct Network {
 impl Network {
     pub fn load(raw: Box<RawNetwork>) -> Box<Self> {
         let mut net = unsafe { Box::<Self>::new_uninit().assume_init() };
+
+        for a in 0..KINGS {
+            for b in 0..768 {
+                for c in 0..OUTPUTS {
+                    net.pst_weights[a][b][c] = raw.pst_weights[a][b][c];
+                }
+            }
+        }
+
+        for a in 0..OUTPUTS {
+            net.pst_bias[a] = raw.pst_bias[a];
+        }
 
         for a in 0..KINGS {
             for b in 0..768 {
@@ -587,6 +674,22 @@ impl Network {
         &self.feature_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
     }
 
+    pub fn pst_feature_lookup(
+        &self,
+        king_sq: Square,
+        side: Color,
+        piece: ColoredPiece,
+        mut square: Square,
+    ) -> &[i16; OUTPUTS] {
+        if (king_sq as u16 & 0b100) != 0 {
+            square = square.flip_file();
+        }
+
+        let index768 = ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64
+            + square.relative_to(side) as usize;
+        &self.pst_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
+    }
+
     fn threat_feature_lookup_index_from_threat(
         &self,
         king_sq: Square,
@@ -711,6 +814,90 @@ impl Network {
                         update.sub1.0,
                     ),
                     self.feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.sub2.1,
+                        update.sub2.0,
+                    ),
+                );
+            }
+        }
+    }
+
+    pub fn pst_apply_update(
+        &self,
+        next: &mut [i32; OUTPUTS],
+        base: &[i32; OUTPUTS],
+        update: &Update,
+        side: Color,
+    ) {
+        match update.update_type {
+            UpdateType::Move => {
+                SimdOps::fused_add_sub_base32(
+                    next,
+                    base,
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.add1.1,
+                        update.add1.0,
+                    ),
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.sub1.1,
+                        update.sub1.0,
+                    ),
+                );
+            }
+
+            UpdateType::Capture => {
+                SimdOps::fused_add_sub_sub_base32(
+                    next,
+                    base,
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.add1.1,
+                        update.add1.0,
+                    ),
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.sub1.1,
+                        update.sub1.0,
+                    ),
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.sub2.1,
+                        update.sub2.0,
+                    ),
+                );
+            }
+            UpdateType::Castle => {
+                SimdOps::fused_add_add_sub_sub_base32(
+                    next,
+                    base,
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.add1.1,
+                        update.add1.0,
+                    ),
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.add2.1,
+                        update.add2.0,
+                    ),
+                    self.pst_feature_lookup(
+                        update.king_sq[side as usize],
+                        side,
+                        update.sub1.1,
+                        update.sub1.0,
+                    ),
+                    self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
                         update.sub2.1,

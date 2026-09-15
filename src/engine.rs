@@ -155,7 +155,7 @@ impl Engine {
             .nnue
             .evaluate(pos)
             .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
-        // score = score * (200 - pos.halfmove_clock() as i32) / 200;
+        // score -= score * pos.halfmove_clock() as i32 / 300;
         return score as i16;
     }
 
@@ -682,7 +682,7 @@ impl Engine {
             }
 
             //- static null move pruning
-            let margin = 1.max(70 * (depth - improving as i8) as i32);
+            let margin = 1.max(70 * (depth - improving as i8) as i32 + complexity / 8);
             if !is_pv
                 && is_valid(tt_static)
                 && !is_loss(beta)

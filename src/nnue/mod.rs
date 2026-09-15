@@ -3,13 +3,22 @@ use std::{arch::x86_64::*, mem::MaybeUninit};
 use cozy_chess::{Board, Color::White, Move, Square};
 
 use crate::{
-    ext::ExtBoard, nnue::{
-        halfka::HalfKA, network::{Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, RawNetwork, SCALE}, threats::Threats,
-    }, param::{MAX_DEPTH, MAX_DEPTH_USIZE},
+    ext::ExtBoard,
+    nnue::{
+        halfka::HalfKA,
+        network::{
+            Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, QPST,
+            RawNetwork, SCALE,
+        },
+        pst::Pst,
+        threats::Threats,
+    },
+    param::{MAX_DEPTH, MAX_DEPTH_USIZE},
 };
 
 mod halfka;
 pub mod network;
+mod pst;
 mod threats;
 mod ti;
 mod update;
@@ -94,6 +103,7 @@ impl CMCache {
 
 pub struct NNUE {
     network: Box<Network>,
+    pst: Pst,
     halfka: HalfKA,
     threats: Threats,
     nnz_table: [Aligned16; 256],
@@ -105,7 +115,7 @@ pub struct NNUE {
 
 impl NNUE {
     // const FT_SHIFT_SCALE: f32 = QA as f32 / (1 << FT_SHIFT) as f32;
-    const FT_TUNE : f32 = 1.0;
+    const FT_TUNE: f32 = 1.0;
     const DIVISOR: f32 = Self::FT_TUNE / ((1 << FT_SHIFT) as f32 * (QB as f32));
 
     pub fn head(&self) -> (usize, usize, usize) {
@@ -131,6 +141,7 @@ impl NNUE {
 
         let mut net = Self {
             network: Network::load(raw),
+            pst: Pst::new(),
             halfka: HalfKA::new(),
             threats: Threats::new(),
             nnz_table,
@@ -147,6 +158,7 @@ impl NNUE {
     }
 
     pub fn init(&mut self, board: &Board) {
+        self.pst.init(board, &self.network);
         self.halfka.init(board, &self.network);
         self.threats.init(board, &self.network);
         self.head = 0;
@@ -154,22 +166,26 @@ impl NNUE {
     }
 
     pub fn clear(&mut self) {
+        self.pst.clear(&self.network);
         self.halfka.clear(&self.network);
         // self.cache.clear();
     }
 
     pub fn catchup(&mut self, board: &Board) {
+        self.pst.catchup(self.pst.head, board, &self.network);
         self.halfka.catchup(self.halfka.head, board, &self.network);
         self.threats
             .catchup(self.threats.head, board, &self.network);
     }
 
     pub fn catchup_at(&mut self, head: (usize, usize, usize), board: &Board) {
+        self.pst.catchup(head.1, board, &self.network);
         self.halfka.catchup(head.1, board, &self.network);
         self.threats.catchup(head.2, board, &self.network);
     }
 
     pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) {
+        self.pst.make_move(board, m);
         self.halfka.make_move(board, m);
         self.threats.make_move(board, new_board, m);
         self.head += 1;
@@ -188,6 +204,7 @@ impl NNUE {
     }
 
     pub fn unmake_move(&mut self) {
+        self.pst.unmake_move();
         self.halfka.unmake_move();
         self.threats.unmake_move();
         self.head -= 1;
@@ -383,6 +400,15 @@ impl NNUE {
                 out = _mm512_fmadd_ps(l2_vec, w_vec, out);
             }
             let output = _mm512_reduce_add_ps(out) + self.network.output_bias[bucket];
+
+            // pst
+            let stm = board.side_to_move() as usize;
+            let pst = (self.pst.side[head.1].vals[stm][bucket]
+                - self.pst.side[head.1].vals[stm ^ 1][bucket]) as f32
+                / (2 * QPST) as f32;
+
+            let output = output + pst;
+
             (output * SCALE as f32) as i32
         }
     }
