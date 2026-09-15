@@ -701,7 +701,8 @@ impl Engine {
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
-                && tt_static as i32 >= beta as i32 + (200 - 20 * depth as i32 + 100 * is_pv as i32).max(1)
+                && tt_static as i32
+                    >= beta as i32 + (200 - 20 * depth as i32 + 100 * is_pv as i32).max(1)
                 && self.stack[ss].adjusted_static >= beta
             {
                 let reduction = (6 + depth as i32 / 4)
@@ -1427,9 +1428,7 @@ impl Engine {
                 let reduced_depth = (depth - fail_highs).max(1);
                 let score =
                     self.negamax(&pos, alpha, beta, reduced_depth, SS_SIZE_PRE, true, false);
-                if fail_highs <= 1 {
-                    self.sort_root_moves();
-                }
+                self.sort_root_moves();
 
                 if self.timer.read().unwrap().stopped() {
                     break;
@@ -1438,20 +1437,22 @@ impl Engine {
                 if score <= alpha {
                     beta = avg(alpha, beta);
                     alpha = (-VALUE_INF as i32).max(score as i32 - window as i32) as i16;
-
                     fail_highs = 0;
+
+                    window += window / 6;
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
 
-                    if score < 2000 {
+                    if is_decisive(score) {
+                        fail_highs = fail_highs.min(1);
+                    } else {
                         fail_highs += 1;
                     }
+
+                    window += window / 3;
                 } else {
                     break;
                 }
-
-                // need [ASP_WINDOW_MAX_SIZE] to be small enough to prevent overflow
-                window += window / ASP_WINDOW_SCALE;
             }
 
             // force exit

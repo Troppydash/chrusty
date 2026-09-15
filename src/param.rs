@@ -55,7 +55,7 @@ pub const SS_SIZE_PRE: usize = 10 as usize;
 pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 
 pub const ASP_WINDOW: i32 = 10;
-pub const ASP_WINDOW_SCORE_SCALE: i32 = 13000;
+pub const ASP_WINDOW_SCORE_SCALE: i32 = 23000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 4;
 pub const ASP_WINDOW_SCALE: i32 = 3;
 pub const CONTEMPT: i16 = 20;
