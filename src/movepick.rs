@@ -702,22 +702,24 @@ impl Movepick {
                 / 2048;
 
             ///// Threats /////
-            let mut threats_score = 0;
-            let piece = self.pos.piece_on(m.from).unwrap();
-            // moving into threat
-            if threatened[piece as usize].has(m.to) {
-                threats_score -= 3000;
-            }
-            // escaping from threat
-            if threatened[piece as usize].has(m.from) {
-                threats_score += escape[piece as usize];
-            }
-            // checks
-            if threats.checks[piece as usize].has(m.to) {
-                threats_score += 5000;
-            }
+            if self.ply > 0 {
+                let mut threats_score = 0;
+                let piece = self.pos.piece_on(m.from).unwrap();
+                // moving into threat
+                if threatened[piece as usize].has(m.to) {
+                    threats_score -= 3000;
+                }
+                // escaping from threat
+                if threatened[piece as usize].has(m.from) {
+                    threats_score += escape[piece as usize];
+                }
+                // checks
+                if threats.checks[piece as usize].has(m.to) {
+                    threats_score += 5000;
+                }
 
-            score += threats_score;
+                score += threats_score;
+            }
 
             if self.use_policy {
                 let value_from = self.policy_from[m.from as usize];
