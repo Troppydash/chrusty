@@ -362,8 +362,8 @@ const fn lcg_next(state: u64) -> (u64, u64) {
 }
 
 pub const fn get_50mr_key(half_move_clock: usize) -> u64 {
-    const BASE: usize = 101;
-    const STEP: usize = 16;
+    const BASE: usize = 24;
+    const STEP: usize = 8;
     const KEYS: [u64; 101] = {
         let mut state = 1337;
 

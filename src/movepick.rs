@@ -617,7 +617,7 @@ impl Movepick {
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
         // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
 
-        if self.depth <= 6
+        if self.depth <= 4
             && !self.pos.in_check()
             && !(!self.pv.is_null() && self.pos.piece_on(self.pv.to).is_some())
             && let Some(nnue) = self.nnue
@@ -739,7 +739,7 @@ impl Movepick {
         }
 
         if self.use_policy && best_policy_i >= 0 {
-            self.moves.get_mut(best_policy_i as usize).score += 10000;
+            self.moves.get_mut(best_policy_i as usize).score += 20000 / (self.depth as i32).max(1);
         }
     }
 

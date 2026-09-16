@@ -151,12 +151,9 @@ impl Engine {
     }
 
     fn evaluate(&mut self, pos: &Board) -> i16 {
-        let mut score = self
-            .nnue
-            .evaluate(pos)
-            .clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32);
-        // score -= score * pos.halfmove_clock() as i32 / 300;
-        return score as i16;
+        let mut score = self.nnue.evaluate(pos);
+        score -= (score - self.contempt(pos) as i32) * pos.halfmove_clock() as i32 / 300;
+        return score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
     }
 
     fn contempt(&self, pos: &Board) -> i16 {
