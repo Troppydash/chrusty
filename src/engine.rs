@@ -1007,7 +1007,7 @@ impl Engine {
             let mut score = 0;
 
             //- late move reduction
-            if depth >= 2 && move_count > 1 + 2 * is_root as usize {
+            if depth >= 2 && move_count > 1 + is_root as usize {
                 let mut reduction = self.heuristic.get_lmr(move_count, depth);
 
                 // check extension
