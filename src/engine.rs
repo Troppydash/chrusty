@@ -8,7 +8,7 @@ use cozy_chess::{Board, Move, Piece};
 use crate::{
     cuckoo,
     ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
-    helpers::avg,
+    helpers::{avg, lerp},
     heuristic::{CORR_LIMIT, Heuristic},
     movepick::{Movepick, Stage},
     nnue::{NNUE, network::Permute},
@@ -679,14 +679,18 @@ impl Engine {
             }
 
             //- static null move pruning
-            let margin = 1.max(70 * (depth - improving as i8) as i32 + complexity / 8);
+            let margin = {
+                let depth = depth as i32;
+                5 * depth * depth + 50 * depth - 60 * improving as i32 + complexity / 4
+            };
             if !is_pv
                 && is_valid(tt_static)
                 && !is_loss(beta)
                 && !is_win(tt_static)
-                && tt_static as i32 - margin >= beta as i32
+                && !has_excluded
+                && tt_static as i32 >= beta as i32 + margin.max(1)
             {
-                return avg(beta, tt_static);
+                return lerp(tt_static, beta, 0.7);
             }
 
             //- null move pruning
@@ -1050,6 +1054,10 @@ impl Engine {
                 if tt_data.hit && tt_data.flag == FLAG_EXACT {
                     reduction += 1500;
                 }
+
+                // if is_valid(tt_static) && is_quiet {
+                //     reduction += (alpha as i32 - tt_static as i32).clamp(-50, 100) * 4;
+                // }
 
                 reduction /= 1024;
                 let reduced_depth =

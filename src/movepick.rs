@@ -5,7 +5,7 @@ use cozy_chess::{
 };
 
 use crate::{
-    ext::{ColoredPiece, ExtBoard, ExtMove, ScoredMove, ScoredMoveList},
+    ext::{ColoredPiece, ExtBoard, ExtMove, MoveType, ScoredMove, ScoredMoveList},
     heuristic::{Heuristic, LOW_PLY},
     nnue::{NNUE, network::CM},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
