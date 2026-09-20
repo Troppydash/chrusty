@@ -13,9 +13,8 @@ use crate::{
     movepick::{Movepick, Stage},
     nnue::{NNUE, network::Permute},
     param::*,
-    rep::{RepTable, is_rep},
+    rep::is_rep,
     see::{self, see_ge},
-    sort,
     spsa::Parameters,
     stack::{KeyStack, PawnKey, PvList, SearchStack},
     tb::TableBase,
@@ -63,7 +62,6 @@ pub struct Engine {
     root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
     timer: Arc<RwLock<Timer>>,
-    rep: RepTable,
     table: TablePtr,
     nnue: NNUE,
     settings: Parameters,
@@ -83,7 +81,6 @@ impl Engine {
             startpos: Board::startpos(),
             root_moves: vec![].into_boxed_slice(),
             timer,
-            rep: RepTable::new(),
             table,
             nnue: NNUE::build(&Permute::load()),
             settings: Parameters::default(),
@@ -902,11 +899,12 @@ impl Engine {
                 let see_margin = if is_quiet {
                     self.settings.p_lowdepth_see_quiet_base
                         + self.settings.p_lowdepth_see_quiet_depth * lmr_depth * lmr_depth
+                        + history / 100
                 } else {
                     self.settings.p_lowdepth_see_capture_base
                         + self.settings.p_lowdepth_see_capture_depth * lmr_depth
                 };
-                if !see::see_ge(pos, next_move.inner, -see_margin) {
+                if !see::see_ge(pos, next_move.inner, (-see_margin).min(0)) {
                     continue;
                 }
 
@@ -1129,7 +1127,7 @@ impl Engine {
 
                 root_move.nodes += self.nodes - old_nodes;
                 root_move.average_score = if is_valid(root_move.average_score) {
-                    avg(root_move.average_score, score)
+                    lerp(root_move.average_score, score, 0.7)
                 } else {
                     score
                 };

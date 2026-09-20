@@ -7,7 +7,7 @@ use cozy_chess::{
 use crate::{
     ext::{
         BitBoardExt, ColoredPiece, ExtBoard,
-        MoveType::{NORMAL, PROMOTION},
+        MoveType::{NORMAL},
     },
     param::{pesto_value, pesto_value_opt},
 };

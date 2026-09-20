@@ -4,9 +4,9 @@ use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
 
 use crate::{
-    ext::{BitBoardExt, ColoredPiece, ExtBoard, ExtMove, MoveType},
+    ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType},
     nnue::{
-        network::{Aligned, HL, KINGS, Network, SimdOps},
+        network::{Aligned, HL, Network},
         update::{ThreatDelta, ThreatDeltaUpdates, ThreatUpdate},
     },
     param::MAX_DEPTH_USIZE,
@@ -101,7 +101,7 @@ impl Threats {
         self.head = 0;
         for side in Color::ALL {
             self.side[self.head].king_sq[side as usize] = board.king(side);
-            self.refresh(side, board, network);
+            self.refresh(side, self.head, board, network);
         }
     }
 
@@ -243,7 +243,7 @@ impl Threats {
             MoveType::CASTLE => {
                 // king takes rook
                 let rook_from = m.to;
-                let (king_to, rook_to) = board.castle_to(m);
+                let (_king_to, rook_to) = board.castle_to(m);
 
                 Self::record_sq_inout(board, rook_from, BitBoard::FULL, &mut threats.subs);
                 Self::record_sq_inout(&new_board, rook_to, BitBoard::FULL, &mut threats.adds);
@@ -286,7 +286,7 @@ impl Threats {
         self.head -= 1;
     }
 
-    fn refresh(&mut self, side: Color, board: &Board, network: &Box<Network>) {
+    fn refresh(&mut self, side: Color, head: usize, board: &Board, network: &Box<Network>) {
         let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
         let occ = board.occupied();
         for sq1 in occ & !board.pieces(Piece::King) {
@@ -322,7 +322,7 @@ impl Threats {
         }
 
         unsafe {
-            let out = self.side[self.head].vals[side as usize].as_mut_ptr();
+            let out = self.side[head].vals[side as usize].as_mut_ptr();
             for i in (0..HL).step_by(32 * 8) {
                 let mut acc = [_mm512_setzero_si512(); 8];
                 let mut add_idx = 0;
@@ -359,7 +359,7 @@ impl Threats {
             }
         }
 
-        self.side[self.head].is_clean[side as usize] = true;
+        self.side[head].is_clean[side as usize] = true;
     }
 
     pub fn catchup(&mut self, head: usize, board: &Board, network: &Box<Network>) {
@@ -374,7 +374,7 @@ impl Threats {
                     self.side[base].king_sq[side as usize],
                     self.side[head].king_sq[side as usize],
                 ) {
-                    self.refresh(side, board, network);
+                    self.refresh(side, head, board, network);
                     break;
                 }
 

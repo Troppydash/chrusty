@@ -1,12 +1,9 @@
-use std::{
-    collections::HashSet,
-    fmt::{Debug, Display},
-};
+use std::fmt::Debug;
 
 use arrayvec::ArrayVec;
-use cozy_chess::{Color, Piece, Square};
+use cozy_chess::Square;
 
-use crate::ext::{ColoredPiece, MoveType};
+use crate::ext::ColoredPiece;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum UpdateType {

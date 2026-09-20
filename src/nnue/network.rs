@@ -12,7 +12,7 @@ use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
 use arrayvec::ArrayVec;
-use cozy_chess::{BitBoard, Board, Color, File, Piece, Square};
+use cozy_chess::{Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
@@ -129,11 +129,6 @@ impl DerefMut for Aligned16 {
 pub struct SimdOps;
 impl SimdOps {
     #[inline(always)]
-    pub fn zero(out: &mut Aligned<i16, HL>) {
-        out.0.fill(0);
-    }
-
-    #[inline(always)]
     pub fn fused_copy(out: &mut Aligned<i16, HL>, in_vec: &Aligned<i16, HL>) {
         out.0.copy_from_slice(&in_vec.0);
     }
@@ -160,46 +155,6 @@ impl SimdOps {
     }
 
     #[inline(always)]
-    pub fn fused_add2(out: &mut Aligned<i16, HL>, add: &Aligned<i8, HL>) {
-        for i in 0..HL {
-            out[i] += add[i] as i16;
-        }
-    }
-
-    #[inline(always)]
-    pub fn fused_add_base(
-        out: &mut Aligned<i16, HL>,
-        base: &Aligned<i16, HL>,
-        add: &Aligned<i16, HL>,
-    ) {
-        for i in 0..HL {
-            out[i] = base[i] + add[i];
-        }
-    }
-
-    #[inline(always)]
-    pub fn fused_sub_base(
-        out: &mut Aligned<i16, HL>,
-        base: &Aligned<i16, HL>,
-        sub: &Aligned<i16, HL>,
-    ) {
-        for i in 0..HL {
-            out[i] = base[i] - sub[i];
-        }
-    }
-
-    #[inline(always)]
-    pub fn fused_add_add(
-        out: &mut Aligned<i16, HL>,
-        add1: &Aligned<i16, HL>,
-        add2: &Aligned<i16, HL>,
-    ) {
-        for i in 0..HL {
-            out[i] += add1[i] + add2[i];
-        }
-    }
-
-    #[inline(always)]
     pub fn fused_sub(out: &mut Aligned<i16, HL>, sub: &Aligned<i16, HL>) {
         for i in 0..HL {
             out[i] -= sub[i];
@@ -210,24 +165,6 @@ impl SimdOps {
     pub fn fused_sub32(out: &mut [i32; OUTPUTS], sub: &[i16; OUTPUTS]) {
         for i in 0..OUTPUTS {
             out[i] -= sub[i] as i32;
-        }
-    }
-
-    #[inline(always)]
-    pub fn fused_sub2(out: &mut Aligned<i16, HL>, sub: &Aligned<i8, HL>) {
-        for i in 0..HL {
-            out[i] -= sub[i] as i16;
-        }
-    }
-
-    #[inline(always)]
-    pub fn fused_sub_sub(
-        out: &mut Aligned<i16, HL>,
-        sub1: &Aligned<i16, HL>,
-        sub2: &Aligned<i16, HL>,
-    ) {
-        for i in 0..HL {
-            out[i] -= sub1[i] + sub2[i];
         }
     }
 
@@ -246,17 +183,6 @@ impl SimdOps {
     pub fn fused_add_sub32(out: &mut [i32; OUTPUTS], add: &[i16; OUTPUTS], sub: &[i16; OUTPUTS]) {
         for i in 0..OUTPUTS {
             out[i] += add[i] as i32 - sub[i] as i32;
-        }
-    }
-
-    #[inline(always)]
-    pub fn fused_add_sub2(
-        out: &mut Aligned<i16, HL>,
-        add: &Aligned<i8, HL>,
-        sub: &Aligned<i8, HL>,
-    ) {
-        for i in 0..HL {
-            out[i] += add[i] as i16 - sub[i] as i16;
         }
     }
 

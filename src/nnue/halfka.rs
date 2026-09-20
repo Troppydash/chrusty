@@ -117,8 +117,8 @@ impl HalfKA {
         self.head = 0;
         self.side[self.head].up.king_sq[0] = board.king(Color::White);
         self.side[self.head].up.king_sq[1] = board.king(Color::Black);
-        self.refresh(board, Color::White, network);
-        self.refresh(board, Color::Black, network);
+        self.refresh(board, self.head, Color::White, network);
+        self.refresh(board, self.head, Color::Black, network);
     }
 
     pub fn clear(&mut self, network: &Box<Network>) {
@@ -211,7 +211,7 @@ impl HalfKA {
         self.head -= 1;
     }
 
-    fn refresh(&mut self, board: &Board, side: Color, network: &Box<Network>) {
+    fn refresh(&mut self, board: &Board, head: usize, side: Color, network: &Box<Network>) {
         // finny table refresh
         let king_sq = board.king(side);
         let bucket = Network::get_king_bucket(king_sq.relative_to(side));
@@ -288,12 +288,12 @@ impl HalfKA {
         }
 
         SimdOps::fused_copy(
-            &mut self.side[self.head].vals[side as usize],
+            &mut self.side[head].vals[side as usize],
             &entry.acc.vals[side as usize],
         );
         entry.bycolor[side as usize] = board.by_color();
         entry.bypiece[side as usize] = board.by_piece();
-        self.side[self.head].is_clean[side as usize] = true;
+        self.side[head].is_clean[side as usize] = true;
     }
 
     pub fn catchup(&mut self, head: usize, board: &Board, network: &Box<Network>) {
@@ -310,7 +310,7 @@ impl HalfKA {
                     self.side[base].up.king_sq[side],
                     self.side[head].up.king_sq[side],
                 ) {
-                    self.refresh(board, Color::ALL[side], network);
+                    self.refresh(board, head, Color::ALL[side], network);
                     break;
                 }
 

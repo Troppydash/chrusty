@@ -1,6 +1,6 @@
 use std::{
     alloc::{Layout, alloc_zeroed, dealloc},
-    arch::x86_64::{_MM_HINT_ET0, _MM_HINT_T0, _MM_HINT_T1, _mm_prefetch},
+    arch::x86_64::{_MM_HINT_ET0, _mm_prefetch},
     ptr::{NonNull, null_mut},
 };
 
@@ -339,8 +339,6 @@ impl Drop for Table {
 #[derive(Clone)]
 pub struct TablePtr(pub *mut Table);
 impl TablePtr {
-    pub const NULL_PTR: TablePtr = TablePtr(null_mut());
-
     pub fn from_table(table: &mut Table) -> TablePtr {
         TablePtr(table as *mut Table)
     }

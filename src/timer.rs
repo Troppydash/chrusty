@@ -1,4 +1,4 @@
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant};
 
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 
@@ -62,7 +62,7 @@ impl Timer {
     }
 
     /// Returns (opt_time, max_time)
-    pub fn plan(moves: usize, time: i128, inc: i128) -> (i128, i128) {
+    pub fn plan(_moves: usize, time: i128, inc: i128) -> (i128, i128) {
         let overhead = 10;
         let moves_left = 40;
         let time_left = time + inc * (moves_left - 1) - overhead * (2 * moves_left);

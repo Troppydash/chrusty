@@ -257,7 +257,7 @@ impl Heuristic {
         &mut self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
-    pub fn get_counter(&self, prev_move: Move, prev_piece: Option<ColoredPiece>) -> Move {
+    pub fn _get_counter(&self, prev_move: Move, prev_piece: Option<ColoredPiece>) -> Move {
         if prev_move.is_null() {
             return Move::NULL_MOVE;
         }

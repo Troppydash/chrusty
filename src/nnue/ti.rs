@@ -2,7 +2,6 @@ use cozy_chess::{BitBoard, Color, Piece, Rank, Square};
 use std::sync::OnceLock;
 
 const NUM_ATTACKER_PIECES: usize = 5;
-const NUM_TARGET_PIECES: usize = 5;
 
 const ATTACKER_PIECES: [Piece; NUM_ATTACKER_PIECES] = [
     Piece::Pawn,

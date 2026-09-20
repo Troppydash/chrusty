@@ -108,7 +108,7 @@ pub fn is_upcoming_rep(pos: &Board, stack: &KeyStack, ply: i8) -> bool {
     let moves = MOVES.get().unwrap();
 
     let occ = pos.occupied();
-    let max_dist = std::cmp::min(pos.halfmove_clock() as usize, stack.head);
+    let max_dist = std::cmp::min(pos.halfmove_clock() as usize, stack.head).min(ply as usize);
     let pos_hash = pos.correct_hash();
     for i in (3..=max_dist).step_by(2) {
         let move_key = pos_hash ^ stack.keys[stack.head - i];
@@ -136,15 +136,7 @@ pub fn is_upcoming_rep(pos: &Board, stack: &KeyStack, ply: i8) -> bool {
             continue;
         }
 
-        if ply > i as i8 {
-            return true;
-        }
-
-        for j in ((i + 4)..=max_dist).step_by(2) {
-            if stack.keys[stack.head - j] == stack.keys[stack.head - i] {
-                return true;
-            }
-        }
+        return true;
     }
 
     false

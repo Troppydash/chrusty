@@ -546,56 +546,6 @@ impl Movepick {
         }
     }
 
-    fn sigmoid(x: f32) -> f32 {
-        1.0 / (1.0 + f32::exp(-x))
-    }
-
-    fn grid_to_string(grid: &[f32], board: &Board) -> String {
-        let mut out = "".to_string();
-        for i in 0..CM {
-            let i = if board.side_to_move() == Color::White {
-                i ^ 56
-            } else {
-                i
-            };
-            if board.colors(board.side_to_move()).has(Square::ALL[i]) {
-                out += &format!("{:.2}", grid[i]);
-            } else {
-                out += "0.00";
-            }
-            out += " ";
-
-            if i % 8 == 7 {
-                out += "\n";
-            }
-        }
-
-        out
-    }
-
-    fn grid_to_string2(grid: &[f32], board: &Board) -> String {
-        let mut out = "".to_string();
-        for i in 0..CM {
-            let i = if board.side_to_move() == Color::White {
-                i ^ 56
-            } else {
-                i
-            };
-            if !board.occupied().has(Square::ALL[i]) {
-                out += &format!("{:.2}", grid[i]);
-            } else {
-                out += "0.00";
-            }
-            out += " ";
-
-            if i % 8 == 7 {
-                out += "\n";
-            }
-        }
-
-        out
-    }
-
     fn score_quiets(&mut self, skip_killers: bool) {
         let threats = Threats::build(&self.pos);
         let threatened = [
@@ -612,8 +562,8 @@ impl Movepick {
             BitBoard::EMPTY,
         ];
         let escape = [0, 3000, 3000, 5000, 7000, 0];
-        let prev_move = unsafe { (*self.stack.add(self.ss - 1)).m };
-        let prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
+        let _prev_move = unsafe { (*self.stack.add(self.ss - 1)).m };
+        let _prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
         // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
 
@@ -635,13 +585,6 @@ impl Movepick {
                 let cm_sq = sq.relative_to(self.pos.side_to_move());
                 self.policy_to[sq as usize] = cm_to[cm_sq as usize] as f32;
             }
-
-            // println!(
-            //     "{}\n{}\n{}",
-            //     self.pos,
-            //     Self::grid_to_string(&cm_from, &self.pos),
-            //     Self::grid_to_string2(&cm_to, &self.pos),
-            // )
         }
 
         let mut best_policy = f32::MIN;

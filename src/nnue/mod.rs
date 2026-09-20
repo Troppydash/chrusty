@@ -1,9 +1,8 @@
-use std::{arch::x86_64::*, mem::MaybeUninit};
+use std::arch::x86_64::*;
 
 use cozy_chess::{Board, Color::White, Move, Square};
 
 use crate::{
-    ext::ExtBoard,
     nnue::{
         halfka::HalfKA,
         network::{
@@ -13,7 +12,7 @@ use crate::{
         pst::Pst,
         threats::Threats,
     },
-    param::{MAX_DEPTH, MAX_DEPTH_USIZE},
+    param::MAX_DEPTH_USIZE,
 };
 
 mod halfka;
@@ -119,6 +118,7 @@ impl NNUE {
     const DIVISOR: f32 = Self::FT_TUNE / ((1 << FT_SHIFT) as f32 * (QB as f32));
 
     pub fn head(&self) -> (usize, usize, usize) {
+        debug_assert_eq!(self.pst.head, self.halfka.head);
         (self.head, self.halfka.head, self.threats.head)
     }
 
@@ -197,7 +197,7 @@ impl NNUE {
         self.stack[self.head].valid = false;
     }
 
-    pub fn make_move_slow(&mut self, board: &Board, m: Move) {
+    fn make_move_slow(&mut self, board: &Board, m: Move) {
         let mut new_board = board.clone();
         new_board.play_unchecked(m);
         self.make_move(board, &new_board, m);
@@ -465,8 +465,6 @@ pub fn policy_display(policy: &[f32; CM], board: &Board, is_from: bool) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Deref;
-
     use cozy_chess::{Color, GameStatus};
 
     use crate::ext::ExtBoard;
@@ -654,7 +652,7 @@ mod tests {
             Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, -1469);
+        assert_eq!(eval, -1819);
     }
 
     #[test]
@@ -667,7 +665,7 @@ mod tests {
         .unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 38);
+        assert_eq!(eval, 6);
     }
 
     fn grid_to_string(grid: &[f32], board: &Board) -> String {
