@@ -1,6 +1,6 @@
 use std::arch::x86_64::*;
 
-use cozy_chess::{Board, Color::White, Move, Square};
+use cozy_chess::{Board, Color::White, File, Move, Square};
 
 use crate::{
     nnue::{
@@ -448,8 +448,13 @@ pub fn policy_display(policy: &[f32; CM], board: &Board, is_from: bool) -> Strin
         } else {
             i
         };
+        let flip = if board.king(board.side_to_move()).file() >= File::E {
+            7
+        } else {
+            0
+        };
         if mask.has(Square::ALL[i]) {
-            out += &format!("{:.2}", policy[i] as f32);
+            out += &format!("{:.2}", policy[i ^ flip] as f32);
         } else {
             out += "0.00";
         }

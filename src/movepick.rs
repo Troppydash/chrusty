@@ -1,7 +1,7 @@
 use cozy_chess::{
     BitBoard, Board,
     Color::{self, Black, White},
-    Move, Piece, Rank, Square,
+    File, Move, Piece, Rank, Square,
 };
 
 use crate::{
@@ -566,27 +566,6 @@ impl Movepick {
         let _prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
         // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
-
-        if self.depth <= 4
-            && !self.pos.in_check()
-            && !(!self.pv.is_null() && self.pos.piece_on(self.pv.to).is_some())
-            && let Some(nnue) = self.nnue
-        {
-            self.use_policy = true;
-            let nnue = unsafe { &mut *nnue };
-            let (cm_from, cm_to) = nnue.cm(self.nnue_head, &self.pos);
-            // TODO: make this loop faster maybe
-            for sq in self.pos.colors(self.pos.side_to_move()) {
-                let cm_sq = sq.relative_to(self.pos.side_to_move());
-                self.policy_from[sq as usize] = cm_from[cm_sq as usize] as f32;
-            }
-
-            for sq in !self.pos.occupied() {
-                let cm_sq = sq.relative_to(self.pos.side_to_move());
-                self.policy_to[sq as usize] = cm_to[cm_sq as usize] as f32;
-            }
-        }
-
         let mut best_policy = f32::MIN;
         let mut best_policy_i = -1;
 
@@ -664,27 +643,9 @@ impl Movepick {
                 score += threats_score;
             }
 
-            if self.use_policy {
-                let value_from = self.policy_from[m.from as usize];
-                let value_to = self.policy_to[m.to as usize];
-                let component =
-                    (8000.0 * (value_from + value_to + 1.75)) as i32 / (self.depth as i32).max(1);
-                score += component;
-
-                let policy = value_from + value_to;
-                if policy > best_policy {
-                    best_policy = policy;
-                    best_policy_i = i as i32;
-                }
-            }
-
             self.moves.get_mut(i).score = score;
 
             i += 1;
-        }
-
-        if self.use_policy && best_policy_i >= 0 {
-            self.moves.get_mut(best_policy_i as usize).score += 20000 / (self.depth as i32).max(1);
         }
     }
 

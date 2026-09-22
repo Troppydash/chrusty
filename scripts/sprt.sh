@@ -20,7 +20,7 @@ mkdir -p $LOG_FILE
   -each tc=20+0.2 \
   -srand $RANDOM \
   -resign movecount=3 score=600 -draw movenumber=40 movecount=6 score=20 \
-  -sprt elo0=0 elo1=5 alpha=0.15 beta=0.15 \
+  -sprt elo0=0 elo1=3 alpha=0.15 beta=0.15 \
   -rounds 10000 -concurrency $CONCURRENCY \
   -pgnout notation=san nodes=true file=$LOG_FILE/pgn append=false \
   -show-latency -ratinginterval 1 \

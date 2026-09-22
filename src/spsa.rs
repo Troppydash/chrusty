@@ -71,7 +71,7 @@ define! {
     p_lmr_pv: i32 = 903, 500, 1200, 300,
     p_lmr_complexity: i32 = 925, 600, 1300, 300,
     p_lmr_history: i32 = 1243, 600, 1300, 300,
-    p_lmr_quiet_div: i32 = 9000, 6000, 12000, 300,
+    p_lmr_quiet_div: i32 = 12000, 6000, 12000, 300,
     p_lmr_capture_div: i32 = 9000, 7000, 17000, 300,
     p_probcut_beta : i32 = 200, 100, 300, 20,
     p_probcut_margin : i32 = 640, 500, 800, 20,
