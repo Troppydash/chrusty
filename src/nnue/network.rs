@@ -16,7 +16,7 @@ use cozy_chess::{Board, Color, File, Piece, Square};
 use std::mem;
 use std::ptr;
 
-pub const HL: usize = 768;
+pub const HL: usize = 1024;
 pub const L1: usize = 16;
 pub const L2: usize = 32;
 pub const OUTPUTS: usize = 8;
@@ -24,7 +24,7 @@ pub const QA: i32 = 255;
 pub const QB: i32 = 128;
 pub const QPST: i32 = 128 * 128;
 pub const FT_SHIFT: usize = 8;
-pub const SCALE: i32 = 400;
+pub const SCALE: i32 = 600;
 pub const CM: usize = 64;
 
 const HALF_KING_BUCKET: [usize; 32] = [
@@ -329,12 +329,12 @@ pub struct RawNetwork {
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
-    cm_from_weights: [[[i8; HL]; CM]; OUTPUTS],
-    cm_from_bias: [[f32; CM]; OUTPUTS],
+    // cm_from_weights: [[[i8; HL]; CM]; OUTPUTS],
+    // cm_from_bias: [[f32; CM]; OUTPUTS],
 
     // transposed
-    cm_to_weights: [[[i8; HL]; CM]; OUTPUTS],
-    cm_to_bias: [[f32; CM]; OUTPUTS],
+    // cm_to_weights: [[[i8; HL]; CM]; OUTPUTS],
+    // cm_to_bias: [[f32; CM]; OUTPUTS],
 
     // transposed
     l2_weights: [[[f32; L1 * 2]; L2]; OUTPUTS],
@@ -416,9 +416,9 @@ impl RawNetwork {
 
             for output in 0..OUTPUTS {
                 for l1_idx in 0..CM {
-                    self.cm_from_weights[output][l1_idx][i] =
-                        old.cm_from_weights[output][l1_idx][j];
-                    self.cm_to_weights[output][l1_idx][i] = old.cm_to_weights[output][l1_idx][j];
+                    // self.cm_from_weights[output][l1_idx][i] =
+                    //    old.cm_from_weights[output][l1_idx][j];
+                    // self.cm_to_weights[output][l1_idx][i] = old.cm_to_weights[output][l1_idx][j];
                 }
             }
         }
@@ -505,18 +505,18 @@ impl Network {
             for c in 0..(HL / 4) {
                 for j in 0..CM {
                     for k in 0..4 {
-                        net.cm_from_weights[bucket][c][j * 4 + k] =
-                            raw.cm_from_weights[bucket][j][c * 4 + k];
-                        net.cm_to_weights[bucket][c][j * 4 + k] =
-                            raw.cm_to_weights[bucket][j][c * 4 + k];
+                        // net.cm_from_weights[bucket][c][j * 4 + k] =
+                        //     raw.cm_from_weights[bucket][j][c * 4 + k];
+                        // net.cm_to_weights[bucket][c][j * 4 + k] =
+                        //     raw.cm_to_weights[bucket][j][c * 4 + k];
                     }
                 }
             }
         }
         for a in 0..OUTPUTS {
             for b in 0..CM {
-                net.cm_from_bias[a][b] = raw.cm_from_bias[a][b];
-                net.cm_to_bias[a][b] = raw.cm_to_bias[a][b];
+               // net.cm_from_bias[a][b] = raw.cm_from_bias[a][b];
+               // net.cm_to_bias[a][b] = raw.cm_to_bias[a][b];
             }
         }
 

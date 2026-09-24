@@ -948,7 +948,7 @@ impl Engine {
                         )
                     && capture_futility_score < (alpha as i32)
                 {
-                    if !is_decisive(best_score) && futility_score > best_score as i32 {
+                    if !is_decisive(best_score) && capture_futility_score > best_score as i32 {
                         best_score = capture_futility_score as i16;
                     }
 
@@ -1446,11 +1446,11 @@ impl Engine {
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
 
-                    if is_decisive(score) {
-                        fail_highs = fail_highs.min(1);
-                    } else {
-                        fail_highs += 1;
-                    }
+                    // if is_decisive(score) {
+                    //     fail_highs = fail_highs.min(1);
+                    // } else {
+                    //     fail_highs += 1;
+                    // }
 
                     window += window / 3;
                 } else {
