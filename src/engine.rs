@@ -434,6 +434,7 @@ impl Engine {
         assert!(!(is_pv && cut_node));
 
         self.stack[ss].pv_list.clear();
+        self.stack[ss].move_count = 0;
 
         if self.nodes % 4096 == 0 {
             self.timer.write().unwrap().check();
@@ -788,7 +789,7 @@ impl Engine {
                 assert!(probcut_depth > 0);
 
                 let probcut_beta = probcut_beta as i16;
-                let mut move_count = 0;
+                self.stack[ss].move_count = 0;
                 let mut best_score = -VALUE_INF;
                 loop {
                     let next_move = movepick.next_move();
@@ -800,7 +801,7 @@ impl Engine {
                         continue;
                     }
 
-                    move_count += 1;
+                    self.stack[ss].move_count += 1;
                     self.table.get().prefetch(pos.new_hash(next_move.inner));
                     let new_pos = self.make_move(pos, next_move.inner, key, ss);
                     let mut score = -self.qsearch(
@@ -851,7 +852,7 @@ impl Engine {
             }
         }
 
-        let mut move_count = 0;
+        self.stack[ss].move_count = 0;
         let mut best_move = Move::NULL_MOVE;
 
         let mut quiets = MoveList::new();
@@ -881,7 +882,7 @@ impl Engine {
             }
 
             let is_quiet = pos.is_quiet(next_move.inner);
-            move_count += 1;
+            self.stack[ss].move_count += 1;
             let old_nodes = self.nodes;
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
@@ -914,7 +915,9 @@ impl Engine {
                 }
 
                 //- late move pruning
-                if move_count as i32 >= (3 + depth as i32 * depth as i32) / (2 - improving as i32) {
+                if self.stack[ss].move_count as i32
+                    >= (3 + depth as i32 * depth as i32) / (2 - improving as i32)
+                {
                     movepick.skip_quiets();
                 }
 
@@ -962,6 +965,7 @@ impl Engine {
                 let to_beat = tt_data.score - depth as i16;
                 let reduced_depth = (depth - 1) / 2;
                 self.stack[ss].excluded = tt_data.pv;
+                let old_move_count = self.stack[ss].move_count;
                 let next_best_score = self.negamax(
                     pos,
                     to_beat - 1,
@@ -971,6 +975,7 @@ impl Engine {
                     false,
                     cut_node,
                 );
+                self.stack[ss].move_count = old_move_count;
                 self.stack[ss].excluded = Move::NULL_MOVE;
 
                 if self.timer.read().unwrap().stopped() {
@@ -1009,8 +1014,8 @@ impl Engine {
             let mut score = 0;
 
             //- late move reduction
-            if depth >= 2 && move_count > 1 + is_root as usize {
-                let mut reduction = self.heuristic.get_lmr(move_count, depth);
+            if depth >= 2 && self.stack[ss].move_count > 1 + is_root as usize {
+                let mut reduction = self.heuristic.get_lmr(self.stack[ss].move_count, depth);
 
                 // check extension
                 if pos.in_check() {
@@ -1053,9 +1058,9 @@ impl Engine {
                     reduction += 1500;
                 }
 
-                // if is_valid(tt_static) && is_quiet {
-                //     reduction += (alpha as i32 - tt_static as i32).clamp(-50, 100) * 4;
-                // }
+                if is_valid(tt_static) && is_quiet {
+                    reduction += (alpha as i32 - tt_static as i32).clamp(-50, 100) * 4;
+                }
 
                 reduction /= 1024;
                 let reduced_depth =
@@ -1095,7 +1100,7 @@ impl Engine {
                         );
                     }
                 }
-            } else if !is_pv || move_count > 1 {
+            } else if !is_pv || self.stack[ss].move_count > 1 {
                 score = -self.negamax(
                     &new_pos,
                     -(alpha + 1),
@@ -1107,7 +1112,7 @@ impl Engine {
                 );
             }
 
-            if is_pv && (move_count == 1 || score > alpha) {
+            if is_pv && (self.stack[ss].move_count == 1 || score > alpha) {
                 score = -self.negamax(&new_pos, -beta, -alpha, new_depth, ss + 1, true, false);
             }
 
@@ -1132,7 +1137,7 @@ impl Engine {
                     score
                 };
 
-                if move_count == 1 || score > alpha {
+                if self.stack[ss].move_count == 1 || score > alpha {
                     root_move.score = score;
                     root_move
                         .pv_list
@@ -1175,7 +1180,7 @@ impl Engine {
             best_score = best_score.min(max_score);
         }
 
-        if move_count == 0 {
+        if self.stack[ss].move_count == 0 {
             if has_excluded {
                 best_score = alpha;
             } else if in_check {
@@ -1483,8 +1488,9 @@ impl Engine {
                     0.0
                 };
 
-                let nodes_factor =
-                    (0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64).clamp(-0.4, 0.4);
+                let nodes_factor = ((0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64)
+                    * 1.2)
+                    .clamp(-0.4, 0.6);
                 factors *= (1.0 + instability_factor)
                     * (1.0 + score_factor)
                     * (1.0 + prev_score_factor)

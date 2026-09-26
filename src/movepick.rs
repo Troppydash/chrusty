@@ -499,7 +499,7 @@ impl Movepick {
                 * heuristic
                     .get_cont_hist(get_cont_hist_prev(6), &self.pos, m)
                     .get() as i32)
-            / 2048;
+            / 1024;
 
         score
     }
@@ -621,7 +621,7 @@ impl Movepick {
                     * heuristic
                         .get_cont_hist(get_cont_hist_prev(6), &self.pos, m)
                         .get() as i32)
-                / 2048;
+                / 1024;
 
             ///// Threats /////
             if self.ply > 0 {

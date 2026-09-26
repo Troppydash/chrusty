@@ -10,7 +10,7 @@ fn main() {
         .to_string();
     let target_file = format!("../../nets/{}.bin", hash);
 
-    let permute_index = 2;
+    let permute_index = 1;
     let permute_file = format!("./nets/permute_{}_{}.bin", hash, permute_index);
     let permute_file_next = format!("./nets/permute_{}_{}.bin", hash, permute_index + 1);
     if Path::new(&permute_file).exists() {

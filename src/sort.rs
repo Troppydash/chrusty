@@ -22,7 +22,7 @@ use crate::{
 // TODO: improve this asw
 
 fn filter(entry: &TrainingDataEntry) -> bool {
-    !entry.pos.is_checked(entry.pos.side_to_move()) && entry.score.abs() < 5000
+    !entry.pos.is_checked(entry.pos.side_to_move()) && entry.ply > 8
 }
 
 fn get_boards(file: &str, skip: usize, iter: usize) -> Vec<Board> {

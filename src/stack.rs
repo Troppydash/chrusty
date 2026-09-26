@@ -63,6 +63,7 @@ pub struct SearchStack {
     pub piece: Option<ColoredPiece>,
     pub cont_corrhist: (usize, usize),
     pub cont_hist: ContHist,
+    pub move_count: usize,
 }
 
 impl SearchStack {
@@ -79,6 +80,7 @@ impl SearchStack {
             piece: None,
             cont_corrhist: (12, 0),
             cont_hist: (0, 12, 0),
+            move_count: 0,
         }
     }
 
@@ -95,6 +97,7 @@ impl SearchStack {
             piece: None,
             cont_corrhist: (12, 0),
             cont_hist: (0, 12, 0),
+            move_count: 0,
         }
     }
 }

@@ -355,7 +355,7 @@ impl Heuristic {
             [m.to as usize]
     }
 
-    pub fn add_cont_history(
+    fn add_cont_history(
         &mut self,
         pos: &Board,
         m: Move,
@@ -380,6 +380,22 @@ impl Heuristic {
                 .add(bonus / 4);
         }
     }
+
+    // pub fn update_tt_history(
+    //     &mut self,
+    //     pos: &Board,
+    //     tt_move: Move,
+    //     depth: i8,
+    //     ply: i8,
+    //     stack: &[SearchStack],
+    //     ss: usize,
+    // ) {
+    //     debug_assert!(pos.is_quiet(tt_move));
+
+    //     let bonus = (i32::min(100 * depth as i32 - 70, 1000)) as i16;
+    //     self.get_main_history_mut(pos, tt_move).add(bonus);
+    //     // self.add_cont_history(pos, tt_move, stack, ss, bonus);
+    // }
 
     pub fn update_history(
         &mut self,
