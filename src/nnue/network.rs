@@ -7,7 +7,12 @@ use std::ops::DerefMut;
 use crate::ext::ColoredPiece;
 use crate::nnue::ti;
 use crate::nnue::ti::FULL_THREATS;
+use crate::nnue::ti::MAX_TI_INPUTS;
+use crate::nnue::ti::PINNED;
+use crate::nnue::ti::TI_INPUTS;
+use crate::nnue::update::PinnedDelta;
 use crate::nnue::update::ThreatDelta;
+use crate::nnue::update::ThreatDeltaGeneral;
 use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
@@ -321,20 +326,12 @@ pub struct RawNetwork {
     pst_bias: [i16; OUTPUTS],
 
     feature_weights: [[[i16; HL]; 768]; KINGS],
-    threat_weights: [[i8; HL]; FULL_THREATS],
+    threat_weights: [[i8; HL]; TI_INPUTS],
     feature_bias: [i16; HL],
 
     // transposed
     l1_weights: [[[i8; HL]; L1]; OUTPUTS],
     l1_bias: [[f32; L1]; OUTPUTS],
-
-    // transposed
-    // cm_from_weights: [[[i8; HL]; CM]; OUTPUTS],
-    // cm_from_bias: [[f32; CM]; OUTPUTS],
-
-    // transposed
-    // cm_to_weights: [[[i8; HL]; CM]; OUTPUTS],
-    // cm_to_bias: [[f32; CM]; OUTPUTS],
 
     // transposed
     l2_weights: [[[f32; L1 * 2]; L2]; OUTPUTS],
@@ -404,7 +401,7 @@ impl RawNetwork {
                 }
             }
 
-            for k in 0..FULL_THREATS {
+            for k in 0..TI_INPUTS {
                 self.threat_weights[k][i] = old.threat_weights[k][j];
             }
 
@@ -431,17 +428,11 @@ pub struct Network {
     pub pst_bias: [i16; OUTPUTS],
 
     pub feature_weights: [[Aligned<i16, HL>; 768]; KINGS],
-    pub threat_weights: [Aligned<i8, HL>; FULL_THREATS],
+    pub threat_weights: [Aligned<i8, HL>; TI_INPUTS],
     pub feature_bias: Aligned<i16, HL>,
 
     pub l1_weights: [[Aligned<i8, { 4 * L1 }>; HL / 4]; OUTPUTS],
     pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
-
-    pub cm_from_weights: [[Aligned<i8, { 4 * CM }>; HL / 4]; OUTPUTS],
-    pub cm_from_bias: [Aligned<f32, CM>; OUTPUTS],
-
-    pub cm_to_weights: [[Aligned<i8, { 4 * CM }>; HL / 4]; OUTPUTS],
-    pub cm_to_bias: [Aligned<f32, CM>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
     pub l2_weights: [[Aligned<f32, L2>; L1 * 2]; OUTPUTS],
@@ -475,7 +466,7 @@ impl Network {
             }
         }
 
-        for a in 0..FULL_THREATS {
+        for a in 0..TI_INPUTS {
             for b in 0..HL {
                 net.threat_weights[a][b] = raw.threat_weights[a][b];
             }
@@ -515,8 +506,8 @@ impl Network {
         }
         for a in 0..OUTPUTS {
             for b in 0..CM {
-               // net.cm_from_bias[a][b] = raw.cm_from_bias[a][b];
-               // net.cm_to_bias[a][b] = raw.cm_to_bias[a][b];
+                // net.cm_from_bias[a][b] = raw.cm_from_bias[a][b];
+                // net.cm_to_bias[a][b] = raw.cm_to_bias[a][b];
             }
         }
 
@@ -664,6 +655,44 @@ impl Network {
             target_square.relative_to(side) as usize,
             target as usize,
         ) as i32
+    }
+
+    pub fn threat_pinned_index(
+        &self,
+        king_sq: Square,
+        side: Color,
+        side_pinned: bool,
+        piece: ColoredPiece,
+        mut square: Square,
+    ) -> usize {
+        if (king_sq as u16 & 0b100) != 0 {
+            square = square.flip_file();
+        }
+
+        let index768 = ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64
+            + square.relative_to(side) as usize;
+
+        FULL_THREATS
+            + (if side_pinned {
+                index768
+            } else {
+                index768 + PINNED / 2
+            })
+    }
+
+    pub fn threat_pinned_index_from_threat(
+        &self,
+        king_sq: Square,
+        side: Color,
+        delta: &PinnedDelta,
+    ) -> usize {
+        self.threat_pinned_index(
+            king_sq,
+            side,
+            side == delta.pinned_king_color,
+            delta.piece,
+            delta.square,
+        )
     }
 
     pub fn apply_update(
@@ -842,18 +871,32 @@ impl Network {
         side: Color,
         king_sq: Square,
     ) {
-        let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
-        let mut subs: ArrayVec<usize, 96> = ArrayVec::new();
+        let mut adds: ArrayVec<usize, MAX_TI_INPUTS> = ArrayVec::new();
+        let mut subs: ArrayVec<usize, MAX_TI_INPUTS> = ArrayVec::new();
         for add in update.adds.iter() {
-            let i = self.threat_feature_lookup_index_from_threat(king_sq, side, add);
-            if i >= 0 {
-                adds.push(i as usize);
+            match add {
+                ThreatDeltaGeneral::ThreatDelta(add) => {
+                    let i = self.threat_feature_lookup_index_from_threat(king_sq, side, add);
+                    if i >= 0 {
+                        adds.push(i as usize);
+                    }
+                }
+                ThreatDeltaGeneral::PinnedDelta(add) => {
+                    adds.push(self.threat_pinned_index_from_threat(king_sq, side, add) as usize);
+                }
             }
         }
         for sub in update.subs.iter() {
-            let i = self.threat_feature_lookup_index_from_threat(king_sq, side, sub);
-            if i >= 0 {
-                subs.push(i as usize);
+            match sub {
+                ThreatDeltaGeneral::ThreatDelta(sub) => {
+                    let i = self.threat_feature_lookup_index_from_threat(king_sq, side, sub);
+                    if i >= 0 {
+                        subs.push(i as usize);
+                    }
+                }
+                ThreatDeltaGeneral::PinnedDelta(sub) => {
+                    subs.push(self.threat_pinned_index_from_threat(king_sq, side, sub) as usize);
+                }
             }
         }
 
@@ -910,40 +953,5 @@ impl Network {
                 }
             }
         }
-        // SimdOps::fused_copy(next, base);
-
-        // let mut i = 0;
-        // let mut j = 0;
-        // while i < update.adds.len() && j < update.subs.len() {
-        //     let add = update.adds[i];
-        //     let sub = update.subs[j];
-
-        //     SimdOps::fused_add_sub2(
-        //         next,
-        //         self.threat_feature_lookup_from_threat(king_sq, side, add),
-        //         self.threat_feature_lookup_from_threat(king_sq, side, sub),
-        //     );
-
-        //     i += 1;
-        //     j += 1;
-        // }
-
-        // while i < update.adds.len() {
-        //     let add = update.adds[i];
-        //     SimdOps::fused_add2(
-        //         next,
-        //         self.threat_feature_lookup_from_threat(king_sq, side, add),
-        //     );
-        //     i += 1;
-        // }
-
-        // while j < update.subs.len() {
-        //     let sub = update.subs[j];
-        //     SimdOps::fused_sub2(
-        //         next,
-        //         self.threat_feature_lookup_from_threat(king_sq, side, sub),
-        //     );
-        //     j += 1;
-        // }
     }
 }

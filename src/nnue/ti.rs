@@ -62,6 +62,9 @@ const fn half_size() -> usize {
 const HALF_THREATS: usize = half_size();
 const THREATS: usize = 2 * HALF_THREATS;
 pub const FULL_THREATS: usize = 2 * THREATS;
+pub const PINNED: usize = 2 * 12 * 64;
+pub const TI_INPUTS: usize = FULL_THREATS + PINNED;
+pub const MAX_TI_INPUTS: usize = 96;
 
 fn geometric_attacks(piece: Piece, sq: Square, attacker_is_us: bool) -> BitBoard {
     match piece {
@@ -156,8 +159,12 @@ impl ThreatLut {
 
 static THREAT_LUT: OnceLock<ThreatLut> = OnceLock::new();
 
+pub fn init() {
+    THREAT_LUT.get_or_init(ThreatLut::build);
+}
+
 fn threat_lut() -> &'static ThreatLut {
-    THREAT_LUT.get_or_init(ThreatLut::build)
+    THREAT_LUT.get().expect("threat LUT must be initialized in main")
 }
 
 // outputs [0..FULL_THREATS)
@@ -180,11 +187,7 @@ pub fn threat_feature_index(
         Square::ALL[to],
         slot as usize,
     );
-    if is_attack {
-        index
-    } else {
-        index + THREATS
-    }
+    if is_attack { index } else { index + THREATS }
 }
 
 #[inline]

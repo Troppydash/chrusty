@@ -2,7 +2,7 @@ use cozy_chess::{Board, Square};
 
 use crate::{ext::ColoredPiece, pesto};
 
-pub const MAX_DEPTH: i8 = 96;
+pub const MAX_DEPTH: i8 = 107;
 pub const MAX_DEPTH_USIZE: usize = MAX_DEPTH as usize;
 pub const VALUE_NONE: i16 = 32701;
 pub const VALUE_INF: i16 = 32700;

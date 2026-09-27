@@ -23,6 +23,7 @@ mod threats;
 
 fn main() {
     cuckoo::init();
+    nnue::init();
     let args: Vec<String> = env::args().collect();
     uci::start(args);
 }

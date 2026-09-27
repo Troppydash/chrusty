@@ -7,7 +7,8 @@ use crate::{
     ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType},
     nnue::{
         network::{Aligned, HL, Network},
-        update::{ThreatDelta, ThreatDeltaUpdates, ThreatUpdate},
+        ti::MAX_TI_INPUTS,
+        update::{PinnedDelta, ThreatDelta, ThreatDeltaGeneral, ThreatDeltaUpdates, ThreatUpdate},
     },
     param::MAX_DEPTH_USIZE,
 };
@@ -140,7 +141,9 @@ impl Threats {
         };
         for target_sq in attacks & occ & mask & !(board.pieces(Piece::King)) {
             let piece2: ColoredPiece = board.color_piece_on(target_sq).unwrap();
-            out.push(ThreatDelta::new(piece, sq, piece2, target_sq));
+            out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
+                piece, sq, piece2, target_sq,
+            )));
         }
 
         // remove incoming
@@ -156,7 +159,9 @@ impl Threats {
 
         for in_sq in incoming & occ & mask {
             let in_piece = board.color_piece_on(in_sq).unwrap();
-            out.push(ThreatDelta::new(in_piece, in_sq, piece, sq));
+            out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
+                in_piece, in_sq, piece, sq,
+            )));
         }
     }
 
@@ -196,11 +201,15 @@ impl Threats {
                 }
 
                 if ty.has(a) {
-                    out.push(ThreatDelta::new(pa, a, pb, b));
+                    out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
+                        pa, a, pb, b,
+                    )));
                 }
 
                 if ty.has(b) {
-                    out.push(ThreatDelta::new(pb, b, pa, a));
+                    out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
+                        pb, b, pa, a,
+                    )));
                 }
             }
         }
@@ -278,7 +287,83 @@ impl Threats {
                     // horizontal ignore
                 );
             }
-            _ => unreachable!(),
+            MoveType::NONE => unreachable!(),
+        }
+
+        let mut dirty = BitBoard::EMPTY;
+        if board.piece_on(m.to).is_some() {
+            dirty |= m.to.bitboard();
+        }
+
+        // pinned updates
+        // diff bitboard and mark dirty
+
+        // stm of [board]
+        {
+            let old_stm = board.pinned();
+            let new_stm = new_board.opp_pinned();
+
+            let mut removed = old_stm & !new_stm;
+            let mut added = new_stm & !old_stm;
+
+            if !(dirty & (new_stm & old_stm)).is_empty() {
+                removed |= dirty;
+                added |= dirty;
+            }
+
+            for square in removed {
+                threats
+                    .subs
+                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
+                        piece: board.color_piece_on(square).unwrap(),
+                        square,
+                        pinned_king_color: board.side_to_move(),
+                    }))
+            }
+
+            for square in added {
+                threats
+                    .adds
+                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
+                        piece: new_board.color_piece_on(square).unwrap(),
+                        square,
+                        pinned_king_color: board.side_to_move(),
+                    }))
+            }
+        }
+
+        // ntm of [board]
+        {
+            let old_stm = board.opp_pinned();
+            let new_stm = new_board.pinned();
+
+            let mut removed = old_stm & !new_stm;
+            let mut added = new_stm & !old_stm;
+
+            if !(dirty & (new_stm & old_stm)).is_empty() {
+                removed |= dirty;
+                added |= dirty;
+            }
+
+            for square in removed {
+                threats
+                    .subs
+                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
+                        piece: board.color_piece_on(square).unwrap(),
+                        square,
+                        pinned_king_color: !board.side_to_move(),
+                    }))
+            }
+
+            for square in added {
+                threats
+                    .adds
+                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
+                        piece: new_board.color_piece_on(square).unwrap(),
+                        square,
+                        pinned_king_color: !board.side_to_move(),
+                    }))
+            }
         }
     }
 
@@ -287,7 +372,7 @@ impl Threats {
     }
 
     fn refresh(&mut self, side: Color, head: usize, board: &Board, network: &Box<Network>) {
-        let mut adds: ArrayVec<usize, 96> = ArrayVec::new();
+        let mut adds: ArrayVec<usize, MAX_TI_INPUTS> = ArrayVec::new();
         let occ = board.occupied();
         for sq1 in occ & !board.pieces(Piece::King) {
             let piece1 = board.color_piece_on(sq1).unwrap();
@@ -319,6 +404,29 @@ impl Threats {
                     adds.push(i as usize);
                 }
             }
+        }
+
+        // pinned features
+        // board stm
+        for square in board.pinned() {
+            adds.push(network.threat_pinned_index(
+                board.king(side),
+                side,
+                side == board.side_to_move(),
+                board.color_piece_on(square).unwrap(),
+                square,
+            ));
+        }
+
+        // board ntm
+        for square in board.opp_pinned() {
+            adds.push(network.threat_pinned_index(
+                board.king(side),
+                side,
+                side != board.side_to_move(),
+                board.color_piece_on(square).unwrap(),
+                square,
+            ));
         }
 
         unsafe {

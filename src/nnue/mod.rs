@@ -22,6 +22,10 @@ mod threats;
 mod ti;
 mod update;
 
+pub fn init() {
+    ti::init();
+}
+
 #[derive(Clone)]
 struct Stack {
     valid: bool,
@@ -266,78 +270,6 @@ impl NNUE {
         }
     }
 
-    pub fn cm(&mut self, head: (usize, usize, usize), board: &Board) -> ([f32; CM], [f32; CM]) {
-        // if let Some(entry) = self.cache.get(board.correct_hash()) {
-        //     return entry;
-        // }
-
-        if !self.stack[head.0].valid {
-            self.catchup_at(head, board);
-
-            unsafe {
-                self.evaluate_head(head, board);
-            }
-        }
-        let (cm_from, cm_to) = self.evaluate_policy(head, board);
-        // self.cache.set(board.correct_hash(), &cm_from, &cm_to);
-        (cm_from, cm_to)
-    }
-
-    fn quantize_policy(logit: f32) -> f32 {
-        logit
-        // assert!(logit > -CM_MAX, "{}", logit);
-        // ((logit + 2.0).clamp(-CM_MAX, CM_MAX) * CM_MULT) as i16
-    }
-
-    fn evaluate_policy(
-        &mut self,
-        head: (usize, usize, usize),
-        board: &Board,
-    ) -> ([f32; CM], [f32; CM]) {
-        let bucket = Network::get_output_bucket(board);
-        let mut cm_from = self.network.cm_from_bias[bucket].clone();
-        let mut cm_to = self.network.cm_to_bias[bucket].clone();
-
-        unsafe {
-            let ft = &self.stack[head.0].ft;
-            let idx_n = &self.stack[head.0].idx_n;
-            let idx = &self.stack[head.0].idx;
-
-            const STEP: usize = 16;
-            let mut from_acc = [_mm512_setzero_epi32(); CM / STEP];
-            let mut to_acc = [_mm512_setzero_epi32(); CM / STEP];
-            let from_weights = &self.network.cm_from_weights[bucket];
-            let to_weights = &self.network.cm_to_weights[bucket];
-            for t in 0..*idx_n {
-                let c = idx[t] as usize;
-                let f = _mm512_set1_epi32(*(ft.as_ptr() as *const i32).add(c));
-
-                let w_from = from_weights[c].as_ptr() as *const __m512i;
-                let w_to = to_weights[c].as_ptr() as *const __m512i;
-                for q in (0..CM).step_by(STEP) {
-                    from_acc[q / STEP] =
-                        _mm512_dpbusd_epi32(from_acc[q / STEP], f, *(w_from.add(q / STEP)));
-                    to_acc[q / STEP] =
-                        _mm512_dpbusd_epi32(to_acc[q / STEP], f, *(w_to.add(q / STEP)));
-                }
-            }
-
-            let mut from_sum = Aligned::<i32, { CM }>::uninit();
-            let mut to_sum = Aligned::<i32, { CM }>::uninit();
-            for q in (0..CM).step_by(STEP) {
-                *(from_sum.as_mut_ptr().add(q) as *mut __m512i) = from_acc[q / STEP];
-                *(to_sum.as_mut_ptr().add(q) as *mut __m512i) = to_acc[q / STEP];
-            }
-
-            for i in 0..CM {
-                cm_from[i] += from_sum[i] as f32 * Self::DIVISOR;
-                cm_to[i] += to_sum[i] as f32 * Self::DIVISOR;
-            }
-        }
-
-        (cm_from.0, cm_to.0)
-    }
-
     unsafe fn evaluate_value(&mut self, head: (usize, usize, usize), board: &Board) -> i32 {
         let bucket = Network::get_output_bucket(board);
 
@@ -435,39 +367,6 @@ impl NNUE {
     }
 }
 
-pub fn policy_display(policy: &[f32; CM], board: &Board, is_from: bool) -> String {
-    let mask = if is_from {
-        board.colors(board.side_to_move())
-    } else {
-        !board.occupied()
-    };
-    let mut out = "".to_string();
-    for i in 0..CM {
-        let i = if board.side_to_move() == White {
-            i ^ 56
-        } else {
-            i
-        };
-        let flip = if board.king(board.side_to_move()).file() >= File::E {
-            7
-        } else {
-            0
-        };
-        if mask.has(Square::ALL[i]) {
-            out += &format!("{:.2}", policy[i ^ flip] as f32);
-        } else {
-            out += "0.00";
-        }
-        out += " ";
-
-        if i % 8 == 7 {
-            out += "\n";
-        }
-    }
-
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use cozy_chess::{Color, GameStatus};
@@ -478,6 +377,7 @@ mod tests {
 
     #[test]
     fn make_unmake_test() {
+        super::init();
         let mut net = NNUE::new();
         let board = Board::startpos();
         net.init(&board);
@@ -491,6 +391,7 @@ mod tests {
 
     #[test]
     fn symmetry_test() {
+        super::init();
         let mut net = NNUE::new();
 
         let board = Board::startpos();
@@ -506,6 +407,7 @@ mod tests {
 
     #[test]
     fn make_unmake_catchup_test() {
+        super::init();
         let mut net = NNUE::new();
         let board = Board::startpos();
         net.init(&board);
@@ -527,6 +429,7 @@ mod tests {
 
     #[test]
     fn random_make_unmake_catchup_test() {
+        super::init();
         let mut net = NNUE::new();
 
         let sequence = vec![4, -2, 3, -2, -1, 10, -5, -2];
@@ -574,6 +477,7 @@ mod tests {
 
     #[test]
     fn random_make_unmake_test() {
+        super::init();
         let mut net = NNUE::new();
 
         let sequence = vec![4, -2, 3, -2, -1, 10, -5, -2, 20, -1, -2, -5, -10];
@@ -619,6 +523,7 @@ mod tests {
 
     #[test]
     fn random_make_unmake_init_test() {
+        super::init();
         let mut net = NNUE::new();
 
         for op in 0..100 {
@@ -652,6 +557,7 @@ mod tests {
 
     #[test]
     fn test_eval() {
+        super::init();
         let mut net = NNUE::new();
         let board =
             Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
@@ -662,6 +568,7 @@ mod tests {
 
     #[test]
     fn test_eval2() {
+        super::init();
         let mut net = NNUE::new();
         let board = Board::from_fen(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -717,23 +624,5 @@ mod tests {
         }
 
         out
-    }
-
-    #[test]
-    fn test_cm() {
-        let mut net = NNUE::new();
-        let board = Board::from_fen(
-            // "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-            "r1bqkbnr/pp2pppp/3p4/2p5/3NP3/2N5/PPP2PPP/R1BQKB1R b KQkq - 0 5",
-            false,
-        )
-        .unwrap();
-        net.init(&board);
-        net.evaluate_policy(net.head(), &board);
-
-        let (cm_from, cm_to) = net.cm(net.head(), &board);
-
-        let cm_from = policy_display(&cm_from, &board, true);
-        assert!(cm_from == "", "\n{}", cm_from);
     }
 }

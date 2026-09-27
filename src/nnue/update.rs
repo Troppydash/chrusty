@@ -1,9 +1,9 @@
 use std::fmt::Debug;
 
 use arrayvec::ArrayVec;
-use cozy_chess::Square;
+use cozy_chess::{Color, Square};
 
-use crate::ext::ColoredPiece;
+use crate::{ext::ColoredPiece, nnue::ti::MAX_TI_INPUTS};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum UpdateType {
@@ -46,7 +46,20 @@ impl ThreatDelta {
     }
 }
 
-pub type ThreatDeltaUpdates = ArrayVec<ThreatDelta, 96>;
+#[derive(Debug, Clone)]
+pub struct PinnedDelta {
+    pub piece: ColoredPiece,
+    pub square: Square,
+    pub pinned_king_color: Color,
+}
+
+#[derive(Debug, Clone)]
+pub enum ThreatDeltaGeneral {
+    ThreatDelta(ThreatDelta),
+    PinnedDelta(PinnedDelta),
+}
+
+pub type ThreatDeltaUpdates = ArrayVec<ThreatDeltaGeneral, MAX_TI_INPUTS>;
 
 #[derive(Clone, Default, Debug)]
 pub struct ThreatUpdate {

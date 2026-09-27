@@ -86,7 +86,7 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
     let mut net = NNUE::new();
     // Exact activity signatures. Each sampled position owns one bit, with a
     // separate u64 word for every group of 64 positions.
-    let words = iter.div_ceil(32);
+    let words = iter.div_ceil(16);
     let mut activity = vec![vec![0u64; words]; half_hl];
 
     // Collect co-occurrence statistics for 0..HL / 2
@@ -116,7 +116,7 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
 
         let hash = board.correct_hash();
         let sample = it - 1;
-        let sample_word = sample / 32;
+        let sample_word = sample / 16;
         let sample_bit = 1u64 << (hash & 63);
         for neuron in active {
             activity[neuron][sample_word] |= sample_bit;
@@ -192,6 +192,7 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
         score
     };
 
+    let mut counter = 0;
     loop {
         let mut improved = false;
         'search: for a in 0..blocks.len() {
@@ -218,7 +219,10 @@ pub fn compute_co_occurrence_mapping(path: &str, iter: usize) -> [usize; HL] {
             }
         }
         if !improved {
-            break;
+            counter += 1;
+            if counter > 10 {
+                break;
+            }
         }
     }
 
