@@ -22,7 +22,7 @@ use std::mem;
 use std::ptr;
 
 pub const HL: usize = 1024;
-pub const L1: usize = 16;
+pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const OUTPUTS: usize = 8;
 pub const QA: i32 = 255;
@@ -268,6 +268,48 @@ impl SimdOps {
             out[i] = base[i] + add1[i] as i32 + add2[i] as i32 - sub1[i] as i32 - sub2[i] as i32;
         }
     }
+
+    pub fn silu(x: __m512) -> __m512 {
+        unsafe {
+            let zero = _mm512_setzero_ps();
+            let one = _mm512_set1_ps(1.0);
+            let two = _mm512_set1_ps(2.0);
+
+            let clamped_x = _mm512_max_ps(
+                _mm512_set1_ps(-15.0),
+                _mm512_min_ps(_mm512_set1_ps(15.0), x),
+            );
+            let neg_x = _mm512_sub_ps(zero, clamped_x);
+
+            // goal is to compute sigmoid(x) = 1/D(x) where D(x) = 1+exp(-x)
+
+            // compute exp2(z) = exp2(-x log2(e)), but we split -x log2(e) into dn + r
+            let log2e = _mm512_set1_ps(1.44269504);
+            let z = _mm512_mul_ps(neg_x, log2e);
+
+            let dn = _mm512_roundscale_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(z);
+            let r = _mm512_sub_ps(z, dn);
+
+            // compute 2^r, where abs(r) < 1/2
+            let p = _mm512_fmadd_ps(_mm512_set1_ps(0.0555041), r, _mm512_set1_ps(0.2402265));
+            let p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(0.69314718));
+            let p = _mm512_fmadd_ps(p, r, one);
+
+            // 2^dn by exp, note the cast from i32 to f32 is a type cast
+            let i = _mm512_cvtps_epi32(dn);
+            let i = _mm512_add_epi32(i, _mm512_set1_epi32(127));
+            let i = _mm512_slli_epi32(i, 23);
+            let exp_neg_x = _mm512_mul_ps(p, _mm512_castsi512_ps(i));
+
+            let d = _mm512_add_ps(one, exp_neg_x);
+            let rcp = _mm512_rcp14_ps(d);
+
+            // newton
+            // let rcp = _mm512_mul_ps(rcp, _mm512_fnmadd_ps(d, rcp, two));
+
+            return _mm512_mul_ps(x, rcp);
+        }
+    }
 }
 
 pub struct Permute {
@@ -334,7 +376,7 @@ pub struct RawNetwork {
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
-    l2_weights: [[[f32; L1 * 2]; L2]; OUTPUTS],
+    l2_weights: [[[f32; L1]; L2]; OUTPUTS],
     l2_bias: [[f32; L2]; OUTPUTS],
 
     // transposed
@@ -410,14 +452,6 @@ impl RawNetwork {
                     self.l1_weights[output][l1_idx][i] = old.l1_weights[output][l1_idx][j];
                 }
             }
-
-            for output in 0..OUTPUTS {
-                for l1_idx in 0..CM {
-                    // self.cm_from_weights[output][l1_idx][i] =
-                    //    old.cm_from_weights[output][l1_idx][j];
-                    // self.cm_to_weights[output][l1_idx][i] = old.cm_to_weights[output][l1_idx][j];
-                }
-            }
         }
     }
 }
@@ -435,7 +469,7 @@ pub struct Network {
     pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
-    pub l2_weights: [[Aligned<f32, L2>; L1 * 2]; OUTPUTS],
+    pub l2_weights: [[Aligned<f32, L2>; L1]; OUTPUTS],
     pub l2_bias: [Aligned<f32, L2>; OUTPUTS],
 
     pub output_weights: [Aligned<f32, L2>; OUTPUTS],
@@ -492,29 +526,10 @@ impl Network {
             }
         }
 
-        for bucket in 0..OUTPUTS {
-            for c in 0..(HL / 4) {
-                for j in 0..CM {
-                    for k in 0..4 {
-                        // net.cm_from_weights[bucket][c][j * 4 + k] =
-                        //     raw.cm_from_weights[bucket][j][c * 4 + k];
-                        // net.cm_to_weights[bucket][c][j * 4 + k] =
-                        //     raw.cm_to_weights[bucket][j][c * 4 + k];
-                    }
-                }
-            }
-        }
-        for a in 0..OUTPUTS {
-            for b in 0..CM {
-                // net.cm_from_bias[a][b] = raw.cm_from_bias[a][b];
-                // net.cm_to_bias[a][b] = raw.cm_to_bias[a][b];
-            }
-        }
-
         // also transpose weights
         for i in 0..OUTPUTS {
             for j in 0..L2 {
-                for k in 0..(L1 * 2) {
+                for k in 0..L1 {
                     net.l2_weights[i][k][j] = raw.l2_weights[i][j][k];
                 }
             }

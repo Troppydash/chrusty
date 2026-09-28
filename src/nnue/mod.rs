@@ -7,7 +7,7 @@ use crate::{
         halfka::HalfKA,
         network::{
             Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, QPST,
-            RawNetwork, SCALE,
+            RawNetwork, SCALE, SimdOps,
         },
         pst::Pst,
         threats::Threats,
@@ -274,9 +274,6 @@ impl NNUE {
         let bucket = Network::get_output_bucket(board);
 
         unsafe {
-            const ZEROF: f32 = 0.0f32;
-            const ONEF: f32 = 1.0f32;
-
             self.evaluate_head(head, board);
 
             let ft = &self.stack[head.0].ft;
@@ -296,31 +293,33 @@ impl NNUE {
                 }
             }
 
-            let mut l1_sum = Aligned::<i32, L1>::uninit();
-            for q in (0..L1).step_by(STEP) {
-                *(l1_sum.as_mut_ptr().add(q) as *mut __m512i) = l1_sum_acc[q / STEP];
-            }
+            let mut l1 = Aligned::<f32, { L1 }>::uninit();
+            for i in (0..L1).step_by(16) {
+                let bias = self.network.l1_bias[bucket].as_ptr() as *const __m512;
+                let s = _mm512_fmadd_ps(
+                    _mm512_cvtepi32_ps(l1_sum_acc[i / 16]),
+                    _mm512_set1_ps(Self::DIVISOR),
+                    *(bias.add(i / 16)),
+                );
 
-            let mut l1 = Aligned::<f32, { L1 * 2 }>::uninit();
-            for i in 0..L1 {
-                let s = l1_sum[i] as f32 * Self::DIVISOR + self.network.l1_bias[bucket][i];
-                let c = s.clamp(ZEROF, ONEF);
-                l1[i] = c;
-                l1[i + L1] = c * c;
+                *((l1.as_mut_ptr() as *mut __m512).add(i / 16)) = SimdOps::silu(s);
             }
 
             //- l1 -> l2
             let mut l2_sum = Aligned::<f32, L2>::zeroed();
-            for i in 0..(L1 * 2) {
+            for i in 0..L1 {
                 for j in 0..L2 {
                     l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
                 }
             }
 
             let mut l2 = Aligned::<f32, L2>::uninit();
-            for i in 0..L2 {
-                let s = (l2_sum[i] + self.network.l2_bias[bucket][i]).clamp(ZEROF, ONEF);
-                l2[i] = s;
+            for i in (0..L2).step_by(16) {
+                let s = _mm512_add_ps(
+                    *((l2_sum.as_ptr() as *const __m512).add(i / 16)),
+                    *((self.network.l2_bias[bucket].as_ptr() as *const __m512).add(i / 16)),
+                );
+                *((l2.as_mut_ptr() as *mut __m512).add(i / 16)) = SimdOps::silu(s);
             }
 
             //- l2 -> output
