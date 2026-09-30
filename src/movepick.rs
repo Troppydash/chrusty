@@ -627,7 +627,7 @@ impl Movepick {
                 / 1024;
 
             ///// Threats /////
-            if self.ply > 0 {
+            if self.ply >= 1 {
                 let mut threats_score = 0;
                 let piece = self.pos.piece_on(m.from).unwrap();
                 // moving into threat
@@ -977,6 +977,7 @@ mod tests {
             "r1bqkb1r/pppp1ppp/2n5/4p3/4n3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 5",
             "rnbqkb1r/pppp1ppp/5n2/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3",
             "r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+            "3rkb1r/1b4p1/5p2/p2N3p/1p1BP1nP/8/PPPR2B1/1K5R b k - 1 25",
         ];
         for fen in fens.iter() {
             diff_movegen(fen);

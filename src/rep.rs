@@ -15,9 +15,9 @@ pub fn is_rep(pos: &Board, ply: usize, stack: &KeyStack) -> bool {
 
             count += 1;
             if count > 1 {
-            return true;
+                return true;
+            }
         }
-    }
     }
 
     return false;

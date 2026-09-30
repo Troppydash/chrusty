@@ -199,8 +199,6 @@ impl Engine {
             return self.static_correction(pos, score, ss);
         }
 
-        let key = pos.correct_hash();
-        let tt_key = key ^ get_50mr_key(pos.halfmove_clock() as usize);
         if pos.has_insufficient_material() {
             return VALUE_DRAW;
         }
@@ -233,6 +231,8 @@ impl Engine {
 
         //- tt
         // this clone only clones the tt ptr
+        let key = pos.correct_hash();
+        let tt_key = key ^ get_50mr_key(pos.halfmove_clock() as usize);
         let table = self.table.clone();
         let table = table.get();
         let tt_age = table.get_age();
@@ -292,8 +292,8 @@ impl Engine {
 
             //- standing pat
             if best_score >= beta {
-                if !is_decisive(best_score) {
-                    return avg(best_score, beta);
+                if !is_decisive(best_score) && !is_decisive(beta) {
+                    return lerp(best_score, beta, 0.8);
                 }
 
                 return best_score;
@@ -330,26 +330,13 @@ impl Engine {
             move_count += 1;
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
-            if !is_loss(best_score) && !in_check {
-                //- delta pruning
-
-                if !pos.is_quiet(next_move.inner)
-                    && let capture_value = pesto_value(
-                        pos,
-                        ColoredPiece::new(!pos.side_to_move(), pos.get_captured(next_move.inner)),
-                        next_move.inner.to,
-                    )
-                    && futility_base as i32 + capture_value <= alpha as i32
-                    && !see::see_ge(pos, next_move.inner, 0)
-                {
-                    let futility_best_score =
-                        (futility_base as i32 + capture_value).min(VALUE_EVAL as i32) as i16;
-                    best_score = best_score.max(futility_best_score);
-                    continue;
+            if !is_loss(best_score) {
+                if move_count >= 3 {
+                    break;
                 }
 
                 //- see pruning
-                if !see::see_ge(pos, next_move.inner, -50) {
+                if !in_check && !see::see_ge(pos, next_move.inner, -50) {
                     continue;
                 }
             }
@@ -369,13 +356,6 @@ impl Engine {
                     }
 
                     alpha = score;
-                }
-            }
-
-            //- late move prune
-            if !is_loss(best_score) {
-                if move_count >= 3 {
-                    break;
                 }
             }
         }
@@ -408,19 +388,12 @@ impl Engine {
         );
 
         if best_score >= beta && !best_move.is_null() {
-            let quiets = MoveList::new();
-            let captures = MoveList::new();
-            self.heuristic.update_history(
+            self.heuristic.weak_update_history(
                 pos,
-                1,
-                1,
-                ply,
                 best_move,
                 &self.stack,
                 ss,
                 self.pawn_key.get(),
-                &captures,
-                &quiets,
             );
         }
 

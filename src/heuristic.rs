@@ -28,7 +28,7 @@ impl<const LIMIT: i16> History<LIMIT> {
 }
 
 pub const CORR_LIMIT: i16 = 2048;
-pub const HISTORY_LIMIT: i16 = 20000;
+pub const HISTORY_LIMIT: i16 = 10000;
 type MainHistory = History<HISTORY_LIMIT>;
 type CaptureHistory = History<HISTORY_LIMIT>;
 type PawnHistory = History<HISTORY_LIMIT>;
@@ -403,11 +403,11 @@ impl Heuristic {
         best_move: Move,
         stack: &[SearchStack],
         ss: usize,
+        pawn_key: u64
     ) {
         let bonus = 200;
         if pos.is_quiet(best_move) {
-            self.get_main_history_mut(pos, best_move).add(bonus);
-            self.add_cont_history(pos, best_move, stack, ss, bonus);
+          
         } else {
             self.get_capture_history_mut(pos, best_move).add(bonus);
         }
