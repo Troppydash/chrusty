@@ -397,6 +397,22 @@ impl Heuristic {
     //     // self.add_cont_history(pos, tt_move, stack, ss, bonus);
     // }
 
+    pub fn weak_update_history(
+        &mut self,
+        pos: &Board,
+        best_move: Move,
+        stack: &[SearchStack],
+        ss: usize,
+    ) {
+        let bonus = 200;
+        if pos.is_quiet(best_move) {
+            self.get_main_history_mut(pos, best_move).add(bonus);
+            self.add_cont_history(pos, best_move, stack, ss, bonus);
+        } else {
+            self.get_capture_history_mut(pos, best_move).add(bonus);
+        }
+    }
+
     pub fn update_history(
         &mut self,
         pos: &Board,

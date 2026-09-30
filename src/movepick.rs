@@ -454,6 +454,9 @@ impl Movepick {
 
                 false
             });
+
+
+        // TODO: pawn promotion checks
     }
 
     pub fn score_capture(&self, m: Move) -> i32 {

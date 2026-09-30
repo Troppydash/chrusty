@@ -84,6 +84,21 @@ impl Threats {
 
         Self { by_opp, checks }
     }
+
+    pub fn build_checks(pos: &Board) -> Self {
+        let king = pos.king(!pos.side_to_move());
+        let occ = pos.occupied();
+        let checks = [
+            cozy_chess::get_pawn_attacks(king, !pos.side_to_move()),
+            cozy_chess::get_knight_moves(king),
+            cozy_chess::get_bishop_moves(king, occ),
+            cozy_chess::get_rook_moves(king, occ),
+            cozy_chess::get_bishop_moves(king, occ) | cozy_chess::get_rook_moves(king, occ),
+            BitBoard::EMPTY,
+        ];
+
+        Self { by_opp: [BitBoard::EMPTY; 6], checks }
+    }
 }
 
 #[cfg(test)]

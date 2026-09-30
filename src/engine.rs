@@ -172,16 +172,16 @@ impl Engine {
     ) -> i16 {
         self.nodes += 1;
 
-        if self.nodes % 4096 == 0 {
-            self.timer.write().unwrap().check();
-            if self.nodes >= self.timer.read().unwrap().max_nodes {
-                self.timer.write().unwrap().force_stop();
-            }
-        }
+        // if self.nodes % 4096 == 0 {
+        //     self.timer.write().unwrap().check();
+        //     if self.nodes >= self.timer.read().unwrap().max_nodes {
+        //         self.timer.write().unwrap().force_stop();
+        //     }
+        // }
 
-        if self.timer.read().unwrap().stopped() {
-            return 0;
-        }
+        // if self.timer.read().unwrap().stopped() {
+        //     return 0;
+        // }
 
         // note that we don't check timer in qsearch
         let ply = self.stack[ss].ply;
@@ -374,11 +374,7 @@ impl Engine {
 
             //- late move prune
             if !is_loss(best_score) {
-                if !in_check && move_count >= 4 {
-                    break;
-                }
-
-                if in_check && pos.is_quiet(next_move.inner) && move_count >= 2 {
+                if move_count >= 3 {
                     break;
                 }
             }
@@ -410,6 +406,23 @@ impl Engine {
             is_pv || (tt_data.hit && tt_data.is_pv),
             tt_age,
         );
+
+        if best_score >= beta && !best_move.is_null() {
+            let quiets = MoveList::new();
+            let captures = MoveList::new();
+            self.heuristic.update_history(
+                pos,
+                1,
+                1,
+                ply,
+                best_move,
+                &self.stack,
+                ss,
+                self.pawn_key.get(),
+                &captures,
+                &quiets,
+            );
+        }
 
         best_score
     }
@@ -525,16 +538,17 @@ impl Engine {
             } else {
                 Move::NULL_MOVE
             };
+
+        //- always use pv of root_moves for later search
+        if is_root && depth > 1 {
+            tt_data.pv = self.root_moves[0].pv_list.pv();
+        }
+
         let is_tt_capture = if tt_data.pv.is_null() {
             false
         } else {
             !pos.is_quiet(tt_data.pv)
         };
-
-        //- always use pv of root_moves
-        if is_root {
-            tt_data.pv = self.root_moves[0].pv_list.pv();
-        }
 
         //- tt early return
         if !is_pv
@@ -727,7 +741,7 @@ impl Engine {
                 }
 
                 if score >= beta && !is_win(score) {
-                    if self.stack[0].nmp_min_ply > 0 || depth <= 15 {
+                    if self.stack[0].nmp_min_ply > 0 || depth <= 16 {
                         return score;
                     }
 
@@ -915,10 +929,14 @@ impl Engine {
                 }
 
                 //- late move pruning
-                if self.stack[ss].move_count as i32
-                    >= (3 + depth as i32 * depth as i32) / (2 - improving as i32)
+                if is_quiet
+                    && !is_win(beta)
+                    && self.stack[ss].move_count as i32
+                        >= (2800 + 1000 * improving as i32 + 1300 * depth as i32 * depth as i32)
+                            / 1024
                 {
                     movepick.skip_quiets();
+                    continue;
                 }
 
                 //- futility pruning
@@ -1450,13 +1468,6 @@ impl Engine {
                     window += window / 6;
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
-
-                    // if is_decisive(score) {
-                    //     fail_highs = fail_highs.min(1);
-                    // } else {
-                    //     fail_highs += 1;
-                    // }
-
                     window += window / 3;
                 } else {
                     break;
@@ -1490,7 +1501,7 @@ impl Engine {
 
                 let nodes_factor = ((0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64)
                     * 1.2)
-                    .clamp(-0.4, 0.6);
+                    .clamp(-0.4, 0.8);
                 factors *= (1.0 + instability_factor)
                     * (1.0 + score_factor)
                     * (1.0 + prev_score_factor)
