@@ -917,7 +917,7 @@ impl Engine {
                     + self.settings.p_lowdepth_fut_quiet_base
                     + self.settings.p_lowdepth_fut_quiet_depth * lmr_depth;
                 if is_quiet && lmr_depth < 14 && futility_score < (alpha as i32) {
-                    if !is_decisive(best_score) && futility_score > best_score as i32 {
+                    if !is_decisive(best_score) && !is_decisive_i32(futility_score) && futility_score > best_score as i32 {
                         best_score = futility_score as i16;
                     }
 
@@ -928,7 +928,7 @@ impl Engine {
                 //- capture futility pruning
                 if !is_quiet
                     && movepick.stage == Stage::BadCapture
-                    && lmr_depth < 10
+                    && lmr_depth < 12
                     && let capture_futility_score = tt_static as i32
                         + self.settings.p_lowdepth_fut_capture_base
                         + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
@@ -942,7 +942,7 @@ impl Engine {
                         )
                     && capture_futility_score < (alpha as i32)
                 {
-                    if !is_decisive(best_score) && capture_futility_score > best_score as i32 {
+                    if !is_decisive(best_score) && !is_decisive_i32(capture_futility_score) && capture_futility_score > best_score as i32 {
                         best_score = capture_futility_score as i16;
                     }
 

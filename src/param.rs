@@ -17,6 +17,11 @@ pub fn is_decisive(value: i16) -> bool {
     value.abs() > VALUE_EVAL
 }
 
+pub fn is_decisive_i32(value: i32) -> bool {
+    value.abs() > VALUE_EVAL as i32
+}
+
+
 pub fn is_win(value: i16) -> bool {
     value > VALUE_EVAL
 }

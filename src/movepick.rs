@@ -455,7 +455,6 @@ impl Movepick {
                 false
             });
 
-
         // TODO: pawn promotion checks
     }
 
@@ -547,6 +546,10 @@ impl Movepick {
 
             i += 1;
         }
+    }
+
+    fn sigmoid(x: f64) -> f64 {
+        1.0 / (1.0 + f64::exp(-x))
     }
 
     fn score_quiets(&mut self, skip_killers: bool) {
@@ -646,10 +649,17 @@ impl Movepick {
                 score += threats_score;
             }
 
+            // let rng = rand::random_bool(Self::sigmoid(score as f64 / 20000.0) * 0.001);
+            // if rng {
+            //     score += 20000;
+            // }
+
             self.moves.get_mut(i).score = score;
 
             i += 1;
         }
+
+        // TODO: random prob
     }
 
     pub fn skip_quiets(&mut self) {

@@ -29,8 +29,9 @@ impl<const LIMIT: i16> History<LIMIT> {
 
 pub const CORR_LIMIT: i16 = 2048;
 pub const HISTORY_LIMIT: i16 = 10000;
+pub const CAPTURE_HISTORY_LIMIT: i16 = 20000;
 type MainHistory = History<HISTORY_LIMIT>;
-type CaptureHistory = History<HISTORY_LIMIT>;
+type CaptureHistory = History<CAPTURE_HISTORY_LIMIT>;
 type PawnHistory = History<HISTORY_LIMIT>;
 pub type PawnCorr = History<CORR_LIMIT>;
 pub const NUM_KILLERS: usize = 2;
@@ -225,14 +226,14 @@ impl Heuristic {
         &mut self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
-    pub fn get_capture_history(&self, pos: &Board, m: Move) -> &MainHistory {
+    pub fn get_capture_history(&self, pos: &Board, m: Move) -> &CaptureHistory {
         debug_assert!(!pos.is_quiet(m));
 
         &self.capture_history[pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
             [pos.get_captured(m) as usize]
     }
 
-    fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
+    fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut CaptureHistory {
         debug_assert!(!pos.is_quiet(m));
 
         &mut self.capture_history[pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
@@ -403,11 +404,10 @@ impl Heuristic {
         best_move: Move,
         stack: &[SearchStack],
         ss: usize,
-        pawn_key: u64
+        pawn_key: u64,
     ) {
         let bonus = 200;
         if pos.is_quiet(best_move) {
-          
         } else {
             self.get_capture_history_mut(pos, best_move).add(bonus);
         }
