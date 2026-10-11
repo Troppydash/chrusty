@@ -64,6 +64,7 @@ pub struct SearchStack {
     pub cont_corrhist: (usize, usize),
     pub cont_hist: ContHist,
     pub move_count: usize,
+    pub key: u64,
 }
 
 impl SearchStack {
@@ -81,6 +82,7 @@ impl SearchStack {
             cont_corrhist: (12, 0),
             cont_hist: (0, 12, 0),
             move_count: 0,
+            key: 0,
         }
     }
 
@@ -98,6 +100,7 @@ impl SearchStack {
             cont_corrhist: (12, 0),
             cont_hist: (0, 12, 0),
             move_count: 0,
+            key: 0,
         }
     }
 }
@@ -125,6 +128,14 @@ impl KeyStack {
 
     pub fn clear(&mut self) {
         self.head = 0;
+    }
+
+    pub fn get_prev(&self, prev: usize) -> Option<u64> {
+        if self.head > prev {
+            Some(self.keys[self.head - prev - 1])
+        } else {
+            None
+        }
     }
 }
 

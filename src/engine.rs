@@ -118,6 +118,7 @@ impl Engine {
         self.key_stack.push(key);
         self.pawn_key.push(pos, m);
         self.stack[ss].cont_hist = self.heuristic.get_cont_hist_index(pos, m);
+        self.stack[ss].key = key;
 
         let mut new_pos = pos.clone();
         if m.is_null() {
@@ -777,7 +778,6 @@ impl Engine {
 
                 let probcut_beta = probcut_beta as i16;
                 self.stack[ss].move_count = 0;
-                let mut best_score = -VALUE_INF;
                 loop {
                     let next_move = movepick.next_move();
                     if next_move.is_null() {
@@ -833,8 +833,6 @@ impl Engine {
 
                         return score;
                     }
-
-                    best_score = best_score.max(score);
                 }
             }
         }
@@ -917,7 +915,10 @@ impl Engine {
                     + self.settings.p_lowdepth_fut_quiet_base
                     + self.settings.p_lowdepth_fut_quiet_depth * lmr_depth;
                 if is_quiet && lmr_depth < 14 && futility_score < (alpha as i32) {
-                    if !is_decisive(best_score) && !is_decisive_i32(futility_score) && futility_score > best_score as i32 {
+                    if !is_decisive(best_score)
+                        && !is_decisive_i32(futility_score)
+                        && futility_score > best_score as i32
+                    {
                         best_score = futility_score as i16;
                     }
 
@@ -942,7 +943,10 @@ impl Engine {
                         )
                     && capture_futility_score < (alpha as i32)
                 {
-                    if !is_decisive(best_score) && !is_decisive_i32(capture_futility_score) && capture_futility_score > best_score as i32 {
+                    if !is_decisive(best_score)
+                        && !is_decisive_i32(capture_futility_score)
+                        && capture_futility_score > best_score as i32
+                    {
                         best_score = capture_futility_score as i16;
                     }
 
@@ -1073,8 +1077,7 @@ impl Engine {
                         //- re-search adjustments
                         if (score as i32) > (best_score as i32 + 50) {
                             new_depth += 1;
-                        }
-                        if (score as i32) < (best_score as i32 + 5) {
+                        } else if (score as i32) < (best_score as i32 + 5) {
                             new_depth -= 1;
                         }
                     }
@@ -1384,6 +1387,7 @@ impl Engine {
         // search stack
         for i in 0..SS_SIZE_PRE {
             self.stack[i] = SearchStack::new();
+            self.stack[i].key = self.key_stack.get_prev(SS_SIZE_PRE - i - 1).unwrap_or(0);
         }
         for i in 0..(SS_SIZE - SS_SIZE_PRE) {
             self.stack[SS_SIZE_PRE + i] = SearchStack::new_ply(i as i8);

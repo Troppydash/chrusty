@@ -28,9 +28,11 @@ impl<const LIMIT: i16> History<LIMIT> {
 }
 
 pub const CORR_LIMIT: i16 = 2048;
+pub const CONT_LIMIT: i16 = 10000;
 pub const HISTORY_LIMIT: i16 = 10000;
 pub const CAPTURE_HISTORY_LIMIT: i16 = 20000;
 type MainHistory = History<HISTORY_LIMIT>;
+type ContHistory = History<CONT_LIMIT>;
 type CaptureHistory = History<CAPTURE_HISTORY_LIMIT>;
 type PawnHistory = History<HISTORY_LIMIT>;
 pub type PawnCorr = History<CORR_LIMIT>;
@@ -38,6 +40,7 @@ pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
 pub const PAWN_HASH: usize = 1 << 10;
 pub const CORR_HASH: usize = 1 << 15;
+pub const POS_CONT_HIST_HASH: usize = 1 << 15;
 // (is_cap, piece, to)
 pub type ContHist = (usize, usize, usize);
 
@@ -67,7 +70,11 @@ pub struct Heuristic {
     // cont corrhist [colored_piece][to][colored_piece][to]
     cont_corrhist: Box<[[[[PawnCorr; 64]; 12]; 64]; 13]>,
     // [is_cap][colored_piece][from][colored_piece][to]
-    cont_hist: Box<[[[[[MainHistory; 64]; 12]; 64]; 13]; 2]>,
+    cont_hist: Box<[[[[[ContHistory; 64]; 12]; 64]; 13]; 2]>,
+    // [side][pos ^ pos depth away][colored_piece][to]
+    // pos_cont_hist: Box<[[[[ContHistory; 64]; 12]; POS_CONT_HIST_HASH]; 2]>,
+    // lowply for captures
+    low_ply_capture_history: Box<[[[[CaptureHistory; 6]; 64]; 12]; LOW_PLY]>,
 }
 
 impl Heuristic {
@@ -130,12 +137,22 @@ impl Heuristic {
 
         let cont_hist = unsafe {
             let total_elements = 2 * 13 * 64 * 12 * 64;
-            let flat_vec: Vec<MainHistory> = std::iter::repeat_with(MainHistory::new)
+            let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
                 .take(total_elements)
                 .collect();
             let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
-            Box::from_raw(raw_ptr as *mut [[[[[MainHistory; 64]; 12]; 64]; 13]; 2])
+            Box::from_raw(raw_ptr as *mut [[[[[ContHistory; 64]; 12]; 64]; 13]; 2])
         };
+
+        // let pos_cont_hist = unsafe {
+        //     let total_elements = 2 * POS_CONT_HIST_HASH * 12 * 64;
+        //     let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
+        //         .take(total_elements)
+        //         .collect();
+        //     let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
+        //     Box::from_raw(raw_ptr as *mut [[[[ContHistory; 64]; 12]; POS_CONT_HIST_HASH]; 2])
+        // };
+        let low_ply_capture_history = Box::new([[[[CaptureHistory::new(); 6]; 64]; 12]; LOW_PLY]);
 
         Self {
             lmr,
@@ -152,6 +169,7 @@ impl Heuristic {
             minor_corrhist,
             cont_corrhist,
             cont_hist,
+            low_ply_capture_history,
         }
     }
 
@@ -205,12 +223,22 @@ impl Heuristic {
 
         self.cont_hist = unsafe {
             let total_elements = 2 * 13 * 64 * 12 * 64;
-            let flat_vec: Vec<MainHistory> = std::iter::repeat_with(MainHistory::new)
+            let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
                 .take(total_elements)
                 .collect();
             let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
-            Box::from_raw(raw_ptr as *mut [[[[[MainHistory; 64]; 12]; 64]; 13]; 2])
+            Box::from_raw(raw_ptr as *mut [[[[[ContHistory; 64]; 12]; 64]; 13]; 2])
         };
+
+        // self.pos_cont_hist = unsafe {
+        //     let total_elements = 2 * 2 * POS_CONT_HIST_HASH * 12 * 64;
+        //     let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
+        //         .take(total_elements)
+        //         .collect();
+        //     let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
+        //     Box::from_raw(raw_ptr as *mut [[[[ContHistory; 64]; 12]; POS_CONT_HIST_HASH]; 2])
+        // };
+        self.low_ply_capture_history = Box::new([[[[CaptureHistory::new(); 6]; 64]; 12]; LOW_PLY]);
     }
 
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i32 {
@@ -342,14 +370,14 @@ impl Heuristic {
         }
     }
 
-    pub fn get_cont_hist(&self, prev: ContHist, pos: &Board, m: Move) -> &MainHistory {
+    pub fn get_cont_hist(&self, prev: ContHist, pos: &Board, m: Move) -> &ContHistory {
         debug_assert!(!m.is_null());
 
         &self.cont_hist[prev.0][prev.1][prev.2][pos.color_piece_on(m.from).unwrap().index()]
             [m.to as usize]
     }
 
-    pub fn get_cont_hist_mut(&mut self, prev: ContHist, pos: &Board, m: Move) -> &mut MainHistory {
+    fn get_cont_hist_mut(&mut self, prev: ContHist, pos: &Board, m: Move) -> &mut ContHistory {
         debug_assert!(!m.is_null());
 
         &mut self.cont_hist[prev.0][prev.1][prev.2][pos.color_piece_on(m.from).unwrap().index()]
@@ -382,6 +410,55 @@ impl Heuristic {
         }
     }
 
+    pub fn get_low_ply_capture_history(&self, pos: &Board, m: Move, ply: i8) -> &CaptureHistory {
+        debug_assert!(!pos.is_quiet(m));
+
+        &self.low_ply_capture_history[ply as usize][pos.color_piece_on(m.from).unwrap().index()]
+            [m.to as usize][pos.get_captured(m) as usize]
+    }
+
+    fn get_low_ply_capture_history_mut(
+        &mut self,
+        pos: &Board,
+        m: Move,
+        ply: i8,
+    ) -> &mut CaptureHistory {
+        debug_assert!(!pos.is_quiet(m));
+
+        &mut self.low_ply_capture_history[ply as usize][pos.color_piece_on(m.from).unwrap().index()]
+            [m.to as usize][pos.get_captured(m) as usize]
+    }
+
+    // pub fn get_pos_cont_hist(&self, prev: u64, pos: &Board, m: Move) -> &ContHistory {
+    //     debug_assert!(!m.is_null());
+
+    //     &self.pos_cont_hist[(pos.correct_hash() > prev) as usize]
+    //         [(pos.correct_hash() ^ prev) as usize % POS_CONT_HIST_HASH]
+    //         [pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
+    // }
+
+    // fn get_pos_cont_hist_mut(&mut self, prev: u64, pos: &Board, m: Move) -> &mut ContHistory {
+    //     debug_assert!(!m.is_null());
+
+    //     &mut self.pos_cont_hist[(pos.correct_hash() > prev) as usize]
+    //         [(pos.correct_hash() ^ prev) as usize % POS_CONT_HIST_HASH]
+    //         [pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
+    // }
+
+    // fn add_pos_cont_history(
+    //     &mut self,
+    //     pos: &Board,
+    //     m: Move,
+    //     stack: &[SearchStack],
+    //     ss: usize,
+    //     bonus: i16,
+    // ) {
+    //     if stack[ss - 2].key != 0 {
+    //         self.get_pos_cont_hist_mut(stack[ss - 2].key, pos, m)
+    //             .add(bonus);
+    //     }
+    // }
+
     // pub fn update_tt_history(
     //     &mut self,
     //     pos: &Board,
@@ -407,9 +484,14 @@ impl Heuristic {
         pawn_key: u64,
     ) {
         let bonus = 200;
-        if pos.is_quiet(best_move) {
-        } else {
+        if !pos.is_quiet(best_move) {
             self.get_capture_history_mut(pos, best_move).add(bonus);
+
+            let ply = stack[ss].ply;
+            if ply < LOW_PLY as i8 {
+                self.get_low_ply_capture_history_mut(pos, best_move, ply)
+                    .add(bonus);
+            }
         }
     }
 
@@ -441,6 +523,7 @@ impl Heuristic {
             }
             self.get_pawn_mut(pos, best_move, pawn_key).add(bonus);
             self.add_cont_history(pos, best_move, stack, ss, bonus);
+            // self.add_pos_cont_history(pos, best_move, stack, ss, bonus);
 
             for m in quiets.iter() {
                 debug_assert!(!m.is_null());
@@ -452,6 +535,7 @@ impl Heuristic {
 
                 self.get_pawn_mut(pos, *m, pawn_key).add(-malus);
                 self.add_cont_history(pos, *m, stack, ss, -malus);
+                // self.add_pos_cont_history(pos, *m, stack, ss, -malus);
             }
 
             let killers = self.get_killers_mut(ply);
@@ -465,11 +549,21 @@ impl Heuristic {
             }
         } else {
             self.get_capture_history_mut(pos, best_move).add(bonus);
+
+            if ply < LOW_PLY as i8 {
+                self.get_low_ply_capture_history_mut(pos, best_move, ply)
+                    .add(bonus);
+            }
         }
 
         for m in captures.iter() {
             debug_assert!(!m.is_null());
             self.get_capture_history_mut(pos, *m).add(-malus);
+
+            if ply < LOW_PLY as i8 {
+                self.get_low_ply_capture_history_mut(pos, *m, ply)
+                    .add(-malus);
+            }
         }
     }
 }

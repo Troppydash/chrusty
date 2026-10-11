@@ -313,20 +313,15 @@ impl NNUE {
                 }
             }
 
-            let mut l2 = Aligned::<f32, L2>::uninit();
+            //- l2 -> output
+            let mut out = _mm512_setzero_ps();
+            let out_weights = self.network.output_weights[bucket].as_ptr();
             for i in (0..L2).step_by(16) {
                 let s = _mm512_add_ps(
                     *((l2_sum.as_ptr() as *const __m512).add(i / 16)),
                     *((self.network.l2_bias[bucket].as_ptr() as *const __m512).add(i / 16)),
                 );
-                *((l2.as_mut_ptr() as *mut __m512).add(i / 16)) = SimdOps::silu(s);
-            }
-
-            //- l2 -> output
-            let mut out = _mm512_setzero_ps();
-            let out_weights = self.network.output_weights[bucket].as_ptr();
-            for i in (0..L2).step_by(16) {
-                let l2_vec = *(l2.as_ptr().add(i) as *const __m512);
+                let l2_vec = SimdOps::silu(s);
                 let w_vec = *(out_weights.add(i) as *const __m512);
                 out = _mm512_fmadd_ps(l2_vec, w_vec, out);
             }

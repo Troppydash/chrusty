@@ -1,4 +1,4 @@
-use std::time::{Instant};
+use std::time::Instant;
 
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 

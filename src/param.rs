@@ -21,7 +21,6 @@ pub fn is_decisive_i32(value: i32) -> bool {
     value.abs() > VALUE_EVAL as i32
 }
 
-
 pub fn is_win(value: i16) -> bool {
     value > VALUE_EVAL
 }
@@ -62,7 +61,6 @@ pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 pub const ASP_WINDOW: i32 = 10;
 pub const ASP_WINDOW_SCORE_SCALE: i32 = 23000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 4;
-pub const ASP_WINDOW_SCALE: i32 = 3;
 pub const CONTEMPT: i16 = 0;
 
 #[inline]

@@ -97,7 +97,10 @@ impl Threats {
             BitBoard::EMPTY,
         ];
 
-        Self { by_opp: [BitBoard::EMPTY; 6], checks }
+        Self {
+            by_opp: [BitBoard::EMPTY; 6],
+            checks,
+        }
     }
 }
 

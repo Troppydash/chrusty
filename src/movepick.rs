@@ -454,13 +454,18 @@ impl Movepick {
 
                 false
             });
-
-        // TODO: pawn promotion checks
     }
 
     pub fn score_capture(&self, m: Move) -> i32 {
         let heuristic = self.get_heuristic();
         let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
+
+        if self.ply < LOW_PLY as i8 {
+            score += heuristic
+                .get_low_ply_capture_history(&self.pos, m, self.ply)
+                .get() as i32
+                / (1 + self.ply as i32);
+        }
 
         let captured = self.pos.get_captured(m);
         score += MVV_MULTIPLIER
@@ -477,6 +482,8 @@ impl Movepick {
     pub fn score_quiet(&self, m: Move) -> i32 {
         let heuristic = self.get_heuristic();
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
+        // let get_pos_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).key };
+
         let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
         if self.ply < LOW_PLY as i8 {
             score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
@@ -503,6 +510,12 @@ impl Movepick {
                     .get() as i32)
             / 1024;
 
+        // if let prev = get_pos_cont_hist_prev(2)
+        //     && prev != 0
+        // {
+        //     score += heuristic.get_pos_cont_hist(prev, &self.pos, m).get() as i32 / 2;
+        // }
+
         score
     }
 
@@ -520,6 +533,13 @@ impl Movepick {
             // mvv-lva
             let heuristic = self.get_heuristic();
             let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
+
+            if self.ply < LOW_PLY as i8 {
+                score += heuristic
+                    .get_low_ply_capture_history(&self.pos, m, self.ply)
+                    .get() as i32
+                    / (1 + self.ply as i32);
+            }
 
             let captured = self.pos.get_captured(m);
             score += MVV_MULTIPLIER
@@ -568,12 +588,8 @@ impl Movepick {
             BitBoard::EMPTY,
         ];
         let escape = [0, 3000, 3000, 5000, 7000, 0];
-        let _prev_move = unsafe { (*self.stack.add(self.ss - 1)).m };
-        let _prev_piece = unsafe { (*self.stack.add(self.ss - 1)).piece };
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
-        // let counter = self.get_heuristic().get_counter(prev_move, prev_piece);
-        let mut best_policy = f32::MIN;
-        let mut best_policy_i = -1;
+        // let get_pos_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).key };
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -596,9 +612,9 @@ impl Movepick {
             let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
 
             if m == killers[0] {
-                score += 20000;
+                score += 30000;
             } else if m == killers[1] {
-                score += 15000;
+                score += 25000;
             }
             //  else if self.moves.get(i).inner == counter {
             //     score += 10000;
@@ -629,6 +645,12 @@ impl Movepick {
                         .get() as i32)
                 / 1024;
 
+            // if let prev = get_pos_cont_hist_prev(2)
+            //     && prev != 0
+            // {
+            //     score += heuristic.get_pos_cont_hist(prev, &self.pos, m).get() as i32 / 2;
+            // }
+
             ///// Threats /////
             if self.ply >= 1 {
                 let mut threats_score = 0;
@@ -649,17 +671,10 @@ impl Movepick {
                 score += threats_score;
             }
 
-            // let rng = rand::random_bool(Self::sigmoid(score as f64 / 20000.0) * 0.001);
-            // if rng {
-            //     score += 20000;
-            // }
-
             self.moves.get_mut(i).score = score;
 
             i += 1;
         }
-
-        // TODO: random prob
     }
 
     pub fn skip_quiets(&mut self) {
