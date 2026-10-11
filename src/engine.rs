@@ -155,11 +155,12 @@ impl Engine {
     }
 
     fn contempt(&self, pos: &Board) -> i16 {
-        if self.startpos.side_to_move() == pos.side_to_move() {
-            -CONTEMPT
-        } else {
-            CONTEMPT
-        }
+        (pos.colors(pos.side_to_move()).len() - 1) as i16
+        // if self.startpos.side_to_move() == pos.side_to_move() {
+        //     -CONTEMPT
+        // } else {
+        //     CONTEMPT
+        // }
     }
 
     fn qsearch(
