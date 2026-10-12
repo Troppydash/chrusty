@@ -155,7 +155,7 @@ impl Engine {
     }
 
     fn contempt(&self, pos: &Board) -> i16 {
-        (pos.colors(pos.side_to_move()).len() - 1) as i16
+        (pos.colors(pos.side_to_move()).len() - 1) as i16 / 2
         // if self.startpos.side_to_move() == pos.side_to_move() {
         //     -CONTEMPT
         // } else {
@@ -202,7 +202,7 @@ impl Engine {
         }
 
         if pos.has_insufficient_material() {
-            return VALUE_DRAW;
+            return self.contempt(pos);
         }
 
         if pos.halfmove_clock() >= 100 {
@@ -210,7 +210,7 @@ impl Engine {
                 return lose_in(ply);
             }
 
-            return VALUE_DRAW;
+            return self.contempt(pos);
         }
 
         if is_rep(pos, ply as usize, &self.key_stack) {
@@ -366,7 +366,7 @@ impl Engine {
         if in_check && move_count == 0 {
             best_score = lose_in(ply);
         } else if !in_check && move_count == 0 && !pos.any_moves() {
-            best_score = VALUE_DRAW;
+            best_score = self.contempt(pos);
         } else if !is_decisive(best_score) && best_score > beta {
             best_score = avg(best_score, beta);
         }
@@ -457,7 +457,7 @@ impl Engine {
         //- simple draw checks
         if !is_root {
             if pos.has_insufficient_material() {
-                return VALUE_DRAW;
+                return self.contempt(pos);
             }
 
             if pos.halfmove_clock() >= 100 {
@@ -465,7 +465,7 @@ impl Engine {
                     return lose_in(ply);
                 }
 
-                return VALUE_DRAW;
+                return self.contempt(pos);
             }
 
             if is_rep(pos, ply as usize, &self.key_stack) {
@@ -1181,7 +1181,7 @@ impl Engine {
             } else if in_check {
                 best_score = lose_in(ply);
             } else {
-                best_score = VALUE_DRAW;
+                best_score = self.contempt(pos);
             }
         } else if best_score >= beta {
             let history_depth = depth + (best_score as i32 > beta as i32 + 200) as i8;
