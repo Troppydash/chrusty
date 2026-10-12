@@ -10,7 +10,7 @@ pub const VALUE_CHECKMATE: i16 = VALUE_INF - (MAX_DEPTH as i16) - 1;
 pub const VALUE_SYZYGY: i16 = VALUE_CHECKMATE - 1;
 pub const VALUE_EVAL: i16 = VALUE_SYZYGY - (MAX_DEPTH as i16) - 1;
 pub const VALUE_DRAW: i16 = 0;
-pub const MAX_TIME: i128 = 1_000_000_000_000_000;
+pub const MAX_TIME: i64 = 1_000_000_000_000_000;
 pub const MAX_NODES: i64 = 1_000_000_000_000_000;
 
 pub fn is_decisive(value: i16) -> bool {

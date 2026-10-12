@@ -6,6 +6,7 @@ use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
 use crate::{Engine, sort, spsa};
 use std::process::exit;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
@@ -18,8 +19,8 @@ pub const DEFAULT_TT_SIZE: usize = 16;
 pub struct SearchLimits {
     pub max_depths: i8,
     pub max_nodes: i64,
-    pub max_time: i128,
-    pub opt_time: i128,
+    pub max_time: i64,
+    pub opt_time: i64,
 }
 
 impl SearchLimits {
@@ -34,7 +35,7 @@ impl SearchLimits {
 }
 
 struct AsyncEngine {
-    timer: Arc<RwLock<Timer>>,
+    timer: Arc<Timer>,
     engine: Arc<Mutex<Engine>>,
     handle: Option<JoinHandle<()>>,
     table: Box<Table>,
@@ -43,7 +44,7 @@ struct AsyncEngine {
 
 impl AsyncEngine {
     fn new() -> Self {
-        let timer = Arc::new(RwLock::new(Timer::new()));
+        let timer = Arc::new(Timer::new());
         let mut table = Box::new(Table::new(DEFAULT_TT_SIZE));
         let table_ptr = TablePtr::from_table(&mut table);
         let engine = Arc::new(Mutex::new(Engine::new(timer.clone(), table_ptr)));
@@ -63,11 +64,10 @@ impl AsyncEngine {
     }
 
     fn start_timer(&mut self, limits: &SearchLimits) {
-        let mut timer = self.timer.write().unwrap();
-        timer.max_depth = limits.max_depths;
-        timer.max_nodes = limits.max_nodes;
-        timer.opt_time = limits.opt_time;
-        timer.start(limits.max_time);
+        self.timer.max_depth.store(limits.max_depths, Ordering::Relaxed);
+        self.timer.max_nodes.store(limits.max_nodes, Ordering::Relaxed);
+        self.timer.opt_time.store(limits.opt_time, Ordering::Relaxed);
+        self.timer.start(limits.max_time);
     }
 
     fn search(&mut self, startpos: Board, moves: Vec<Move>) {
@@ -82,7 +82,7 @@ impl AsyncEngine {
         assert!(self.handle.is_none());
 
         if let Some(handle) = handle {
-            self.timer.write().unwrap().force_stop();
+            self.timer.force_stop();
             handle.join().unwrap();
         }
     }
@@ -214,31 +214,31 @@ pub fn start(args: Vec<String>) {
                             i += 2;
                         }
                         "movetime" => {
-                            let time = parts[i + 1].parse::<i128>().unwrap();
+                            let time = parts[i + 1].parse::<i64>().unwrap();
                             search_limits.opt_time = time;
                             search_limits.max_time = time;
                             i += 2;
                         }
                         "wtime" => {
                             is_competitive = true;
-                            wtime = parts[i + 1].parse::<i128>().unwrap();
+                            wtime = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
                         "winc" => {
                             is_competitive = true;
-                            winc = parts[i + 1].parse::<i128>().unwrap();
+                            winc = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
 
                         "btime" => {
                             is_competitive = true;
-                            btime = parts[i + 1].parse::<i128>().unwrap();
+                            btime = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
 
                         "binc" => {
                             is_competitive = true;
-                            binc = parts[i + 1].parse::<i128>().unwrap();
+                            binc = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
                         _ => {

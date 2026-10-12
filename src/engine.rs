@@ -1,6 +1,6 @@
 use std::{
     os::linux::raw::stat,
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, atomic::Ordering},
 };
 
 use cozy_chess::{Board, Move, Piece};
@@ -61,7 +61,7 @@ pub struct Engine {
     // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
-    timer: Arc<RwLock<Timer>>,
+    timer: Arc<Timer>,
     table: TablePtr,
     nnue: NNUE,
     settings: Parameters,
@@ -69,7 +69,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(timer: Arc<RwLock<Timer>>, table: TablePtr) -> Self {
+    pub fn new(timer: Arc<Timer>, table: TablePtr) -> Self {
         Self {
             stack: vec![SearchStack::new(); SS_SIZE].into_boxed_slice(),
             key_stack: KeyStack::new(),
@@ -175,17 +175,12 @@ impl Engine {
         self.nodes += 1;
 
         // if self.nodes % 4096 == 0 {
-        //     self.timer.write().unwrap().check();
-        //     if self.nodes >= self.timer.read().unwrap().max_nodes {
-        //         self.timer.write().unwrap().force_stop();
+        //     self.timer.check();
+        //     if self.timer.stopped() {
+        //         return 0;
         //     }
         // }
 
-        // if self.timer.read().unwrap().stopped() {
-        //     return 0;
-        // }
-
-        // note that we don't check timer in qsearch
         let ply = self.stack[ss].ply;
         self.stack[ss].pv_list.clear();
 
@@ -347,6 +342,10 @@ impl Engine {
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth - 1, ss + 1, is_pv);
             self.unmake_move(pos, key, ss);
 
+            // if self.timer.stopped() {
+            //     return 0;
+            // }
+
             if score > best_score {
                 best_score = score;
 
@@ -425,14 +424,14 @@ impl Engine {
         self.stack[ss].move_count = 0;
 
         if self.nodes % 4096 == 0 {
-            self.timer.write().unwrap().check();
-            if self.nodes >= self.timer.read().unwrap().max_nodes {
-                self.timer.write().unwrap().force_stop();
+            self.timer.check();
+            if self.nodes >= self.timer.max_nodes.load(Ordering::Relaxed) {
+                self.timer.force_stop();
             }
-        }
 
-        if self.timer.read().unwrap().stopped() {
-            return 0;
+            if self.timer.stopped() {
+                return 0;
+            }
         }
 
         //- prevent high depths
@@ -711,7 +710,7 @@ impl Engine {
                 );
                 self.unmake_move(pos, key, ss);
 
-                if self.timer.read().unwrap().stopped() {
+                if self.timer.stopped() {
                     return 0;
                 }
 
@@ -726,7 +725,7 @@ impl Engine {
                         self.negamax(pos, beta - 1, beta, reduced_depth, ss, false, false);
                     self.stack[0].nmp_min_ply = 0;
 
-                    if self.timer.read().unwrap().stopped() {
+                    if self.timer.stopped() {
                         return 0;
                     }
 
@@ -813,7 +812,7 @@ impl Engine {
                     }
                     self.unmake_move(pos, key, ss);
 
-                    if self.timer.read().unwrap().stopped() {
+                    if self.timer.stopped() {
                         return 0;
                     }
 
@@ -974,7 +973,7 @@ impl Engine {
                 self.stack[ss].move_count = old_move_count;
                 self.stack[ss].excluded = Move::NULL_MOVE;
 
-                if self.timer.read().unwrap().stopped() {
+                if self.timer.stopped() {
                     return 0;
                 }
 
@@ -1113,7 +1112,7 @@ impl Engine {
 
             self.unmake_move(pos, key, ss);
 
-            if self.timer.read().unwrap().stopped() {
+            if self.timer.stopped() {
                 return 0;
             }
 
@@ -1400,7 +1399,7 @@ impl Engine {
 
         // iterative deepening
         let mut depth = 1;
-        while depth <= self.timer.read().unwrap().max_depth {
+        while depth <= self.timer.max_depth.load(Ordering::Relaxed) {
             let mut alpha = -VALUE_INF;
             let mut beta = VALUE_INF;
 
@@ -1434,7 +1433,7 @@ impl Engine {
                     self.negamax(&pos, alpha, beta, reduced_depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();
 
-                if self.timer.read().unwrap().stopped() {
+                if self.timer.stopped() {
                     break;
                 }
 
@@ -1453,7 +1452,7 @@ impl Engine {
             }
 
             // force exit
-            if self.timer.read().unwrap().stopped() {
+            if self.timer.stopped() {
                 break;
             }
 
@@ -1491,14 +1490,12 @@ impl Engine {
             // opt exit
             if self
                 .timer
-                .read()
-                .unwrap()
-                .test((self.timer.read().unwrap().opt_time as f64 * factors) as i128)
+                .test((self.timer.opt_time.load(Ordering::Relaxed) as f64 * factors) as i64)
             {
                 break;
             }
 
-            let delta = self.timer.read().unwrap().delta();
+            let delta = self.timer.delta();
             let nps = self.nodes * 1000 / delta.max(1) as i64;
             let score = self.root_moves[0].score;
             let score_str = if is_win(score) {
@@ -1534,7 +1531,7 @@ impl Engine {
             root: self.root_moves[0].clone(),
             depth,
         };
-        println!("info time {}", self.timer.read().unwrap().delta());
+        println!("info time {}", self.timer.delta());
 
         let best_move = result.root.pv_list.pv();
         if result.root.pv_list.len() >= 2 {
