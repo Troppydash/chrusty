@@ -7,7 +7,10 @@ use cozy_chess::{
     Rank, Square,
 };
 
-use crate::ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL, PROMOTION};
+use crate::{
+    ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL, PROMOTION},
+    pesto,
+};
 
 // these are stack allocated
 
@@ -183,6 +186,7 @@ pub trait ExtBoard {
 
     fn has_non_pawns(&self, side: Color) -> bool;
 
+    fn material(&self) -> i32;
     fn correct_hash(&self) -> u64;
 
     fn by_color(&self) -> [BitBoard; 2];
@@ -359,6 +363,14 @@ impl ExtBoard for Board {
 
     fn has_non_pawns(&self, side: Color) -> bool {
         self.colors(side) != (self.colored_pieces(side, King) | self.colored_pieces(side, Pawn))
+    }
+
+    fn material(&self) -> i32 {
+        pesto::PIECE_VALUE[Piece::Pawn as usize] * self.pieces(Piece::Pawn).len() as i32
+            + pesto::PIECE_VALUE[Piece::Knight as usize] * self.pieces(Piece::Knight).len() as i32
+            + pesto::PIECE_VALUE[Piece::Bishop as usize] * self.pieces(Piece::Bishop).len() as i32
+            + pesto::PIECE_VALUE[Piece::Rook as usize] * self.pieces(Piece::Rook).len() as i32
+            + pesto::PIECE_VALUE[Piece::Queen as usize] * self.pieces(Piece::Queen).len() as i32
     }
 
     fn correct_hash(&self) -> u64 {

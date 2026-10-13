@@ -136,9 +136,11 @@ const fn init() -> ([[i32; 64]; 12], [[i32; 64]; 12]) {
 const MG_TABLE: [[i32; 64]; 12] = init().0;
 const EG_TABLE: [[i32; 64]; 12] = init().1;
 
+pub const PIECE_VALUE: [i32; 7] = [100, 320, 340, 620, 1300, 1500, 0];
+
 #[inline]
 pub fn get(pos: &Board, piece: Piece, color: Color, sq: Square) -> i32 {
-    [100, 320, 340, 620, 1300, 1500, 0][piece as usize]
+    PIECE_VALUE[piece as usize]
     // let mut phase = (pos.occupied().len() - pos.pieces(Piece::Pawn).len() - 2) * 3 / 2;
 
     // let offset = piece as usize + if color == White { 0 } else { 6 };

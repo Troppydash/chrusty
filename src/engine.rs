@@ -680,11 +680,11 @@ impl Engine {
             }
 
             //- null move pruning
-            let has_non_pawns = pos.has_non_pawns(pos.side_to_move());
+            let material = pos.material();
             if cut_node
                 && ply as i32 >= self.stack[0].nmp_min_ply
                 && !has_excluded
-                && has_non_pawns
+                && material >= 600
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
