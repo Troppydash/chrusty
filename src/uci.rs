@@ -21,6 +21,7 @@ pub struct SearchLimits {
     pub max_nodes: i64,
     pub max_time: i64,
     pub opt_time: i64,
+    pub ponder: bool,
 }
 
 impl SearchLimits {
@@ -30,6 +31,7 @@ impl SearchLimits {
             max_nodes: MAX_NODES,
             max_time: MAX_TIME,
             opt_time: MAX_TIME,
+            ponder: false,
         }
     }
 }
@@ -40,6 +42,7 @@ struct AsyncEngine {
     handle: Option<JoinHandle<()>>,
     table: Box<Table>,
     parameter: spsa::Parameters,
+    max_time: i64,
 }
 
 impl AsyncEngine {
@@ -55,6 +58,7 @@ impl AsyncEngine {
             handle: None,
             table,
             parameter,
+            max_time: 0,
         }
     }
 
@@ -64,10 +68,17 @@ impl AsyncEngine {
     }
 
     fn start_timer(&mut self, limits: &SearchLimits) {
-        self.timer.max_depth.store(limits.max_depths, Ordering::Relaxed);
-        self.timer.max_nodes.store(limits.max_nodes, Ordering::Relaxed);
-        self.timer.opt_time.store(limits.opt_time, Ordering::Relaxed);
-        self.timer.start(limits.max_time);
+        self.timer
+            .max_depth
+            .store(limits.max_depths, Ordering::Relaxed);
+        self.timer
+            .max_nodes
+            .store(limits.max_nodes, Ordering::Relaxed);
+        self.timer
+            .opt_time
+            .store(limits.opt_time, Ordering::Relaxed);
+        self.max_time = limits.max_time;
+        self.timer.start(limits.max_time, limits.ponder);
     }
 
     fn search(&mut self, startpos: Board, moves: Vec<Move>) {
@@ -94,6 +105,11 @@ impl AsyncEngine {
         if let Some(handle) = handle {
             handle.join().unwrap();
         }
+    }
+
+    fn ponderhit(&mut self) {
+        // no effect if already stopped somehow
+        self.timer.start(self.max_time, false);
     }
 
     fn resize_table(&mut self, size_in_mbytes: usize) {
@@ -201,6 +217,7 @@ pub fn start(args: Vec<String>) {
                 let mut winc = 0;
                 let mut btime = 0;
                 let mut binc = 0;
+                let mut ponder = false;
 
                 let mut i = 1;
                 while i < parts.len() {
@@ -235,11 +252,14 @@ pub fn start(args: Vec<String>) {
                             btime = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
                         }
-
                         "binc" => {
                             is_competitive = true;
                             binc = parts[i + 1].parse::<i64>().unwrap();
                             i += 2;
+                        }
+                        "ponder" => {
+                            ponder = true;
+                            i += 1;
                         }
                         _ => {
                             println!("unknown option {}, skipping", parts[i]);
@@ -257,11 +277,15 @@ pub fn start(args: Vec<String>) {
                     let (opt_time, max_time) = Timer::plan(moves.len(), time, inc);
                     search_limits.opt_time = opt_time;
                     search_limits.max_time = max_time;
+                    search_limits.ponder = ponder;
                 }
 
                 async_engine.stop();
                 async_engine.start_timer(&search_limits);
                 async_engine.search(startpos.clone(), moves.clone());
+            }
+            "ponderhit" => {
+                async_engine.ponderhit();
             }
             "wait" => {
                 async_engine.wait();

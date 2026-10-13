@@ -11,6 +11,7 @@ pub struct Timer {
     start: AtomicI64,
     duration: AtomicI64,
     stopped: AtomicBool,
+    pondering: AtomicBool,
     // constants
     pub max_nodes: AtomicI64,
     pub max_depth: AtomicI8,
@@ -24,6 +25,7 @@ impl Timer {
             start: AtomicI64::new(0),
             duration: AtomicI64::new(MAX_TIME),
             stopped: AtomicBool::new(false),
+            pondering: AtomicBool::new(false),
             max_depth: AtomicI8::new(MAX_DEPTH),
             max_nodes: AtomicI64::new(MAX_NODES),
             opt_time: AtomicI64::new(MAX_TIME),
@@ -34,15 +36,17 @@ impl Timer {
         self.instant.elapsed().as_millis() as i64 - self.start.load(Ordering::Relaxed)
     }
 
-    pub fn start(&self, duration: i64) {
+    pub fn start(&self, duration: i64, pondering: bool) {
         self.start
             .store(self.instant.elapsed().as_millis() as i64, Ordering::Relaxed);
         self.duration.store(duration, Ordering::Relaxed);
         self.stopped.store(false, Ordering::Relaxed);
+        // this is set last because ponderhit sets this from true -> false
+        self.pondering.store(pondering, Ordering::Release);
     }
 
     pub fn check(&self) {
-        if self.stopped.load(Ordering::Relaxed) {
+        if self.stopped() {
             return;
         }
 
@@ -52,15 +56,17 @@ impl Timer {
     }
 
     pub fn stopped(&self) -> bool {
-        self.stopped.load(Ordering::Relaxed)
+        let pondering = self.pondering.load(Ordering::Acquire);
+        !pondering && self.stopped.load(Ordering::Relaxed)
     }
 
     pub fn force_stop(&self) {
         self.stopped.store(true, Ordering::Relaxed);
+        self.pondering.store(false, Ordering::Relaxed);
     }
 
     pub fn test(&self, duration: i64) -> bool {
-        self.elapsed() >= duration
+        !self.pondering.load(Ordering::Relaxed) && self.elapsed() >= duration
     }
 
     pub fn delta(&self) -> i64 {
