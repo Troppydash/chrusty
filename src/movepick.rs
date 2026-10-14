@@ -9,7 +9,7 @@ use crate::{
     heuristic::{Heuristic, LOW_PLY},
     nnue::{NNUE, network::CM},
     param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
-    see,
+    pesto, see,
     stack::SearchStack,
     threats::Threats,
 };
@@ -551,15 +551,8 @@ impl Movepick {
 
             score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
 
-            if let Some(promotion) = self.moves.get(i).inner.promotion
-                && matches!(promotion, Piece::Queen | Piece::Knight)
-            {
-                score += 10000
-                    + pesto_value(
-                        &self.pos,
-                        ColoredPiece::new(self.pos.side_to_move(), promotion),
-                        m.to,
-                    );
+            if let Some(promotion) = self.moves.get(i).inner.promotion {
+                score += pesto::PIECE_VALUE[promotion as usize];
             }
 
             self.moves.get_mut(i).score = score;
@@ -650,6 +643,10 @@ impl Movepick {
             // {
             //     score += heuristic.get_pos_cont_hist(prev, &self.pos, m).get() as i32 / 2;
             // }
+
+            if let Some(promotion) = m.promotion {
+                score += pesto::PIECE_VALUE[promotion as usize];
+            }
 
             ///// Threats /////
             if self.ply >= 1 {
@@ -826,13 +823,7 @@ impl Movepick {
                 }
 
                 Stage::QQuietCheck => {
-                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
-                        if moves[i].score < BAD_QUIET_SCORE {
-                            Pick::Break
-                        } else {
-                            Pick::Select
-                        }
-                    });
+                    let next_move = self.moves.pick(self.moves.len(), |moves, i| Pick::Select);
                     if !next_move.is_null() {
                         return next_move;
                     }

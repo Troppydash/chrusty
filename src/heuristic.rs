@@ -481,9 +481,8 @@ impl Heuristic {
         best_move: Move,
         stack: &[SearchStack],
         ss: usize,
-        pawn_key: u64,
+        bonus: i16
     ) {
-        let bonus = 200;
         if !pos.is_quiet(best_move) {
             self.get_capture_history_mut(pos, best_move).add(bonus);
 

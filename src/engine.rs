@@ -366,8 +366,8 @@ impl Engine {
             best_score = lose_in(ply);
         } else if !in_check && move_count == 0 && !pos.any_moves() {
             best_score = self.contempt(pos);
-        } else if !is_decisive(best_score) && best_score > beta {
-            best_score = avg(best_score, beta);
+        } else if !is_decisive(best_score) && !is_decisive(beta) && best_score > beta {
+            best_score = lerp(best_score, beta, 0.5);
         }
 
         let flag = if best_score >= beta {
@@ -389,13 +389,9 @@ impl Engine {
         );
 
         if best_score >= beta && !best_move.is_null() {
-            self.heuristic.weak_update_history(
-                pos,
-                best_move,
-                &self.stack,
-                ss,
-                self.pawn_key.get(),
-            );
+            let bonus = 200 - 100 * in_check as i16;
+            self.heuristic
+                .weak_update_history(pos, best_move, &self.stack, ss, bonus);
         }
 
         best_score
@@ -1183,7 +1179,8 @@ impl Engine {
                 best_score = self.contempt(pos);
             }
         } else if best_score >= beta {
-            let history_depth = depth + (best_score as i32 > beta as i32 + 200) as i8;
+            let history_depth =
+                (depth + (best_score as i32 > beta as i32 + 200) as i8 - in_check as i8).max(1);
             self.heuristic.update_history(
                 pos,
                 history_depth,
