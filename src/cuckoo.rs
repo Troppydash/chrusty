@@ -136,10 +136,6 @@ pub fn is_upcoming_rep(pos: &Board, stack: &KeyStack, ply: i8) -> bool {
             continue;
         }
 
-        if !pos.is_legal(m) {
-            continue;
-        }
-
         return true;
     }
 

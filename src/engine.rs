@@ -328,7 +328,11 @@ impl Engine {
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
             if !is_loss(best_score) {
-                if move_count >= 3 {
+                if !is_pv && move_count >= 3 {
+                    break;
+                }
+
+                if is_pv && move_count >= 4 {
                     break;
                 }
 
@@ -363,11 +367,19 @@ impl Engine {
 
         //- mates
         if in_check && move_count == 0 {
-            best_score = lose_in(ply);
+            return lose_in(ply);
         } else if !in_check && move_count == 0 && !pos.any_moves() {
-            best_score = self.contempt(pos);
-        } else if !is_decisive(best_score) && !is_decisive(beta) && best_score > beta {
-            best_score = lerp(best_score, beta, 0.5);
+            return self.contempt(pos);
+        } else {
+            if !is_decisive(best_score) && !is_decisive(beta) && best_score > beta {
+                best_score = lerp(best_score, beta, 0.5);
+            }
+
+            if best_score >= beta && !best_move.is_null() {
+                let bonus = 200 - 100 * in_check as i16;
+                self.heuristic
+                    .weak_update_history(pos, best_move, &self.stack, ss, bonus);
+            }
         }
 
         let flag = if best_score >= beta {
@@ -387,12 +399,6 @@ impl Engine {
             is_pv || (tt_data.hit && tt_data.is_pv),
             tt_age,
         );
-
-        if best_score >= beta && !best_move.is_null() {
-            let bonus = 200 - 100 * in_check as i16;
-            self.heuristic
-                .weak_update_history(pos, best_move, &self.stack, ss, bonus);
-        }
 
         best_score
     }
@@ -1172,11 +1178,11 @@ impl Engine {
 
         if self.stack[ss].move_count == 0 {
             if has_excluded {
-                best_score = alpha;
+                return alpha;
             } else if in_check {
-                best_score = lose_in(ply);
+                return lose_in(ply);
             } else {
-                best_score = self.contempt(pos);
+                return self.contempt(pos);
             }
         } else if best_score >= beta {
             let history_depth =
