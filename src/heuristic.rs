@@ -27,7 +27,7 @@ impl<const LIMIT: i16> History<LIMIT> {
     }
 }
 
-pub const CORR_LIMIT: i16 = 2048;
+pub const CORR_LIMIT: i16 = 1024;
 pub const CONT_LIMIT: i16 = 10000;
 pub const HISTORY_LIMIT: i16 = 10000;
 pub const CAPTURE_HISTORY_LIMIT: i16 = 20000;

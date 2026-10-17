@@ -187,7 +187,7 @@ impl Engine {
         assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
 
         //- prevent high depths
-        if ply > MAX_DEPTH - 4 || depth < -20 {
+        if ply > MAX_DEPTH - 4 || depth < MIN_QDEPTH {
             if pos.in_check() {
                 return VALUE_DRAW;
             }
@@ -234,7 +234,7 @@ impl Engine {
         let table = table.get();
         let tt_age = table.get_age();
         let (reader, writer) = table.get(tt_key);
-        let mut tt_data = reader.get(tt_key, ply, QDEPTH, alpha, beta);
+        let mut tt_data = reader.get(tt_key, ply, depth, alpha, beta);
 
         //- tt parsing
         tt_data.pv = if tt_data.hit && !tt_data.pv.is_null() && pos.is_legal(tt_data.pv) {
@@ -274,7 +274,7 @@ impl Engine {
                 unadjusted_static = self.evaluate(pos);
                 best_score = self.static_correction(pos, unadjusted_static, ss);
 
-                writer.set(
+                unsafe { &mut *writer }.set(
                     tt_key,
                     Move::NULL_MOVE,
                     ply,
@@ -380,11 +380,11 @@ impl Engine {
             FLAG_ALPHA
         };
 
-        writer.set(
+        unsafe { &mut *writer }.set(
             tt_key,
             best_move,
             ply,
-            QDEPTH,
+            depth,
             flag,
             best_score,
             unadjusted_static,
@@ -570,7 +570,7 @@ impl Engine {
             tt_static = self.stack[ss].adjusted_static;
             complexity = (unadjusted_static as i32 - self.stack[ss].adjusted_static as i32).abs();
 
-            writer.set(
+            unsafe { &mut *writer }.set(
                 tt_key,
                 Move::NULL_MOVE,
                 ply,
@@ -604,7 +604,7 @@ impl Engine {
             };
 
             if get_can_use(score, flag, alpha, beta) {
-                writer.set(
+                unsafe { &mut *writer }.set(
                     tt_key,
                     Move::NULL_MOVE,
                     ply,
@@ -679,6 +679,7 @@ impl Engine {
                 && ply as i32 >= self.stack[0].nmp_min_ply
                 && !has_excluded
                 && material >= 600
+                && pos.has_non_pawns(pos.side_to_move())
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
@@ -812,7 +813,7 @@ impl Engine {
 
                     if score >= probcut_beta && !is_win(score) {
                         if !has_excluded {
-                            writer.set(
+                            unsafe { &mut *writer }.set(
                                 tt_key,
                                 next_move.inner,
                                 ply,
@@ -1208,7 +1209,7 @@ impl Engine {
 
         if !has_excluded {
             //- tt update
-            writer.set(
+            unsafe { &mut *writer }.set(
                 tt_key,
                 best_move,
                 ply,
@@ -1232,6 +1233,7 @@ impl Engine {
             let bonus = ((best_score as i32 - adjusted_static as i32) * depth as i32 / 8)
                 .clamp((-CORR_LIMIT / 4) as i32, (CORR_LIMIT / 4) as i32)
                 as i16;
+
             self.heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
                 .add(bonus);
@@ -1545,5 +1547,48 @@ impl Engine {
         self.prev_score = Some(result.root.score);
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tt::Table;
+
+    #[test]
+    fn qsearch_shallow_tt_bound_does_not_hide_quiet_mate() {
+        cuckoo::init();
+        crate::nnue::init();
+
+        // Ra8 is mate, but a capture-only qsearch cannot find it.
+        let pos = Board::from_fen("7k/8/6K1/8/8/8/8/R7 w - - 0 1", false).unwrap();
+        let mut table = Box::new(Table::new(1));
+        let mut engine = Engine::new(Arc::new(Timer::new()), TablePtr::from_table(&mut table));
+        engine.nnue.init(&pos);
+        engine.pawn_key.init(&pos);
+        for ply in 0..(SS_SIZE - SS_SIZE_PRE) {
+            engine.stack[SS_SIZE_PRE + ply] = SearchStack::new_ply(ply as i8);
+        }
+
+        for requested_depth in [-9, QDEPTH] {
+            table.clear();
+            let cold = engine.qsearch(&pos, 10000, 10001, requested_depth, SS_SIZE_PRE, false);
+            assert_eq!(cold, win_in(1));
+
+            table.clear();
+            let shallow = engine.qsearch(&pos, 10000, 10001, -10, SS_SIZE_PRE, false);
+            assert!(shallow < 10000);
+
+            let key = pos.correct_hash() ^ get_50mr_key(pos.halfmove_clock() as usize);
+            let (entry, _) = table.get(key);
+            let value = entry.get(key, 0, requested_depth, 10000, 10001);
+            assert!(value.hit);
+            assert_eq!(value.flag, FLAG_ALPHA);
+            assert_eq!(value.depth, -10);
+            assert!(!value.can_use);
+
+            let warm = engine.qsearch(&pos, 10000, 10001, requested_depth, SS_SIZE_PRE, false);
+            assert_eq!(warm, cold);
+        }
     }
 }

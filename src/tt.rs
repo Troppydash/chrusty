@@ -1,5 +1,5 @@
 use std::{
-    alloc::{Layout, alloc_zeroed, dealloc},
+    alloc::{Layout, alloc, dealloc},
     arch::x86_64::{_MM_HINT_ET0, _mm_prefetch},
     ptr::{NonNull, null_mut},
 };
@@ -7,8 +7,7 @@ use std::{
 use cozy_chess::Move;
 
 use crate::{
-    ext::ExtMove,
-    param::{UNINIT_DEPTH, VALUE_CHECKMATE, VALUE_NONE, is_valid},
+    ext::ExtMove, param::{UNINIT_DEPTH, VALUE_CHECKMATE, VALUE_EVAL, VALUE_NONE, is_valid},
 };
 
 const AGE_SIZE: usize = 5;
@@ -98,9 +97,9 @@ impl Entry {
             if is_valid(self.score) {
                 adjusted_score = self.score;
 
-                if adjusted_score > VALUE_CHECKMATE {
+                if adjusted_score > VALUE_EVAL {
                     adjusted_score -= ply as i16;
-                } else if adjusted_score < -VALUE_CHECKMATE {
+                } else if adjusted_score < -VALUE_EVAL {
                     adjusted_score += ply as i16;
                 }
 
@@ -162,9 +161,9 @@ impl Entry {
 
             self.score = score;
             if is_valid(score) {
-                self.score = if score > VALUE_CHECKMATE {
+                self.score = if score > VALUE_EVAL {
                     score + ply as i16
-                } else if score < -VALUE_CHECKMATE {
+                } else if score < -VALUE_EVAL {
                     score - ply as i16
                 } else {
                     score
@@ -198,11 +197,11 @@ impl Bucket {
         }
     }
 
-    /// Returns (reader, writer)
-    fn get(&mut self, key: u64, age: u8) -> (Entry, &mut Entry) {
+    /// Returns an entry snapshot and its slot index.
+    fn get(&self, key: u64, age: u8) -> (Entry, usize) {
         for i in 0..NUM_ENTRIES {
             if key_matches(key, self.values[i].hash) {
-                return (self.values[i].clone(), &mut self.values[i]);
+                return (self.values[i], i);
             }
         }
 
@@ -218,7 +217,7 @@ impl Bucket {
             }
         }
 
-        (self.values[best_slot].clone(), &mut self.values[best_slot])
+        (self.values[best_slot], best_slot)
     }
 
     fn clear(&mut self) {
@@ -228,7 +227,10 @@ impl Bucket {
     }
 }
 
-const LARGE_PAGE: usize = 4096;
+#[cfg(target_os = "linux")]
+const TT_ALIGNMENT: usize = 2 * 1024 * 1024;
+#[cfg(not(target_os = "linux"))]
+const TT_ALIGNMENT: usize = 4096;
 
 pub struct Table {
     buckets: NonNull<Bucket>,
@@ -240,24 +242,42 @@ impl Table {
     fn get_layout(size: usize) -> Layout {
         Layout::array::<Bucket>(size)
             .unwrap()
-            .align_to(LARGE_PAGE)
+            .align_to(TT_ALIGNMENT)
             .unwrap()
+            .pad_to_align()
+    }
+
+    fn allocate(size: usize) -> NonNull<Bucket> {
+        let layout = Self::get_layout(size);
+        let buckets = unsafe {
+            let ptr = alloc(layout) as *mut Bucket;
+            NonNull::new(ptr).unwrap_or_else(|| std::alloc::handle_alloc_error(layout))
+        };
+
+        #[cfg(target_os = "linux")]
+        unsafe {
+            libc::madvise(
+                buckets.as_ptr().cast::<libc::c_void>(),
+                layout.size(),
+                libc::MADV_HUGEPAGE,
+            );
+        }
+
+        for i in 0..size {
+            unsafe { buckets.as_ptr().add(i).write(Bucket::new()) };
+        }
+
+        buckets
     }
 
     pub fn new(size_in_mbytes: usize) -> Self {
         let size = (size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>()).max(1);
-        let layout = Self::get_layout(size);
-        let buckets = unsafe {
-            let ptr = alloc_zeroed(layout) as *mut Bucket;
-            NonNull::new(ptr).expect(&format!("Failed to allocate tt with {}M", size_in_mbytes))
-        };
-        let mut table = Self {
+        let buckets = Self::allocate(size);
+        Self {
             buckets,
             size,
             age: 0,
-        };
-        table.clear();
-        table
+        }
     }
 
     fn index(&self, i: usize) -> &Bucket {
@@ -286,10 +306,14 @@ impl Table {
         self.age = (self.age + 1) % MAX_AGE;
     }
 
-    pub fn get(&mut self, key: u64) -> (Entry, &mut Entry) {
+    pub fn get(&mut self, key: u64) -> (Entry, *mut Entry) {
         let index = ((key as u128 * self.size as u128) >> 64) as usize;
-        let age = self.age;
-        self.index_mut(index).get(key, age)
+        unsafe {
+            let bucket = self.buckets.as_ptr().add(index);
+            let (reader, slot) = (&*bucket).get(key, self.age);
+            let writer = (&raw mut (*bucket).values).cast::<Entry>().add(slot);
+            (reader, writer)
+        }
     }
 
     pub fn prefetch(&self, key: u64) {
@@ -306,13 +330,8 @@ impl Table {
     pub fn resize(&mut self, size_in_mbytes: usize) {
         self.dealloc();
         self.size = (size_in_mbytes * 1024 * 1024 / std::mem::size_of::<Bucket>()).max(1);
-        let layout = Self::get_layout(self.size);
-        self.buckets = unsafe {
-            let ptr = alloc_zeroed(layout) as *mut Bucket;
-            NonNull::new(ptr).expect(&format!("Failed to allocate tt with {}M", size_in_mbytes))
-        };
+        self.buckets = Self::allocate(self.size);
         self.age = 0;
-        self.clear();
     }
 
     pub fn hashfull(&self) -> i64 {
@@ -384,4 +403,57 @@ pub const fn get_50mr_key(half_move_clock: usize) -> u64 {
     };
 
     KEYS[half_move_clock]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deepest_qsearch_entry_is_distinct_from_tt_sentinels() {
+        use crate::param::{MIN_QDEPTH, QDEPTH, UNSEARCH_DEPTH};
+
+        assert!(UNINIT_DEPTH < UNSEARCH_DEPTH);
+        assert!(UNSEARCH_DEPTH < MIN_QDEPTH);
+
+        let mut entry = Entry::new();
+        entry.set(
+            42, Move::NULL_MOVE, 0, MIN_QDEPTH, FLAG_BETA, 100, 50, false, 0,
+        );
+        let same_depth = entry.get(42, 0, MIN_QDEPTH, 0, 1);
+        assert!(same_depth.hit && same_depth.can_use);
+        assert!(!entry.get(42, 0, QDEPTH, 0, 1).can_use);
+
+        // Entries from a longer search can still satisfy a shorter search.
+        entry.set(42, Move::NULL_MOVE, 0, QDEPTH, FLAG_BETA, 100, 50, false, 0);
+        assert!(entry.get(42, 0, MIN_QDEPTH, 0, 1).can_use);
+
+        entry.clear();
+        assert!(!entry.get(42, 0, MIN_QDEPTH, 0, 1).hit);
+    }
+
+    #[test]
+    fn writer_survives_recursive_slot_replacement() {
+        // A single bucket forces both probes to select the same empty slot.
+        let mut table = Table::new(0);
+        let (parent, parent_writer) = table.get(2);
+        let (_, child_writer) = table.get(3);
+        assert_eq!(parent_writer, child_writer);
+
+        unsafe { &mut *child_writer }.set(
+            3, Move::NULL_MOVE, 1, 1, FLAG_BETA, 50, 20, false, 0,
+        );
+        // The parent retains its snapshot, then writes back to the original
+        // slot after the child has finished, without another table lookup.
+        assert!(!parent.get(2, 0, 1, -100, 100).hit);
+        unsafe { &mut *parent_writer }.set(
+            2, Move::NULL_MOVE, 0, 2, FLAG_EXACT, 75, 30, true, 0,
+        );
+
+        let (entry, _) = table.get(2);
+        let result = entry.get(2, 0, 2, -100, 100);
+        assert!(result.hit && result.can_use);
+        assert_eq!(result.score, 75);
+        assert_eq!(result.static_score, 30);
+    }
 }

@@ -90,10 +90,6 @@ const OUTPUT_BUCKETS: [usize; 33] = [
 pub struct Aligned<T, const N: usize>(pub [T; N]);
 
 impl<T: Copy, const N: usize> Aligned<T, N> {
-    pub fn uninit() -> Self {
-        unsafe { Self(MaybeUninit::uninit().assume_init()) }
-    }
-
     pub fn zeroed() -> Self {
         unsafe { Self(MaybeUninit::zeroed().assume_init()) }
     }

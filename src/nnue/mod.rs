@@ -293,7 +293,7 @@ impl NNUE {
                 }
             }
 
-            let mut l1 = Aligned::<f32, { L1 }>::uninit();
+            let mut l1 = Aligned::<f32, { L1 }>::zeroed();
             for i in (0..L1).step_by(16) {
                 let bias = self.network.l1_bias[bucket].as_ptr() as *const __m512;
                 let s = _mm512_fmadd_ps(
