@@ -328,14 +328,6 @@ impl Engine {
             self.table.get().prefetch(pos.new_hash(next_move.inner));
 
             if !is_loss(best_score) {
-                if !is_pv && move_count >= 3 {
-                    break;
-                }
-
-                if is_pv && move_count >= 4 {
-                    break;
-                }
-
                 //- see pruning
                 if !in_check && !see::see_ge(pos, next_move.inner, -50) {
                     continue;
