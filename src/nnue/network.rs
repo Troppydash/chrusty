@@ -275,13 +275,12 @@ impl SimdOps {
                 _mm512_set1_ps(-15.0),
                 _mm512_min_ps(_mm512_set1_ps(15.0), x),
             );
-            let neg_x = _mm512_sub_ps(zero, clamped_x);
 
             // goal is to compute sigmoid(x) = 1/D(x) where D(x) = 1+exp(-x)
 
             // compute exp2(z) = exp2(-x log2(e)), but we split -x log2(e) into dn + r
-            let log2e = _mm512_set1_ps(1.44269504);
-            let z = _mm512_mul_ps(neg_x, log2e);
+            let log2e = _mm512_set1_ps(-1.44269504);
+            let z = _mm512_mul_ps(clamped_x, log2e);
 
             let dn = _mm512_roundscale_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(z);
             let r = _mm512_sub_ps(z, dn);
@@ -291,11 +290,8 @@ impl SimdOps {
             let p = _mm512_fmadd_ps(p, r, _mm512_set1_ps(0.69314718));
             let p = _mm512_fmadd_ps(p, r, one);
 
-            // 2^dn by exp, note the cast from i32 to f32 is a type cast
-            let i = _mm512_cvtps_epi32(dn);
-            let i = _mm512_add_epi32(i, _mm512_set1_epi32(127));
-            let i = _mm512_slli_epi32(i, 23);
-            let exp_neg_x = _mm512_mul_ps(p, _mm512_castsi512_ps(i));
+            // 2^dn
+            let exp_neg_x = _mm512_scalef_ps(p, dn);
 
             let d = _mm512_add_ps(one, exp_neg_x);
             let rcp = _mm512_rcp14_ps(d);

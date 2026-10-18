@@ -155,7 +155,7 @@ impl Engine {
     }
 
     fn contempt(&self, pos: &Board) -> i16 {
-        (pos.colors(pos.side_to_move()).len() - 1) as i16 / 2
+        return 0;
         // if self.startpos.side_to_move() == pos.side_to_move() {
         //     -CONTEMPT
         // } else {
@@ -679,7 +679,6 @@ impl Engine {
                 && ply as i32 >= self.stack[0].nmp_min_ply
                 && !has_excluded
                 && material >= 600
-                && pos.has_non_pawns(pos.side_to_move())
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
@@ -830,6 +829,18 @@ impl Engine {
                     }
                 }
             }
+
+            // tt based probcut
+            let margin = 500;
+            if tt_data.hit
+                && tt_data.flag == FLAG_BETA
+                && tt_data.depth >= depth - 4
+                && is_valid(tt_data.score)
+                && !is_decisive(tt_data.score)
+                && tt_data.score as i32 >= beta as i32 + margin
+            {
+                return beta;
+            }
         }
 
         self.stack[ss].move_count = 0;
@@ -874,13 +885,21 @@ impl Engine {
 
             //- low depth pruning
             if !is_root && !is_loss(best_score) && !in_check {
-                let lmr_depth = depth as i32;
+                let mut reduction = self.heuristic.get_lmr(self.stack[ss].move_count, depth);
+                let scaled_history_score = history * self.settings.p_lmr_history
+                    / if is_quiet {
+                        self.settings.p_lmr_quiet_div
+                    } else {
+                        self.settings.p_lmr_capture_div
+                    };
+                reduction -= scaled_history_score as i32;
+
+                let lmr_depth = (depth as i32 - reduction / 1024).clamp(1, depth as i32);
 
                 //- see pruning
                 let see_margin = if is_quiet {
                     self.settings.p_lowdepth_see_quiet_base
                         + self.settings.p_lowdepth_see_quiet_depth * lmr_depth * lmr_depth
-                        + history / 100
                 } else {
                     self.settings.p_lowdepth_see_capture_base
                         + self.settings.p_lowdepth_see_capture_depth * lmr_depth
@@ -1226,6 +1245,7 @@ impl Engine {
         let adjusted_static = self.stack[ss].adjusted_static;
         if is_valid(self.stack[ss].adjusted_static)
             && !in_check
+            && !has_excluded
             // pv not a capture
             && !(!best_move.is_null() && !pos.is_quiet(best_move))
             && (flag == FLAG_EXACT || (best_score >= adjusted_static && flag == FLAG_BETA) || (best_score < adjusted_static && flag == FLAG_ALPHA))
