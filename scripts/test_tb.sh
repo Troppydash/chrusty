@@ -15,7 +15,7 @@ LOG_FILE="./bench/logs/${NEW}_vs_${OLD}_tb"
 mkdir -p $LOG_FILE
 ./bench/fastchess/fastchess \
   -engine cmd=./bench/${NEW}/chrusty name=${NEW} option.Hash=32 option.SyzygyPath=/home/troppydash/Downloads/Syzygy345 \
-  -engine cmd=./bench/${OLD}/chrusty name=${OLD} option.Hash=32 \
+  -engine cmd=./bench/${OLD}/chrusty name=${OLD} option.Hash=32 option.SyzygyPath=/home/troppydash/Downloads/Syzygy345 \
   -openings file=./bench/fastchess/UHO_Lichess_4852_v1.epd format=epd order=random \
   -each tc=20+0.2 \
   -srand $RANDOM \

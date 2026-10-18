@@ -481,7 +481,7 @@ impl Heuristic {
         best_move: Move,
         stack: &[SearchStack],
         ss: usize,
-        bonus: i16
+        bonus: i16,
     ) {
         if !pos.is_quiet(best_move) {
             self.get_capture_history_mut(pos, best_move).add(bonus);
@@ -515,6 +515,9 @@ impl Heuristic {
         let bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
         let malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
 
+        let capture_bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
+        let capture_malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
+
         if pos.is_quiet(best_move) {
             self.get_main_history_mut(pos, best_move).add(bonus);
             if ply < LOW_PLY as i8 {
@@ -547,21 +550,22 @@ impl Heuristic {
                 *counter = best_move;
             }
         } else {
-            self.get_capture_history_mut(pos, best_move).add(bonus);
+            self.get_capture_history_mut(pos, best_move)
+                .add(capture_bonus);
 
             if ply < LOW_PLY as i8 {
                 self.get_low_ply_capture_history_mut(pos, best_move, ply)
-                    .add(bonus);
+                    .add(capture_bonus);
             }
         }
 
         for m in captures.iter() {
             debug_assert!(!m.is_null());
-            self.get_capture_history_mut(pos, *m).add(-malus);
+            self.get_capture_history_mut(pos, *m).add(-capture_malus);
 
             if ply < LOW_PLY as i8 {
                 self.get_low_ply_capture_history_mut(pos, *m, ply)
-                    .add(-malus);
+                    .add(-capture_malus);
             }
         }
     }

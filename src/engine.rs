@@ -22,6 +22,30 @@ use crate::{
     tt::{FLAG_ALPHA, FLAG_BETA, FLAG_EXACT, FLAG_NONE, TablePtr, get_50mr_key, get_can_use},
 };
 
+// pyrrhic-rs 0.2.0 overstates loaded cardinality, hack to 5
+const TABLEBASE_PIECE_LIMIT: u32 = 5;
+
+fn can_probe_tablebase(pos: &Board, root: bool) -> bool {
+    pos.occupied().len() <= TABLEBASE_PIECE_LIMIT
+        && if root {
+            TableBase::static_test_root(pos)
+        } else {
+            TableBase::static_test(pos)
+        }
+}
+
+fn format_uci_score(score: i16) -> String {
+    if score > VALUE_CHECKMATE {
+        let ply = VALUE_INF - score;
+        format!("mate {}", ply / 2 + ply % 2)
+    } else if score < -VALUE_CHECKMATE {
+        let ply = -VALUE_INF - score;
+        format!("mate {}", ply / 2 + ply % 2)
+    } else {
+        format!("cp {}", score)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RootMove {
     pv_list: PvList,
@@ -584,11 +608,11 @@ impl Engine {
         }
 
         //- syzygy
-        let max_score = VALUE_INF;
+        let mut max_score = VALUE_INF;
         let mut best_score = -VALUE_INF;
         if !has_excluded
             && !is_root
-            && TableBase::static_test(pos)
+            && can_probe_tablebase(pos, false)
             && let Some(tb) = &self.tb
             && tb.test(pos)
             && let Some(wdl) = tb.query(pos)
@@ -622,6 +646,8 @@ impl Engine {
             if flag == FLAG_BETA {
                 best_score = score;
                 alpha = alpha.max(score);
+            } else if is_pv && flag == FLAG_ALPHA {
+                max_score = score;
             }
         }
 
@@ -893,6 +919,7 @@ impl Engine {
                         self.settings.p_lmr_capture_div
                     };
                 reduction -= scaled_history_score as i32;
+                reduction -= (complexity * self.settings.p_lmr_complexity / 200).min(3 * 1024);
 
                 let lmr_depth = (depth as i32 - reduction / 1024).clamp(1, depth as i32);
 
@@ -1024,7 +1051,7 @@ impl Engine {
 
             //- late move reduction
             if depth >= 2 && self.stack[ss].move_count > 1 + is_root as usize {
-                let mut reduction = self.heuristic.get_lmr(self.stack[ss].move_count, depth);
+                let mut reduction = 512 + self.heuristic.get_lmr(self.stack[ss].move_count, depth);
 
                 // check extension
                 if pos.in_check() {
@@ -1246,6 +1273,7 @@ impl Engine {
         if is_valid(self.stack[ss].adjusted_static)
             && !in_check
             && !has_excluded
+            // && !is_decisive(best_score)
             // pv not a capture
             && !(!best_move.is_null() && !pos.is_quiet(best_move))
             && (flag == FLAG_EXACT || (best_score >= adjusted_static && flag == FLAG_BETA) || (best_score < adjusted_static && flag == FLAG_ALPHA))
@@ -1382,7 +1410,7 @@ impl Engine {
         assert!(!self.root_moves.is_empty(), "root moves is empty");
 
         // poll root
-        if TableBase::static_test_root(&pos)
+        if can_probe_tablebase(&pos, true)
             && let Some(tb) = &self.tb
             && tb.test(&pos)
             && let Some((score, m)) = tb.query_root(&pos)
@@ -1515,15 +1543,7 @@ impl Engine {
             let delta = self.timer.delta();
             let nps = self.nodes * 1000 / delta.max(1) as i64;
             let score = self.root_moves[0].score;
-            let score_str = if is_win(score) {
-                let ply = VALUE_INF - score;
-                format!("mate {}", ply / 2 + ply % 2)
-            } else if is_loss(score) {
-                let ply = -VALUE_INF - score;
-                format!("mate {}", ply / 2 + ply % 2)
-            } else {
-                format!("cp {}", score)
-            };
+            let score_str = format_uci_score(score);
             print!(
                 "info depth {} score {} nodes {} time {} nps {} hashfull {} tbhits {} pv",
                 depth,
@@ -1571,44 +1591,4 @@ impl Engine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tt::Table;
-
-    #[test]
-    fn qsearch_shallow_tt_bound_does_not_hide_quiet_mate() {
-        cuckoo::init();
-        crate::nnue::init();
-
-        // Ra8 is mate, but a capture-only qsearch cannot find it.
-        let pos = Board::from_fen("7k/8/6K1/8/8/8/8/R7 w - - 0 1", false).unwrap();
-        let mut table = Box::new(Table::new(1));
-        let mut engine = Engine::new(Arc::new(Timer::new()), TablePtr::from_table(&mut table));
-        engine.nnue.init(&pos);
-        engine.pawn_key.init(&pos);
-        for ply in 0..(SS_SIZE - SS_SIZE_PRE) {
-            engine.stack[SS_SIZE_PRE + ply] = SearchStack::new_ply(ply as i8);
-        }
-
-        for requested_depth in [-9, QDEPTH] {
-            table.clear();
-            let cold = engine.qsearch(&pos, 10000, 10001, requested_depth, SS_SIZE_PRE, false);
-            assert_eq!(cold, win_in(1));
-
-            table.clear();
-            let shallow = engine.qsearch(&pos, 10000, 10001, -10, SS_SIZE_PRE, false);
-            assert!(shallow < 10000);
-
-            let key = pos.correct_hash() ^ get_50mr_key(pos.halfmove_clock() as usize);
-            let (entry, _) = table.get(key);
-            let value = entry.get(key, 0, requested_depth, 10000, 10001);
-            assert!(value.hit);
-            assert_eq!(value.flag, FLAG_ALPHA);
-            assert_eq!(value.depth, -10);
-            assert!(!value.can_use);
-
-            let warm = engine.qsearch(&pos, 10000, 10001, requested_depth, SS_SIZE_PRE, false);
-            assert_eq!(warm, cold);
-        }
-    }
-}
+mod tests;
