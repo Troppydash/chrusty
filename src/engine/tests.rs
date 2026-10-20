@@ -193,3 +193,59 @@ fn qsearch_shallow_tt_bound_does_not_hide_quiet_mate() {
         assert_eq!(warm, cold);
     }
 }
+
+#[test]
+fn qsearch_polls_expired_deadline_at_shared_node_boundary() {
+    let mut test = TestEngine::new();
+    let pos = test.prepare("7k/8/6K1/8/8/8/8/R7 w - - 0 1");
+    test.engine.nodes = 4095;
+    test.engine.timer.start(0, false);
+
+    assert_eq!(
+        test.engine
+            .qsearch(&pos, -VALUE_INF, VALUE_INF, 0, SS_SIZE_PRE + 1, true),
+        0
+    );
+    assert!(test.engine.timer.stopped());
+    assert_eq!(test.engine.nodes, 4096);
+}
+
+#[test]
+fn qsearch_node_limit_unwinds_without_saving_an_aborted_bound() {
+    let mut test = TestEngine::new();
+    let pos = test.prepare("7k/8/6K1/8/8/8/8/R7 w - - 0 1");
+    let before_eval = test.engine.evaluate(&pos);
+    let before_pawns = test.engine.pawn_key.get();
+    // The root starts before the boundary; its first child reaches the limit.
+    test.engine.nodes = 4094;
+    test.engine.timer.max_nodes.store(4096, Ordering::Relaxed);
+
+    assert_eq!(
+        test.engine
+            .qsearch(&pos, -VALUE_INF, VALUE_INF, 0, SS_SIZE_PRE + 1, true),
+        0
+    );
+    assert!(test.engine.timer.stopped());
+    assert_eq!(test.engine.nodes, 4096);
+    assert_eq!(test.engine.key_stack.head, 0);
+    assert_eq!(test.engine.pawn_key.get(), before_pawns);
+    assert_eq!(test.engine.evaluate(&pos), before_eval);
+
+    let key = pos.correct_hash() ^ get_50mr_key(pos.halfmove_clock() as usize);
+    let (entry, _) = test.engine.table.get().get(key);
+    let data = entry.get(key, 1, 0, -VALUE_INF, VALUE_INF);
+    assert_eq!(data.flag, FLAG_NONE);
+    assert_eq!(data.score, VALUE_NONE);
+
+    // Reusing the engine after the interruption still finds the quiet mate.
+    test.engine
+        .timer
+        .max_nodes
+        .store(MAX_NODES, Ordering::Relaxed);
+    test.engine.timer.start(MAX_TIME, false);
+    assert_eq!(
+        test.engine
+            .qsearch(&pos, -VALUE_INF, VALUE_INF, 0, SS_SIZE_PRE + 1, true),
+        win_in(2)
+    );
+}

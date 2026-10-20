@@ -187,6 +187,20 @@ impl Engine {
         // }
     }
 
+    #[inline]
+    fn check_limits(&self) -> bool {
+        // Both searches must poll: qsearch also advances the shared node counter.
+        if self.nodes % 4096 == 0 {
+            self.timer.check();
+            if self.nodes >= self.timer.max_nodes.load(Ordering::Relaxed) {
+                self.timer.force_stop();
+            }
+
+            return self.timer.stopped();
+        }
+        false
+    }
+
     fn qsearch(
         &mut self,
         pos: &Board,
@@ -198,12 +212,9 @@ impl Engine {
     ) -> i16 {
         self.nodes += 1;
 
-        // if self.nodes % 4096 == 0 {
-        //     self.timer.check();
-        //     if self.timer.stopped() {
-        //         return 0;
-        //     }
-        // }
+        if self.check_limits() {
+            return 0;
+        }
 
         let ply = self.stack[ss].ply;
         self.stack[ss].pv_list.clear();
@@ -362,9 +373,9 @@ impl Engine {
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth - 1, ss + 1, is_pv);
             self.unmake_move(pos, key, ss);
 
-            // if self.timer.stopped() {
-            //     return 0;
-            // }
+            if self.timer.stopped() {
+                return 0;
+            }
 
             if score > best_score {
                 best_score = score;
@@ -441,15 +452,8 @@ impl Engine {
         self.stack[ss].pv_list.clear();
         self.stack[ss].move_count = 0;
 
-        if self.nodes % 4096 == 0 {
-            self.timer.check();
-            if self.nodes >= self.timer.max_nodes.load(Ordering::Relaxed) {
-                self.timer.force_stop();
-            }
-
-            if self.timer.stopped() {
-                return 0;
-            }
+        if self.check_limits() {
+            return 0;
         }
 
         //- prevent high depths
@@ -679,6 +683,9 @@ impl Engine {
                 && (tt_static as i32) < (alpha as i32 - 300 * depth as i32 * depth as i32)
             {
                 let score = self.qsearch(pos, alpha, beta, 0, ss, false);
+                if self.timer.stopped() {
+                    return 0;
+                }
                 if score <= alpha {
                     return score;
                 }
@@ -819,7 +826,7 @@ impl Engine {
                         ss + 1,
                         false,
                     );
-                    if score >= probcut_beta {
+                    if score >= probcut_beta && !self.timer.stopped() {
                         score = -self.negamax(
                             &new_pos,
                             -probcut_beta,
