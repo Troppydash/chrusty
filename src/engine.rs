@@ -632,6 +632,8 @@ impl Engine {
             );
         }
 
+        let static_complexity = (tt_static - self.stack[ss].adjusted_static).abs() as i32;
+
         //- syzygy
         let mut max_score = VALUE_INF;
         let mut best_score = -VALUE_INF;
@@ -677,16 +679,20 @@ impl Engine {
         }
 
         let mut improving = false;
+        let mut improvement = 0;
         if in_check {
             improving = false;
+            improvement = 0;
         } else if is_valid(self.stack[ss - 2].adjusted_static)
             && is_valid(self.stack[ss].adjusted_static)
         {
-            improving = self.stack[ss].adjusted_static > self.stack[ss - 2].adjusted_static;
+            improvement = self.stack[ss].adjusted_static - self.stack[ss - 2].adjusted_static;
+            improving = improvement > 0;
         } else if is_valid(self.stack[ss - 4].adjusted_static)
             && is_valid(self.stack[ss].adjusted_static)
         {
-            improving = self.stack[ss].adjusted_static > self.stack[ss - 4].adjusted_static;
+            improvement = self.stack[ss].adjusted_static - self.stack[ss - 4].adjusted_static;
+            improving = improvement > 0;
         }
 
         let is_singular = tt_data.hit
@@ -1114,8 +1120,9 @@ impl Engine {
 
                 reduction -= (complexity * self.settings.p_lmr_complexity / 200).min(3 * 1024);
 
-                let static_complexity = (tt_static - self.stack[ss].adjusted_static).abs() as i32;
-                reduction -= (static_complexity / 200).min(3 * 1024);
+                reduction -= (static_complexity * 200 / 200).min(3 * 1024);
+
+                // reduction -= (improvement as i32 * 1024 / 100).clamp(-2 * 1024, 2 * 1024);
 
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
