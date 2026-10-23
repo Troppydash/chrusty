@@ -9,12 +9,12 @@ use crate::{
     cuckoo,
     ext::{ColoredPiece, ExtBoard, ExtMove, MoveList},
     helpers::{avg, lerp},
-    heuristic::{CORR_LIMIT, Heuristic},
+    heuristic::Heuristic,
     movepick::{Movepick, Stage},
     nnue::{NNUE, network::Permute},
     param::*,
     rep::is_rep,
-    see::{self, see_ge},
+    see::{self, piece_value, see_ge},
     spsa::Parameters,
     stack::{KeyStack, PawnKey, PvList, SearchStack},
     tb::TableBase,
@@ -114,6 +114,7 @@ impl Engine {
 
     pub fn set_settings(&mut self, settings: &Parameters) {
         self.settings = settings.clone();
+        self.heuristic.set_settings(settings);
     }
 
     pub fn set_tb(&mut self, tb: Option<TableBase>) {
@@ -364,7 +365,14 @@ impl Engine {
 
             if !is_loss(best_score) {
                 //- see pruning
-                if !in_check && !see::see_ge(pos, next_move.inner, -50) {
+                if !in_check
+                    && !see::see_ge(
+                        pos,
+                        next_move.inner,
+                        -self.settings.p_qsee_margin,
+                        &self.settings,
+                    )
+                {
                     continue;
                 }
             }
@@ -403,7 +411,9 @@ impl Engine {
             }
 
             if best_score >= beta && !best_move.is_null() {
-                let bonus = 200 - 100 * in_check as i16;
+                let bonus = (self.settings.p_qhistory_bonus
+                    - self.settings.p_qhistory_check * in_check as i32)
+                    as i16;
                 self.heuristic
                     .weak_update_history(pos, best_move, &self.stack, ss, bonus);
             }
@@ -554,6 +564,17 @@ impl Engine {
             && tt_data.depth >= depth + (tt_data.score >= beta) as i8
         {
             if pos.halfmove_clock() < 90 {
+                if !tt_data.pv.is_null() && pos.is_quiet(tt_data.pv) && tt_data.score >= beta {
+                    self.heuristic.update_tt_history(
+                        pos,
+                        tt_data.pv,
+                        depth,
+                        ply,
+                        &self.stack,
+                        self.pawn_key.get(),
+                        ss,
+                    );
+                }
                 return tt_data.score;
             }
         }
@@ -680,7 +701,8 @@ impl Engine {
             if !is_pv
                 && is_valid(tt_static)
                 && alpha < 2000
-                && (tt_static as i32) < (alpha as i32 - 300 * depth as i32 * depth as i32)
+                && (tt_static as i32)
+                    < (alpha as i32 - self.settings.p_razor_margin * depth as i32 * depth as i32)
             {
                 let score = self.qsearch(pos, alpha, beta, 0, ss, false);
                 if self.timer.stopped() {
@@ -694,7 +716,9 @@ impl Engine {
             //- static null move pruning
             let margin = {
                 let depth = depth as i32;
-                5 * depth * depth + 50 * depth - 60 * improving as i32 + complexity / 4
+                self.settings.p_rfp_quad * depth * depth + self.settings.p_rfp_depth * depth
+                    - self.settings.p_rfp_improving * improving as i32
+                    + complexity / self.settings.p_rfp_complexity_div
             };
             if !is_pv
                 && is_valid(tt_static)
@@ -707,22 +731,28 @@ impl Engine {
             }
 
             //- null move pruning
-            let material = pos.material();
+            let material = pos.material(&self.settings);
             if cut_node
                 && ply as i32 >= self.stack[0].nmp_min_ply
                 && !has_excluded
-                && material >= 600
+                && material >= self.settings.p_nmp_material
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
                 && tt_static as i32
-                    >= beta as i32 + (200 - 20 * depth as i32 + 100 * is_pv as i32).max(1)
+                    >= beta as i32
+                        + (self.settings.p_nmp_margin
+                            - self.settings.p_nmp_margin_depth * depth as i32
+                            + self.settings.p_nmp_margin_pv * is_pv as i32)
+                            .max(1)
                 && self.stack[ss].adjusted_static >= beta
             {
-                let reduction = (6 + depth as i32 / 4)
-                    + ((self.stack[ss].adjusted_static as i32 - beta as i32) as i32 / 300)
-                        .clamp(0, 6)
-                    + improving as i32;
+                let reduction = (self.settings.p_nmp_base
+                    + depth as i32 / self.settings.p_nmp_depth_div)
+                    + ((self.stack[ss].adjusted_static as i32 - beta as i32) as i32
+                        / self.settings.p_nmp_eval_div)
+                        .clamp(0, self.settings.p_nmp_eval_max)
+                    + self.settings.p_nmp_improving * improving as i32;
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
                 self.table.get().prefetch(pos.new_hash(Move::NULL_MOVE));
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
@@ -786,7 +816,7 @@ impl Engine {
                     * self.settings.p_probcut_margin
                     / 1024;
 
-                if is_tt_capture && see_ge(pos, tt_data.pv, margin) {
+                if is_tt_capture && see_ge(pos, tt_data.pv, margin, &self.settings) {
                     tt_move = tt_data.pv;
                 }
 
@@ -864,7 +894,7 @@ impl Engine {
             }
 
             // tt based probcut
-            let margin = 500;
+            let margin = self.settings.p_tt_probcut_margin;
             if tt_data.hit
                 && tt_data.flag == FLAG_BETA
                 && tt_data.depth >= depth - 4
@@ -938,12 +968,15 @@ impl Engine {
                     self.settings.p_lowdepth_see_capture_base
                         + self.settings.p_lowdepth_see_capture_depth * lmr_depth
                 };
-                if !see::see_ge(pos, next_move.inner, (-see_margin).min(0)) {
+                if !see::see_ge(pos, next_move.inner, (-see_margin).min(0), &self.settings) {
                     continue;
                 }
 
                 //- history prunes
-                if is_quiet && next_move.get_score() < -3000 * depth as i32 && depth < 5 {
+                if is_quiet
+                    && next_move.get_score() < -self.settings.p_history_prune * depth as i32
+                    && depth < 5
+                {
                     continue;
                 }
 
@@ -951,7 +984,9 @@ impl Engine {
                 if is_quiet
                     && !is_win(beta)
                     && self.stack[ss].move_count as i32
-                        >= (2800 + 1000 * improving as i32 + 1300 * depth as i32 * depth as i32)
+                        >= (self.settings.p_lmp_base
+                            + self.settings.p_lmp_improving * improving as i32
+                            + self.settings.p_lmp_depth * depth as i32 * depth as i32)
                             / 1024
                 {
                     movepick.skip_quiets();
@@ -981,14 +1016,7 @@ impl Engine {
                     && let capture_futility_score = tt_static as i32
                         + self.settings.p_lowdepth_fut_capture_base
                         + self.settings.p_lowdepth_fut_capture_depth * lmr_depth
-                        + pesto_value(
-                            pos,
-                            ColoredPiece::new(
-                                !pos.side_to_move(),
-                                pos.get_captured(next_move.inner),
-                            ),
-                            next_move.inner.to,
-                        )
+                        + piece_value(pos.get_captured(next_move.inner), &self.settings)
                     && capture_futility_score < (alpha as i32)
                 {
                     if !is_decisive(best_score)
@@ -1058,7 +1086,8 @@ impl Engine {
 
             //- late move reduction
             if depth >= 2 && self.stack[ss].move_count > 1 + is_root as usize {
-                let mut reduction = 512 + self.heuristic.get_lmr(self.stack[ss].move_count, depth);
+                let mut reduction = self.settings.p_lmr_offset
+                    + self.heuristic.get_lmr(self.stack[ss].move_count, depth);
 
                 // check extension
                 if pos.in_check() {
@@ -1085,6 +1114,9 @@ impl Engine {
 
                 reduction -= (complexity * self.settings.p_lmr_complexity / 200).min(3 * 1024);
 
+                let static_complexity = (tt_static - self.stack[ss].adjusted_static).abs() as i32;
+                reduction -= (static_complexity / 200).min(3 * 1024);
+
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
 
@@ -1098,11 +1130,12 @@ impl Engine {
                 reduction -= scaled_history_score as i32;
 
                 if tt_data.hit && tt_data.flag == FLAG_EXACT {
-                    reduction += 1500;
+                    reduction += self.settings.p_lmr_exact;
                 }
 
                 if is_valid(tt_static) && is_quiet {
-                    reduction += (alpha as i32 - tt_static as i32).clamp(-50, 100) * 4;
+                    reduction += (alpha as i32 - tt_static as i32).clamp(-50, 100)
+                        * self.settings.p_lmr_eval_scale;
                 }
 
                 reduction /= 1024;
@@ -1123,9 +1156,11 @@ impl Engine {
                 if score > alpha && reduced_depth < new_depth {
                     if !is_root {
                         //- re-search adjustments
-                        if (score as i32) > (best_score as i32 + 50) {
+                        if (score as i32) > (best_score as i32 + self.settings.p_research_deeper) {
                             new_depth += 1;
-                        } else if (score as i32) < (best_score as i32 + 5) {
+                        } else if (score as i32)
+                            < (best_score as i32 + self.settings.p_research_shallower)
+                        {
                             new_depth -= 1;
                         }
                     }
@@ -1285,9 +1320,12 @@ impl Engine {
             && !(!best_move.is_null() && !pos.is_quiet(best_move))
             && (flag == FLAG_EXACT || (best_score >= adjusted_static && flag == FLAG_BETA) || (best_score < adjusted_static && flag == FLAG_ALPHA))
         {
-            let bonus = ((best_score as i32 - adjusted_static as i32) * depth as i32 / 8)
-                .clamp((-CORR_LIMIT / 4) as i32, (CORR_LIMIT / 4) as i32)
-                as i16;
+            let bonus = ((best_score as i32 - adjusted_static as i32) * depth as i32
+                / self.settings.p_corr_update_div)
+                .clamp(
+                    -self.settings.p_corr_bonus_max,
+                    self.settings.p_corr_bonus_max,
+                ) as i16;
 
             self.heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
@@ -1332,7 +1370,7 @@ impl Engine {
 
     fn static_correction(&mut self, pos: &Board, static_score: i16, ss: usize) -> i16 {
         let mut static_score = static_score as i32;
-        static_score += 32
+        static_score += self.settings.p_corr_pawn_weight
             * self
                 .heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
@@ -1340,15 +1378,19 @@ impl Engine {
             / 512;
 
         let [white, black] = self.pawn_key.get_colored();
-        static_score += 24 * self.heuristic.get_white_corrhist(pos, white).get() as i32 / 512;
-        static_score += 24 * self.heuristic.get_black_corrhist(pos, black).get() as i32 / 512;
-        static_score += 24
+        static_score += self.settings.p_corr_nonpawn_weight
+            * self.heuristic.get_white_corrhist(pos, white).get() as i32
+            / 512;
+        static_score += self.settings.p_corr_nonpawn_weight
+            * self.heuristic.get_black_corrhist(pos, black).get() as i32
+            / 512;
+        static_score += self.settings.p_corr_major_weight
             * self
                 .heuristic
                 .get_major_corrhist(pos, self.pawn_key.get_major())
                 .get() as i32
             / 512;
-        static_score += 24
+        static_score += self.settings.p_corr_minor_weight
             * self
                 .heuristic
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
@@ -1363,7 +1405,7 @@ impl Engine {
 
         let prev = self.stack[ss - 1].m;
         if !prev.is_null() {
-            static_score += 24
+            static_score += self.settings.p_corr_cont1_weight
                 * self
                     .heuristic
                     .get_cont_corrhist(self.stack[ss - 2].cont_corrhist)
@@ -1374,7 +1416,7 @@ impl Engine {
 
         let prev = self.stack[ss - 3].m;
         if !prev.is_null() {
-            static_score += 12
+            static_score += self.settings.p_corr_cont3_weight
                 * self
                     .heuristic
                     .get_cont_corrhist(self.stack[ss - 4].cont_corrhist)
@@ -1461,9 +1503,11 @@ impl Engine {
 
             let average_score = self.root_moves[0].average_score;
             let mut window = if is_valid(average_score) {
-                ASP_WINDOW + (average_score as i32 * average_score as i32 / ASP_WINDOW_SCORE_SCALE)
+                self.settings.p_asp_window
+                    + (average_score as i32 * average_score as i32
+                        / self.settings.p_asp_score_scale)
             } else {
-                ASP_WINDOW
+                self.settings.p_asp_window
             };
 
             assert!(window >= 0, "window must be >= 0");
@@ -1494,10 +1538,10 @@ impl Engine {
                     alpha = (-VALUE_INF as i32).max(score as i32 - window as i32) as i16;
                     fail_highs = 0;
 
-                    window += window / 6;
+                    window += (window / self.settings.p_asp_fail_low_div).max(1);
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
-                    window += window / 3;
+                    window += (window / self.settings.p_asp_fail_high_div).max(1);
                 } else {
                     break;
                 }

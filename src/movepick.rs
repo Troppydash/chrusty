@@ -8,8 +8,8 @@ use crate::{
     ext::{ColoredPiece, ExtBoard, ExtMove, MoveType, ScoredMove, ScoredMoveList},
     heuristic::{Heuristic, LOW_PLY},
     nnue::{NNUE, network::CM},
-    param::{self, BAD_QUIET_SCORE, MVV_MULTIPLIER, pesto_value},
-    pesto, see,
+    param::BAD_QUIET_SCORE,
+    see::{self, piece_value},
     stack::SearchStack,
     threats::Threats,
 };
@@ -283,7 +283,8 @@ impl Movepick {
         }
     }
 
-    fn get_heuristic(&self) -> &Heuristic {
+    /// bespoke lifetime hack
+    fn get_heuristic<'a, 'b>(&'a self) -> &'b Heuristic {
         unsafe { &*self.heuristic }
     }
 
@@ -461,21 +462,19 @@ impl Movepick {
         let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
 
         if self.ply < LOW_PLY as i8 {
-            score += heuristic
-                .get_low_ply_capture_history(&self.pos, m, self.ply)
-                .get() as i32
+            score += (heuristic.settings.p_capture_lowply_weight
+                * heuristic
+                    .get_low_ply_capture_history(&self.pos, m, self.ply)
+                    .get() as i32
+                / 1024)
                 / (1 + self.ply as i32);
         }
 
         let captured = self.pos.get_captured(m);
-        score += MVV_MULTIPLIER
-            * pesto_value(
-                &self.pos,
-                ColoredPiece::new(!self.pos.side_to_move(), captured),
-                m.to,
-            );
+        score += heuristic.settings.p_mvv_multiplier * piece_value(captured, &heuristic.settings);
 
-        score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
+        score -= piece_value(self.pos.piece_on(m.from).unwrap(), &heuristic.settings)
+            / heuristic.settings.p_lva_divisor;
         score
     }
 
@@ -484,27 +483,33 @@ impl Movepick {
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
         // let get_pos_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).key };
 
-        let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
+        let mut score = heuristic.settings.p_history_main_weight
+            * heuristic.get_main_history(&self.pos, m).get() as i32
+            / 1024;
         if self.ply < LOW_PLY as i8 {
-            score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
+            score += (heuristic.settings.p_history_lowply_weight
+                * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
+                / 1024)
                 / (1 + self.ply as i32);
         }
 
-        score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
+        score += heuristic.settings.p_history_pawn_weight
+            * heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32
+            / 1024;
 
-        score += (1024
+        score += (heuristic.settings.p_history_cont1_weight
             * heuristic
                 .get_cont_hist(get_cont_hist_prev(1), &self.pos, m)
                 .get() as i32
-            + 900
+            + heuristic.settings.p_history_cont2_weight
                 * heuristic
                     .get_cont_hist(get_cont_hist_prev(2), &self.pos, m)
                     .get() as i32
-            + 700
+            + heuristic.settings.p_history_cont4_weight
                 * heuristic
                     .get_cont_hist(get_cont_hist_prev(4), &self.pos, m)
                     .get() as i32
-            + 400
+            + heuristic.settings.p_history_cont6_weight
                 * heuristic
                     .get_cont_hist(get_cont_hist_prev(6), &self.pos, m)
                     .get() as i32)
@@ -530,29 +535,9 @@ impl Movepick {
 
             let m = self.moves.get(i).inner;
 
-            // mvv-lva
-            let heuristic = self.get_heuristic();
-            let mut score = heuristic.get_capture_history(&self.pos, m).get() as i32;
-
-            if self.ply < LOW_PLY as i8 {
-                score += heuristic
-                    .get_low_ply_capture_history(&self.pos, m, self.ply)
-                    .get() as i32
-                    / (1 + self.ply as i32);
-            }
-
-            let captured = self.pos.get_captured(m);
-            score += MVV_MULTIPLIER
-                * pesto_value(
-                    &self.pos,
-                    ColoredPiece::new(!self.pos.side_to_move(), captured),
-                    m.to,
-                );
-
-            score -= pesto_value(&self.pos, self.pos.color_piece_on(m.from).unwrap(), m.from) / 8;
-
-            if let Some(promotion) = self.moves.get(i).inner.promotion {
-                score += pesto::PIECE_VALUE[promotion as usize];
+            let mut score = self.score_capture(m);
+            if let Some(promotion) = m.promotion {
+                score += self.get_heuristic().settings.piece_value(promotion);
             }
 
             self.moves.get_mut(i).score = score;
@@ -580,8 +565,16 @@ impl Movepick {
                 | threats.by_opp[Piece::Rook as usize], // Q
             BitBoard::EMPTY,
         ];
-        let escape = [0, 3000, 3000, 5000, 7000, 0];
-        let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
+        let heuristic = self.get_heuristic();
+        let settings = &heuristic.settings;
+        let escape = [
+            0,
+            settings.p_escape_minor,
+            settings.p_escape_minor,
+            settings.p_escape_rook,
+            settings.p_escape_queen,
+            0,
+        ];
         // let get_pos_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).key };
 
         let mut i = self.moves.ptr;
@@ -593,59 +586,23 @@ impl Movepick {
                 continue;
             }
 
-            let heuristic = self.get_heuristic();
             let m = self.moves.get(i).inner;
 
-            let killers = self.get_heuristic().get_killers(self.ply);
+            let killers = heuristic.get_killers(self.ply);
             if skip_killers && (m == killers[0] || m == killers[1]) {
                 self.moves.swap_remove(i);
                 continue;
             }
 
-            let mut score = heuristic.get_main_history(&self.pos, m).get() as i32;
-
+            let mut score = self.score_quiet(m);
             if m == killers[0] {
                 score += 30000;
             } else if m == killers[1] {
                 score += 25000;
             }
-            //  else if self.moves.get(i).inner == counter {
-            //     score += 10000;
-            // }
-
-            if self.ply < LOW_PLY as i8 {
-                score += 2 * heuristic.get_low_ply(&self.pos, m, self.ply).get() as i32
-                    / (1 + self.ply as i32);
-            }
-
-            score += heuristic.get_pawn(&self.pos, m, self.pawn_key).get() as i32;
-
-            score += (1024
-                * heuristic
-                    .get_cont_hist(get_cont_hist_prev(1), &self.pos, m)
-                    .get() as i32
-                + 900
-                    * heuristic
-                        .get_cont_hist(get_cont_hist_prev(2), &self.pos, m)
-                        .get() as i32
-                + 700
-                    * heuristic
-                        .get_cont_hist(get_cont_hist_prev(4), &self.pos, m)
-                        .get() as i32
-                + 400
-                    * heuristic
-                        .get_cont_hist(get_cont_hist_prev(6), &self.pos, m)
-                        .get() as i32)
-                / 1024;
-
-            // if let prev = get_pos_cont_hist_prev(2)
-            //     && prev != 0
-            // {
-            //     score += heuristic.get_pos_cont_hist(prev, &self.pos, m).get() as i32 / 2;
-            // }
 
             if let Some(promotion) = m.promotion {
-                score += pesto::PIECE_VALUE[promotion as usize];
+                score += settings.piece_value(promotion);
             }
 
             ///// Threats /////
@@ -654,7 +611,7 @@ impl Movepick {
                 let piece = self.pos.piece_on(m.from).unwrap();
                 // moving into threat
                 if threatened[piece as usize].has(m.to) {
-                    threats_score -= 3000;
+                    threats_score -= settings.p_threat_penalty;
                 }
                 // escaping from threat
                 if threatened[piece as usize].has(m.from) {
@@ -662,7 +619,7 @@ impl Movepick {
                 }
                 // checks
                 if threats.checks[piece as usize].has(m.to) {
-                    threats_score += 5000;
+                    threats_score += settings.p_check_bonus;
                 }
 
                 score += threats_score;
@@ -694,10 +651,15 @@ impl Movepick {
                     self.stage = Stage::GoodCapture;
                 }
                 Stage::GoodCapture => {
+                    let settings = &self.get_heuristic().settings;
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         let m = moves[i];
-                        if !see::see_ge(&self.pos, m.inner, -m.score / param::GOOD_CAPTURE_SEE_DIV)
-                            || m.inner.is_under_promotion()
+                        if !see::see_ge(
+                            &self.pos,
+                            m.inner,
+                            -m.score / settings.p_good_capture_see_div,
+                            settings,
+                        ) || m.inner.is_under_promotion()
                         {
                             moves.swap(i, self.bad_capture_len);
                             self.bad_capture_len += 1;
@@ -876,9 +838,10 @@ impl Movepick {
                     self.stage = Stage::ProbcutCapture;
                 }
                 Stage::ProbcutCapture => {
+                    let settings = &self.get_heuristic().settings;
                     let next_move = self.moves.pick(self.moves.len(), |moves, i| {
                         let m = moves[i];
-                        if see::see_ge(&self.pos, m.inner, self.probcut_margin)
+                        if see::see_ge(&self.pos, m.inner, self.probcut_margin, settings)
                             && !m.inner.is_under_promotion()
                         {
                             Pick::Select

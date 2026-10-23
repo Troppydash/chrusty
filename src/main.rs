@@ -9,7 +9,6 @@ mod heuristic;
 mod movepick;
 mod nnue;
 mod param;
-mod pesto;
 mod rep;
 mod see;
 mod sort;

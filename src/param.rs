@@ -1,7 +1,5 @@
 use cozy_chess::{Board, Square};
 
-use crate::{ext::ColoredPiece, pesto};
-
 pub const MAX_DEPTH: i8 = 107;
 pub const MAX_DEPTH_USIZE: usize = MAX_DEPTH as usize;
 pub const VALUE_NONE: i16 = 32701;
@@ -46,9 +44,7 @@ pub const MIN_QDEPTH: i8 = -20;
 pub const UNSEARCH_DEPTH: i8 = MIN_QDEPTH - 10;
 pub const UNINIT_DEPTH: i8 = UNSEARCH_DEPTH - 1;
 
-pub const MVV_MULTIPLIER: i32 = 8;
 pub const BAD_QUIET_SCORE: i32 = -50000;
-pub const GOOD_CAPTURE_SEE_DIV: i32 = 32;
 
 pub const PROBCUT_DEPTH_MIN: i8 = 5;
 pub const PROBCUT_DEPTH_REDUCTION: i8 = 4;
@@ -59,20 +55,5 @@ pub const LMR_DEPTH: usize = MAX_DEPTH as usize;
 pub const SS_SIZE_PRE: usize = 10 as usize;
 pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 
-pub const ASP_WINDOW: i32 = 10;
-pub const ASP_WINDOW_SCORE_SCALE: i32 = 23000;
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 4;
 pub const CONTEMPT: i16 = 0;
-
-#[inline]
-pub fn pesto_value(pos: &Board, colored_piece: ColoredPiece, sq: Square) -> i32 {
-    pesto::get(pos, colored_piece.piece, colored_piece.color, sq)
-}
-
-#[inline]
-pub fn pesto_value_opt(pos: &Board, colored_piece: Option<ColoredPiece>, sq: Square) -> i32 {
-    match colored_piece {
-        None => 0,
-        Some(colored_piece) => pesto_value(pos, colored_piece, sq),
-    }
-}

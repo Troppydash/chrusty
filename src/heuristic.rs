@@ -3,6 +3,7 @@ use cozy_chess::{Board, Move};
 use crate::{
     ext::{ColoredPiece, ExtBoard, ExtMove, MoveList, index_with_option},
     param::*,
+    spsa::Parameters,
     stack::SearchStack,
 };
 
@@ -45,6 +46,7 @@ pub const POS_CONT_HIST_HASH: usize = 1 << 15;
 pub type ContHist = (usize, usize, usize);
 
 pub struct Heuristic {
+    pub settings: Parameters,
     // lmr[move_count][depth]
     lmr: Box<[[i32; LMR_DEPTH]; LMR_MOVE_COUNT]>,
     // history heuristic [side][from][to]
@@ -79,18 +81,7 @@ pub struct Heuristic {
 
 impl Heuristic {
     pub fn new() -> Self {
-        let mut lmr = Box::new([[0; LMR_DEPTH]; LMR_MOVE_COUNT]);
-        for move_count in 0..LMR_MOVE_COUNT {
-            for depth in 0..LMR_DEPTH {
-                if move_count <= 1 || depth <= 1 {
-                    lmr[move_count][depth] = 0;
-                } else {
-                    lmr[move_count][depth] = ((0.99
-                        + f32::ln(move_count as f32) * f32::ln(depth as f32) / 3.14)
-                        * 1024.) as i32;
-                }
-            }
-        }
+        let lmr = Box::new([[0; LMR_DEPTH]; LMR_MOVE_COUNT]);
 
         let main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
         let capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
@@ -154,7 +145,8 @@ impl Heuristic {
         // };
         let low_ply_capture_history = Box::new([[[[CaptureHistory::new(); 6]; 64]; 12]; LOW_PLY]);
 
-        Self {
+        let mut heuristic = Self {
+            settings: Parameters::default(),
             lmr,
             main_history,
             capture_history,
@@ -170,6 +162,28 @@ impl Heuristic {
             cont_corrhist,
             cont_hist,
             low_ply_capture_history,
+        };
+        heuristic.rebuild_lmr();
+        heuristic
+    }
+
+    pub fn set_settings(&mut self, settings: &Parameters) {
+        self.settings = settings.clone();
+        self.rebuild_lmr();
+    }
+
+    fn rebuild_lmr(&mut self) {
+        for move_count in 0..LMR_MOVE_COUNT {
+            for depth in 0..LMR_DEPTH {
+                self.lmr[move_count][depth] = if move_count <= 1 || depth <= 1 {
+                    0
+                } else {
+                    ((self.settings.p_lmr_base as f32 / 100.0
+                        + f32::ln(move_count as f32) * f32::ln(depth as f32)
+                            / (self.settings.p_lmr_divisor as f32 / 100.0))
+                        * 1024.0) as i32
+                };
+            }
         }
     }
 
@@ -459,21 +473,27 @@ impl Heuristic {
     //     }
     // }
 
-    // pub fn update_tt_history(
-    //     &mut self,
-    //     pos: &Board,
-    //     tt_move: Move,
-    //     depth: i8,
-    //     ply: i8,
-    //     stack: &[SearchStack],
-    //     ss: usize,
-    // ) {
-    //     debug_assert!(pos.is_quiet(tt_move));
+    pub fn update_tt_history(
+        &mut self,
+        pos: &Board,
+        tt_move: Move,
+        depth: i8,
+        ply: i8,
+        stack: &[SearchStack],
+        pawn_key: u64,
+        ss: usize,
+    ) {
+        // debug_assert!(pos.is_quiet(tt_move));
 
-    //     let bonus = (i32::min(100 * depth as i32 - 70, 1000)) as i16;
-    //     self.get_main_history_mut(pos, tt_move).add(bonus);
-    //     // self.add_cont_history(pos, tt_move, stack, ss, bonus);
-    // }
+        // let bonus = (i32::min(8 * depth as i32, 512)) as i16;
+
+        // if ply < LOW_PLY as i8 {
+        //     self.get_low_ply_mut(pos, tt_move, ply).add(bonus);
+        // }
+        // self.get_main_history_mut(pos, tt_move).add(bonus);
+        // self.add_cont_history(pos, tt_move, stack, ss, bonus);
+        // self.get_pawn_mut(pos, tt_move, pawn_key).add(bonus);
+    }
 
     pub fn weak_update_history(
         &mut self,
@@ -512,11 +532,23 @@ impl Heuristic {
         let prev_move = stack[ss - 1].m;
         let prev_piece = stack[ss - 1].piece;
 
-        let bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
-        let malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
+        let bonus = (i32::min(
+            self.settings.p_history_bonus_depth * depth as i32 + self.settings.p_history_bonus_base,
+            self.settings.p_history_bonus_max,
+        ) / div) as i16;
+        let malus = (i32::min(
+            self.settings.p_history_malus_depth * depth as i32 - self.settings.p_history_malus_base,
+            self.settings.p_history_malus_max,
+        ) / div) as i16;
 
-        let capture_bonus = (i32::min(180 * depth as i32 + 15, 2000) / div) as i16;
-        let capture_malus = (i32::min(190 * depth as i32 - 30, 2000) / div) as i16;
+        let capture_bonus = (i32::min(
+            self.settings.p_capture_bonus_depth * depth as i32 + self.settings.p_capture_bonus_base,
+            self.settings.p_capture_bonus_max,
+        ) / div) as i16;
+        let capture_malus = (i32::min(
+            self.settings.p_capture_malus_depth * depth as i32 - self.settings.p_capture_malus_base,
+            self.settings.p_capture_malus_max,
+        ) / div) as i16;
 
         if pos.is_quiet(best_move) {
             self.get_main_history_mut(pos, best_move).add(bonus);
