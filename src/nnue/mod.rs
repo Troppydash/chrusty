@@ -220,6 +220,11 @@ impl NNUE {
 
     pub fn evaluate(&mut self, board: &Board) -> i32 {
         self.catchup(board);
+        unsafe { self.evaluate_value(self.head(), board).0 }
+    }
+
+    pub fn evaluate2(&mut self, board: &Board) -> (i32, i32) {
+        self.catchup(board);
         unsafe { self.evaluate_value(self.head(), board) }
     }
 
@@ -270,7 +275,7 @@ impl NNUE {
         }
     }
 
-    unsafe fn evaluate_value(&mut self, head: (usize, usize, usize), board: &Board) -> i32 {
+    unsafe fn evaluate_value(&mut self, head: (usize, usize, usize), board: &Board) -> (i32, i32) {
         let bucket = Network::get_output_bucket(board);
 
         unsafe {
@@ -333,9 +338,12 @@ impl NNUE {
                 - self.pst.side[head.1].vals[stm ^ 1][bucket]) as f32
                 / (2 * QPST) as f32;
 
-            let output = output + pst;
+            let combined = output + pst;
 
-            (output * SCALE as f32) as i32
+            (
+                (combined * SCALE as f32) as i32,
+                (output * SCALE as f32) as i32,
+            )
         }
     }
 

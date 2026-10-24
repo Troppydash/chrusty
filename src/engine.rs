@@ -173,10 +173,13 @@ impl Engine {
         self.pawn_key.pop();
     }
 
-    fn evaluate(&mut self, pos: &Board) -> i16 {
-        let mut score = self.nnue.evaluate(pos);
+    fn evaluate(&mut self, pos: &Board) -> (i16, i32) {
+        let (mut score, tempo) = self.nnue.evaluate2(pos);
         score -= (score - self.contempt(pos) as i32) * pos.halfmove_clock() as i32 / 300;
-        return score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16;
+        return (
+            score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16,
+            tempo,
+        );
     }
 
     fn contempt(&self, pos: &Board) -> i16 {
@@ -228,7 +231,7 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
-            let score = self.evaluate(pos);
+            let score = self.evaluate(pos).0;
             return self.static_correction(pos, score, ss);
         }
 
@@ -296,7 +299,7 @@ impl Engine {
             if tt_data.hit {
                 unadjusted_static = tt_data.static_score;
                 if !is_valid(unadjusted_static) {
-                    unadjusted_static = self.evaluate(pos);
+                    unadjusted_static = self.evaluate(pos).0;
                 }
                 best_score = self.static_correction(pos, unadjusted_static, ss);
 
@@ -307,7 +310,7 @@ impl Engine {
                     best_score = tt_data.score;
                 }
             } else {
-                unadjusted_static = self.evaluate(pos);
+                unadjusted_static = self.evaluate(pos).0;
                 best_score = self.static_correction(pos, unadjusted_static, ss);
 
                 unsafe { &mut *writer }.set(
@@ -472,7 +475,7 @@ impl Engine {
                 return VALUE_DRAW;
             }
 
-            let score = self.evaluate(pos);
+            let score = self.evaluate(pos).0;
             return self.static_correction(pos, score, ss);
         }
 
@@ -584,6 +587,7 @@ impl Engine {
         let mut tt_static = VALUE_NONE;
         let in_check = pos.in_check();
         let mut complexity = 0;
+        let mut tempo = 0;
         self.stack[ss].conseq_checks = 0;
         if in_check {
             self.stack[ss].conseq_checks = self.stack[ss - 2].conseq_checks + 1;
@@ -595,7 +599,7 @@ impl Engine {
         } else if tt_data.hit {
             unadjusted_static = tt_data.static_score;
             if !is_valid(unadjusted_static) {
-                unadjusted_static = self.evaluate(pos);
+                (unadjusted_static, tempo) = self.evaluate(pos);
             } else if is_pv {
                 self.nnue.catchup(pos);
             }
@@ -614,7 +618,7 @@ impl Engine {
                 tt_static = tt_data.score;
             }
         } else {
-            unadjusted_static = self.evaluate(pos);
+            (unadjusted_static, tempo) = self.evaluate(pos);
             self.stack[ss].adjusted_static = self.static_correction(pos, unadjusted_static, ss);
             tt_static = self.stack[ss].adjusted_static;
             complexity = (unadjusted_static as i32 - self.stack[ss].adjusted_static as i32).abs();
@@ -1122,7 +1126,8 @@ impl Engine {
 
                 reduction -= (static_complexity * 200 / 200).min(3 * 1024);
 
-                // reduction -= (improvement as i32 * 1024 / 100).clamp(-2 * 1024, 2 * 1024);
+                reduction -= (tempo.abs() * 600 / 200).min(3 * 1024);
+                // reduction -= (improvement as i32 * 400 / 200).clamp(0, 2 * 1024);
 
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
