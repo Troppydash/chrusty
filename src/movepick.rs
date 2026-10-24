@@ -469,7 +469,6 @@ impl Movepick {
     pub fn score_quiet(&self, m: Move) -> i32 {
         let heuristic = self.get_heuristic();
         let get_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).cont_hist };
-        // let get_pos_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).key };
 
         let mut score = heuristic.settings.p_history_main_weight
             * heuristic.get_main_history(&self.pos, m).get() as i32
@@ -503,13 +502,18 @@ impl Movepick {
                     .get() as i32)
             / 1024;
 
-        // if let prev = get_pos_cont_hist_prev(2)
-        //     && prev != 0
-        // {
-        //     score += heuristic.get_pos_cont_hist(prev, &self.pos, m).get() as i32 / 2;
+        // let (prev, last) =
+        //     unsafe { (&*self.stack.add(self.ss - 2), &*self.stack.add(self.ss - 1)) };
+        // if prev.key != 0 && !prev.m.is_null() && !last.m.is_null() {
+        //     score += heuristic.get_pos_cont_hist(prev.key, &self.pos, m).get() as i32 / 2;
         // }
 
         score
+    }
+
+    fn countermove(&self) -> Move {
+        let prev = unsafe { &*self.stack.add(self.ss - 1) };
+        self.get_heuristic().get_counter(prev.m, prev.piece)
     }
 
     fn score_captures(&mut self) {
@@ -554,6 +558,7 @@ impl Movepick {
             BitBoard::EMPTY,
         ];
         let heuristic = self.get_heuristic();
+        let reply = self.countermove();
         let settings = &heuristic.settings;
         let escape = [
             0,
@@ -563,7 +568,6 @@ impl Movepick {
             settings.p_escape_queen,
             0,
         ];
-        // let get_pos_cont_hist_prev = |i| unsafe { (*self.stack.add(self.ss - i)).key };
 
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
@@ -577,7 +581,7 @@ impl Movepick {
             let m = self.moves.get(i).inner;
 
             let killers = heuristic.get_killers(self.ply);
-            if skip_killers && (m == killers[0] || m == killers[1]) {
+            if skip_killers && (m == killers[0] || m == killers[1] || m == reply) {
                 self.moves.swap_remove(i);
                 continue;
             }
@@ -587,6 +591,8 @@ impl Movepick {
                 score += 30000;
             } else if m == killers[1] {
                 score += 25000;
+            } else if m == reply {
+                score += 10000;
             }
 
             if let Some(promotion) = m.promotion {
@@ -670,6 +676,10 @@ impl Movepick {
                             if !m.is_null() && m != self.pv {
                                 self.moves.push(ScoredMove::new(m, 10000));
                             }
+                        }
+                        let reply = self.countermove();
+                        if !reply.is_null() && reply != self.pv && !killers.contains(&reply) {
+                            self.moves.push(ScoredMove::new(reply, 10000));
                         }
                     }
 
@@ -862,8 +872,14 @@ mod tests {
             false
         });
 
-        let fake_stack: Box<[SearchStack]> = vec![SearchStack::new(); 10].into_boxed_slice();
-        let heuristic = Box::new(Heuristic::new());
+        let mut fake_stack: Box<[SearchStack]> = vec![SearchStack::new(); 10].into_boxed_slice();
+        let mut heuristic = Box::new(Heuristic::new());
+        if let Some(&reply) = total.iter().find(|&&m| pos.is_quiet(m)) {
+            let prev = &mut fake_stack[8];
+            prev.m = "a7a6".parse().unwrap();
+            prev.piece = Some(ColoredPiece::new(!pos.side_to_move(), Piece::Pawn));
+            *heuristic.get_counter_mut(prev.m, prev.piece).unwrap() = reply;
+        }
         for mut mp in vec![
             Movepick::new_negamax(
                 pos.clone(),

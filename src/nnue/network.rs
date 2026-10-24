@@ -267,9 +267,7 @@ impl SimdOps {
 
     pub fn silu(x: __m512) -> __m512 {
         unsafe {
-            let zero = _mm512_setzero_ps();
             let one = _mm512_set1_ps(1.0);
-            let two = _mm512_set1_ps(2.0);
 
             let clamped_x = _mm512_max_ps(
                 _mm512_set1_ps(-15.0),
@@ -278,7 +276,7 @@ impl SimdOps {
 
             // goal is to compute sigmoid(x) = 1/D(x) where D(x) = 1+exp(-x)
 
-            // compute exp2(z) = exp2(-x log2(e)), but we split -x log2(e) into dn + r
+            // compute exp(z) = exp2(-x log2(e)), but we split -x log2(e) into dn + r
             let log2e = _mm512_set1_ps(-1.44269504);
             let z = _mm512_mul_ps(clamped_x, log2e);
 
@@ -295,9 +293,6 @@ impl SimdOps {
 
             let d = _mm512_add_ps(one, exp_neg_x);
             let rcp = _mm512_rcp14_ps(d);
-
-            // newton
-            // let rcp = _mm512_mul_ps(rcp, _mm512_fnmadd_ps(d, rcp, two));
 
             return _mm512_mul_ps(x, rcp);
         }
