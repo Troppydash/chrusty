@@ -255,19 +255,23 @@ impl Heuristic {
         self.low_ply_capture_history = Box::new([[[[CaptureHistory::new(); 6]; 64]; 12]; LOW_PLY]);
     }
 
+    #[inline]
     pub fn get_lmr(&self, move_count: usize, depth: i8) -> i32 {
         debug_assert!(depth >= 0);
         self.lmr[move_count.min(LMR_MOVE_COUNT - 1)][(depth as usize).min(LMR_DEPTH - 1)]
     }
 
+    #[inline]
     pub fn get_main_history(&self, pos: &Board, m: Move) -> &MainHistory {
         &self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
+    #[inline]
     fn get_main_history_mut(&mut self, pos: &Board, m: Move) -> &mut MainHistory {
         &mut self.main_history[pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
+    #[inline]
     pub fn get_capture_history(&self, pos: &Board, m: Move) -> &CaptureHistory {
         debug_assert!(!pos.is_quiet(m));
 
@@ -275,6 +279,7 @@ impl Heuristic {
             [pos.get_captured(m) as usize]
     }
 
+    #[inline]
     fn get_capture_history_mut(&mut self, pos: &Board, m: Move) -> &mut CaptureHistory {
         debug_assert!(!pos.is_quiet(m));
 
@@ -282,24 +287,29 @@ impl Heuristic {
             [pos.get_captured(m) as usize]
     }
 
+    #[inline]
     pub fn get_killers(&self, ply: i8) -> &[Move; NUM_KILLERS] {
         &self.killer_moves[ply as usize]
     }
 
+    #[inline]
     fn get_killers_mut(&mut self, ply: i8) -> &mut [Move; NUM_KILLERS] {
         &mut self.killer_moves[ply as usize]
     }
 
+    #[inline]
     pub fn get_low_ply(&self, pos: &Board, m: Move, ply: i8) -> &MainHistory {
         debug_assert!((ply as usize) < LOW_PLY);
         &self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
+    #[inline]
     fn get_low_ply_mut(&mut self, pos: &Board, m: Move, ply: i8) -> &mut MainHistory {
         debug_assert!((ply as usize) < LOW_PLY);
         &mut self.low_ply[ply as usize][pos.side_to_move() as usize][m.from as usize][m.to as usize]
     }
 
+    #[inline]
     pub fn _get_counter(&self, prev_move: Move, prev_piece: Option<ColoredPiece>) -> Move {
         if prev_move.is_null() {
             return Move::NULL_MOVE;
@@ -313,6 +323,7 @@ impl Heuristic {
         }
     }
 
+    #[inline]
     pub fn get_counter_mut(
         &mut self,
         prev_move: Move,
@@ -330,36 +341,44 @@ impl Heuristic {
         }
     }
 
+    #[inline]
     fn get_pawn_mut(&mut self, pos: &Board, m: Move, pawn_key: u64) -> &mut PawnHistory {
         &mut self.pawn[pawn_key as usize % PAWN_HASH][pos.color_piece_on(m.from).unwrap().index()]
             [m.to as usize]
     }
 
+    #[inline]
     pub fn get_pawn(&self, pos: &Board, m: Move, pawn_key: u64) -> &PawnHistory {
         &self.pawn[pawn_key as usize % PAWN_HASH][pos.color_piece_on(m.from).unwrap().index()]
             [m.to as usize]
     }
 
+    #[inline]
     pub fn get_pawn_corrhist(&mut self, pos: &Board, pawn_key: u64) -> &mut PawnCorr {
         &mut self.pawn_corrhist[pawn_key as usize % CORR_HASH][pos.side_to_move() as usize]
     }
 
+    #[inline]
     pub fn get_white_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
         &mut self.white_corrhist[key as usize % CORR_HASH][pos.side_to_move() as usize]
     }
 
+    #[inline]
     pub fn get_black_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
         &mut self.black_corrhist[key as usize % CORR_HASH][pos.side_to_move() as usize]
     }
 
+    #[inline]
     pub fn get_major_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
         &mut self.major_corrhist[key as usize % CORR_HASH][pos.side_to_move() as usize]
     }
 
+    #[inline]
     pub fn get_minor_corrhist(&mut self, pos: &Board, key: u64) -> &mut PawnCorr {
         &mut self.minor_corrhist[key as usize % CORR_HASH][pos.side_to_move() as usize]
     }
 
+    #[inline]
     pub fn get_cont_corrhist_index(&mut self, pos: &Board, m: Move) -> (usize, usize) {
         (
             index_with_option(&pos.color_piece_on(m.from)),
@@ -367,10 +386,12 @@ impl Heuristic {
         )
     }
 
+    #[inline]
     pub fn get_cont_corrhist(&mut self, idx: (usize, usize)) -> &mut [[PawnCorr; 64]; 12] {
         &mut self.cont_corrhist[idx.0][idx.1]
     }
 
+    #[inline]
     pub fn get_cont_hist_index(&self, pos: &Board, m: Move) -> ContHist {
         if m.is_null() {
             (0, 12, m.to as usize)
@@ -384,6 +405,7 @@ impl Heuristic {
         }
     }
 
+    #[inline]
     pub fn get_cont_hist(&self, prev: ContHist, pos: &Board, m: Move) -> &ContHistory {
         debug_assert!(!m.is_null());
 
@@ -391,6 +413,7 @@ impl Heuristic {
             [m.to as usize]
     }
 
+    #[inline]
     fn get_cont_hist_mut(&mut self, prev: ContHist, pos: &Board, m: Move) -> &mut ContHistory {
         debug_assert!(!m.is_null());
 
@@ -424,6 +447,7 @@ impl Heuristic {
         }
     }
 
+    #[inline]
     pub fn get_low_ply_capture_history(&self, pos: &Board, m: Move, ply: i8) -> &CaptureHistory {
         debug_assert!(!pos.is_quiet(m));
 
@@ -431,6 +455,7 @@ impl Heuristic {
             [m.to as usize][pos.get_captured(m) as usize]
     }
 
+    #[inline]
     fn get_low_ply_capture_history_mut(
         &mut self,
         pos: &Board,

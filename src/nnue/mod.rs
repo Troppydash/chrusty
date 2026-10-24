@@ -311,10 +311,16 @@ impl NNUE {
             }
 
             //- l1 -> l2
-            let mut l2_sum = Aligned::<f32, L2>::zeroed();
+            let mut l2_partial = [[_mm512_setzero_ps(); L2 / 16]; 4];
             for i in 0..L1 {
-                for j in 0..L2 {
-                    l2_sum[j] += l1[i] * self.network.l2_weights[bucket][i][j];
+                let activation = _mm512_set1_ps(l1[i]);
+                let weights = self.network.l2_weights[bucket][i].as_ptr();
+                for j in (0..L2).step_by(16) {
+                    l2_partial[i % 4][j / 16] = _mm512_fmadd_ps(
+                        activation,
+                        _mm512_load_ps(weights.add(j)),
+                        l2_partial[i % 4][j / 16],
+                    );
                 }
             }
 
@@ -322,8 +328,12 @@ impl NNUE {
             let mut out = _mm512_setzero_ps();
             let out_weights = self.network.output_weights[bucket].as_ptr();
             for i in (0..L2).step_by(16) {
+                let l2_sum = _mm512_add_ps(
+                    _mm512_add_ps(l2_partial[0][i / 16], l2_partial[1][i / 16]),
+                    _mm512_add_ps(l2_partial[2][i / 16], l2_partial[3][i / 16]),
+                );
                 let s = _mm512_add_ps(
-                    *((l2_sum.as_ptr() as *const __m512).add(i / 16)),
+                    l2_sum,
                     *((self.network.l2_bias[bucket].as_ptr() as *const __m512).add(i / 16)),
                 );
                 let l2_vec = SimdOps::silu(s);
