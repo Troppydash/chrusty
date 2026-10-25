@@ -7,7 +7,7 @@ use crate::{
     ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType},
     nnue::{
         network::{Aligned, HL, Network},
-        ti::MAX_TI_INPUTS,
+        ti::{self, MAX_TI_INPUTS},
         update::{PinnedDelta, ThreatDelta, ThreatDeltaGeneral, ThreatDeltaUpdates, ThreatUpdate},
     },
     param::MAX_DEPTH_USIZE,
@@ -19,6 +19,8 @@ pub struct Accumulator {
     is_clean: [bool; 2],
     king_sq: [Square; 2],
     update: ThreatUpdate,
+    // for lazy [update], (prev_board, board, move)
+    pending: Option<(Board, Board, Move)>,
 }
 
 impl Accumulator {
@@ -27,6 +29,7 @@ impl Accumulator {
             vals: [Aligned::<i16, HL>::zeroed(), Aligned::<i16, HL>::zeroed()],
             is_clean: [false; 2],
             update: ThreatUpdate::default(),
+            pending: None,
             king_sq: [Square::A1; 2],
         }
     }
@@ -112,8 +115,8 @@ impl Threats {
         acc.is_clean = [false; 2];
         acc.king_sq[0] = new_board.king(Color::White);
         acc.king_sq[1] = new_board.king(Color::Black);
-        acc.update.clear();
-        Self::get_threat_update(board, new_board, m, &mut acc.update);
+        // lazy threat update compute
+        acc.pending = Some((board.clone(), new_board.clone(), m));
     }
 
     fn record_sq_inout(board: &Board, sq: Square, mask: BitBoard, out: &mut ThreatDeltaUpdates) {
@@ -141,6 +144,9 @@ impl Threats {
         };
         for target_sq in attacks & occ & mask & !(board.pieces(Piece::King)) {
             let piece2: ColoredPiece = board.color_piece_on(target_sq).unwrap();
+            if !ti::is_feature(piece.piece, piece2.piece) {
+                continue;
+            }
             out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
                 piece, sq, piece2, target_sq,
             )));
@@ -159,6 +165,9 @@ impl Threats {
 
         for in_sq in incoming & occ & mask {
             let in_piece = board.color_piece_on(in_sq).unwrap();
+            if !ti::is_feature(in_piece.piece, piece.piece) {
+                continue;
+            }
             out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
                 in_piece, in_sq, piece, sq,
             )));
@@ -200,13 +209,13 @@ impl Threats {
                     continue;
                 }
 
-                if ty.has(a) {
+                if ty.has(a) && ti::is_feature(pa.piece, pb.piece) {
                     out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
                         pa, a, pb, b,
                     )));
                 }
 
-                if ty.has(b) {
+                if ty.has(b) && ti::is_feature(pb.piece, pa.piece) {
                     out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
                         pb, b, pa, a,
                     )));
@@ -489,6 +498,11 @@ impl Threats {
                 if self.side[base].is_clean[side as usize] {
                     for i in base + 1..=head {
                         let (base, next) = self.side.split_at_mut(i);
+                        // materialized threat update
+                        if let Some((old_board, new_board, m)) = next[0].pending.take() {
+                            next[0].update.clear();
+                            Self::get_threat_update(&old_board, &new_board, m, &mut next[0].update);
+                        }
                         network.threat_apply_update(
                             &mut next[0].vals[side as usize],
                             &base[i - 1].vals[side as usize],

@@ -388,6 +388,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn deferred_evaluation_matches_eager_after_branching_and_null_moves() {
+        super::init();
+        let mut deferred = NNUE::new();
+        let mut eager = NNUE::new();
+        let cases = [
+            ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "e2e4"),
+            ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1h1"),
+            ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1a1"),
+            ("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6"),
+            ("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7a8n"),
+            ("1r2k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7b8q"),
+            ("4k2r/pp3ppp/8/8/8/8/PP3PPP/R2K4 w - - 0 1", "d1e1"),
+        ];
+        let mut seed = 1337u64;
+        for (fen, first_move) in cases {
+            let root = Board::from_fen(fen, false).unwrap();
+            deferred.init(&root);
+            eager.init(&root);
+            // Each entry records whether the move entering it was null.
+            let mut path = vec![(root, false)];
+            for step in 0..96 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                if step % 5 == 4 && path.len() > 1 {
+                    let (_, was_null) = path.pop().unwrap();
+                    if was_null {
+                        deferred.unmake_null_move();
+                        eager.unmake_null_move();
+                    } else {
+                        deferred.unmake_move();
+                        eager.unmake_move();
+                    }
+                } else {
+                    let (board, was_null) = path.last().unwrap();
+                    if step % 11 == 3 && !was_null && !board.in_check() {
+                        let next = board.null_move().unwrap();
+                        deferred.make_null_move();
+                        eager.make_null_move();
+                        path.push((next, true));
+                    } else {
+                        let moves = board.get_legal_moves();
+                        if moves.is_empty() {
+                            break;
+                        }
+                        let m = if step == 0 {
+                            first_move.parse().unwrap()
+                        } else {
+                            moves[(seed >> 32) as usize % moves.len()]
+                        };
+                        assert!(board.is_legal(m));
+                        let mut next = board.clone();
+                        next.play_unchecked(m);
+                        deferred.make_move(board, &next, m);
+                        eager.make_move(board, &next, m);
+                        path.push((next, false));
+                    }
+                }
+                let board = &path.last().unwrap().0;
+                let expected = eager.evaluate2(board);
+                if step % 7 == 6 {
+                    assert_eq!(deferred.evaluate2(board), expected, "{fen}, step {step}: {board}");
+                }
+            }
+            let board = &path.last().unwrap().0;
+            assert_eq!(deferred.evaluate2(board), eager.evaluate2(board), "{fen}: {board}");
+        }
+    }
+
+    #[test]
     fn make_unmake_test() {
         super::init();
         let mut net = NNUE::new();

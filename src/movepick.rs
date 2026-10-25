@@ -313,7 +313,14 @@ impl Movepick {
             false
         });
 
-        self.pos.generate_moves_for(!promotion_pawns, |moves| {
+        // exclude king if no captures
+        let king = self.pos.king(self.pos.side_to_move());
+        let capture_origins = if (cozy_chess::get_king_moves(king) & opp).is_empty() {
+            !promotion_pawns & !king.bitboard()
+        } else {
+            !promotion_pawns
+        };
+        self.pos.generate_moves_for(capture_origins, |moves| {
             // add ep square if pawn
             let opp = if let Some(ep) = ep_square
                 && moves.piece == Piece::Pawn

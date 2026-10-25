@@ -74,12 +74,19 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
     let mut occ = pos.occupied() ^ m.from.bitboard() ^ m.to.bitboard();
     let mut attackers = get_attackers(pos, occ, m.to);
 
+    // undefended
+    if (attackers & pos.colors(!stm)).is_empty() {
+        return true;
+    }
+
     let mut pinned = [BitBoard::EMPTY, BitBoard::EMPTY];
     let mut pinners = [BitBoard::EMPTY, BitBoard::EMPTY];
     let (opp_pinned, opp_pinners) = pos.opp_pinned_pinners();
     pinned[stm as usize] = pos.pinned() & pos.colors(stm);
     pinned[!stm as usize] = opp_pinned & pos.colors(!stm);
-    pinners[stm as usize] = pos.pinners();
+    if !pinned[stm as usize].is_empty() {
+        pinners[stm as usize] = pos.pinners();
+    }
     pinners[!stm as usize] = opp_pinners;
 
     let mut result = 1;
