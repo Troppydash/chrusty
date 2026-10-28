@@ -132,7 +132,7 @@ impl HalfKA {
         }
     }
 
-    pub fn make_move(&mut self, board: &Board, m: Move) {
+    pub fn make_move(&mut self, board: &Board, m: Move) -> &Update {
         self.head += 1;
         debug_assert!(self.head < MAX_DEPTH_USIZE);
 
@@ -205,6 +205,7 @@ impl HalfKA {
                 update.sub2 = (m.to, piece_to.unwrap());
             }
         }
+        &self.side[self.head].up
     }
 
     pub fn unmake_move(&mut self) {

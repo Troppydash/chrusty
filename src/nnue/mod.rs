@@ -189,8 +189,8 @@ impl NNUE {
     }
 
     pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) {
-        self.pst.make_move(board, m);
-        self.halfka.make_move(board, m);
+        let update = self.halfka.make_move(board, m);
+        self.pst.make_move(update);
         self.threats.make_move(board, new_board, m);
         self.head += 1;
         self.stack[self.head].valid = false;
@@ -260,7 +260,7 @@ impl NNUE {
                 // 1 if non zero
                 let mask = _mm512_test_epi32_mask(v, v);
                 for lookup in (0..16).step_by(8) {
-                    debug_assert!(*idx_n + 16 <= HL / 4);
+                    debug_assert!(*idx_n + 8 <= HL / 4);
                     let slice = ((mask >> lookup) & 0xff) as u8;
                     let indices =
                         _mm_load_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
@@ -393,7 +393,10 @@ mod tests {
         let mut deferred = NNUE::new();
         let mut eager = NNUE::new();
         let cases = [
-            ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "e2e4"),
+            (
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "e2e4",
+            ),
             ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1h1"),
             ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1a1"),
             ("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6"),
@@ -447,11 +450,19 @@ mod tests {
                 let board = &path.last().unwrap().0;
                 let expected = eager.evaluate2(board);
                 if step % 7 == 6 {
-                    assert_eq!(deferred.evaluate2(board), expected, "{fen}, step {step}: {board}");
+                    assert_eq!(
+                        deferred.evaluate2(board),
+                        expected,
+                        "{fen}, step {step}: {board}"
+                    );
                 }
             }
             let board = &path.last().unwrap().0;
-            assert_eq!(deferred.evaluate2(board), eager.evaluate2(board), "{fen}: {board}");
+            assert_eq!(
+                deferred.evaluate2(board),
+                eager.evaluate2(board),
+                "{fen}: {board}"
+            );
         }
     }
 

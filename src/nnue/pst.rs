@@ -1,12 +1,12 @@
 use std::mem;
 
-use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
+use cozy_chess::{BitBoard, Board, Color, Piece, Square};
 
 use crate::{
-    ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType},
+    ext::{BitBoardExt, ColoredPiece, ExtBoard},
     nnue::{
         network::{KINGS, Network, OUTPUTS, SimdOps},
-        update::{Update, UpdateType},
+        update::Update,
     },
     param::MAX_DEPTH_USIZE,
 };
@@ -132,79 +132,11 @@ impl Pst {
         }
     }
 
-    pub fn make_move(&mut self, board: &Board, m: Move) {
+    pub fn make_move(&mut self, update: &Update) {
         self.head += 1;
         debug_assert!(self.head < MAX_DEPTH_USIZE);
-
-        self.side[self.head].is_clean[0] = false;
-        self.side[self.head].is_clean[1] = false;
-
-        let update = &mut self.side[self.head].up;
-
-        // new king pos
-        update.king_sq[0] = board.king(Color::White);
-        update.king_sq[1] = board.king(Color::Black);
-        if board.piece_on(m.from).unwrap() == Piece::King {
-            if board.move_type(m) == MoveType::CASTLE {
-                update.king_sq[board.side_to_move() as usize] = board.castle_to(m).0;
-            } else {
-                update.king_sq[board.side_to_move() as usize] = m.to;
-            }
-        }
-
-        let piece_from = board.color_piece_on(m.from).unwrap();
-        let piece_to = board.color_piece_on(m.to);
-        update.update_type = UpdateType::Move;
-
-        match board.move_type(m) {
-            MoveType::NONE => {
-                panic!("null move");
-            }
-            MoveType::NORMAL => {
-                update.add1 = (m.to, piece_from);
-                update.sub1 = (m.from, piece_from);
-
-                if let Some(piece_to) = piece_to {
-                    update.update_type = UpdateType::Capture;
-                    update.sub2 = (m.to, piece_to);
-                }
-            }
-            MoveType::ENPASSENT => {
-                update.update_type = UpdateType::Capture;
-
-                update.add1 = (m.to, piece_from);
-                update.sub1 = (m.from, piece_from);
-
-                let pawn = board.ep_capture_square().unwrap();
-                update.sub2 = (pawn, board.color_piece_on(pawn).unwrap());
-            }
-            MoveType::PROMOTION => {
-                update.add1 = (
-                    m.to,
-                    ColoredPiece::new(piece_from.color, m.promotion.unwrap()),
-                );
-                update.sub1 = (m.from, piece_from);
-
-                if let Some(piece_to) = piece_to {
-                    update.update_type = UpdateType::Capture;
-                    update.sub2 = (m.to, piece_to);
-                }
-            }
-            MoveType::CASTLE => {
-                // king takes rook
-                let (king_to, rook_to) = board.castle_to(m);
-
-                update.update_type = UpdateType::Castle;
-
-                // king
-                update.add1 = (king_to, piece_from);
-                update.sub1 = (m.from, piece_from);
-
-                // rook
-                update.add2 = (rook_to, piece_to.unwrap());
-                update.sub2 = (m.to, piece_to.unwrap());
-            }
-        }
+        self.side[self.head].is_clean = [false; 2];
+        self.side[self.head].up = update.clone();
     }
 
     pub fn unmake_move(&mut self) {

@@ -71,10 +71,13 @@ impl DynamicScoredMoveList {
     {
         debug_assert!(end <= self.moves.len());
         while self.ptr < end {
+            let remaining = &self.moves[self.ptr..end];
             let mut best_i = self.ptr;
-            for i in (self.ptr + 1)..end {
-                if self.moves[i].score > self.moves[best_i].score {
-                    best_i = i;
+            let mut best_score = remaining[0].score;
+            for (i, m) in remaining.iter().enumerate().skip(1) {
+                if m.score > best_score {
+                    best_score = m.score;
+                    best_i = self.ptr + i;
                 }
             }
             self.moves.swap(self.ptr, best_i);
@@ -778,7 +781,7 @@ impl Movepick {
                         return next_move;
                     }
 
-                    if self.depth <= -10 {
+                    if self.depth <= -4 {
                         return ScoredMove::NULL_MOVE;
                     }
                     self.stage = Stage::QQuietCheckInit;

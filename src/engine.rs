@@ -906,7 +906,6 @@ impl Engine {
             // tt based probcut
             let margin = self.settings.p_tt_probcut_margin;
             if tt_data.hit
-                && tt_data.flag == FLAG_BETA
                 && tt_data.depth >= depth - 4
                 && is_valid(tt_data.score)
                 && !is_decisive(tt_data.score)
@@ -1127,7 +1126,7 @@ impl Engine {
                 reduction -= (static_complexity * 200 / 200).min(3 * 1024);
 
                 reduction -= (tempo.abs() * 600 / 200).min(3 * 1024);
-                // reduction -= (improvement as i32 * 400 / 200).clamp(0, 2 * 1024);
+                // reduction -= (improvement as i32 * 1200 / 200).clamp(-2 * 1024, 0);
 
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
@@ -1253,6 +1252,20 @@ impl Engine {
                     }
 
                     alpha = score;
+
+                    if tt_data.pv != best_move {
+                        unsafe { &mut *writer }.set(
+                            tt_key,
+                            best_move,
+                            ply,
+                            depth,
+                            FLAG_ALPHA,
+                            best_score,
+                            unadjusted_static,
+                            self.stack[ss].tt_pv,
+                            tt_age,
+                        );
+                    }
                 }
             }
 
@@ -1327,7 +1340,6 @@ impl Engine {
         if is_valid(self.stack[ss].adjusted_static)
             && !in_check
             && !has_excluded
-            // && !is_decisive(best_score)
             // pv not a capture
             && !(!best_move.is_null() && !pos.is_quiet(best_move))
             && (flag == FLAG_EXACT || (best_score >= adjusted_static && flag == FLAG_BETA) || (best_score < adjusted_static && flag == FLAG_ALPHA))
@@ -1352,13 +1364,6 @@ impl Engine {
             self.heuristic
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
                 .add(bonus);
-
-            // let pinners_key = self.pawn_key.get_pinners(pos);
-            // if pinners_key != 0 {
-            //     self.heuristic
-            //         .get_pinners_corrhist(pos, pinners_key)
-            //         .add(bonus);
-            // }
 
             let prev = self.stack[ss - 1].m;
             if !prev.is_null() && !self.stack[ss - 2].m.is_null() {
@@ -1408,12 +1413,6 @@ impl Engine {
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
                 .get() as i32
             / 512;
-
-        // let pinners_key = self.pawn_key.get_pinners(pos);
-        // if pinners_key != 0 {
-        //     static_score +=
-        //         24 * self.heuristic.get_pinners_corrhist(pos, pinners_key).get() as i32 / 512;
-        // }
 
         let prev = self.stack[ss - 1].m;
         if !prev.is_null() {

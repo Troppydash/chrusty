@@ -873,18 +873,22 @@ impl Network {
         side: Color,
         king_sq: Square,
     ) {
-        let mut adds: ArrayVec<usize, MAX_TI_INPUTS> = ArrayVec::new();
-        let mut subs: ArrayVec<usize, MAX_TI_INPUTS> = ArrayVec::new();
+        // Resolve each weight row once, outside the accumulator block loop.
+        let mut adds: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS> = ArrayVec::new();
+        let mut subs: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS> = ArrayVec::new();
         for add in update.adds.iter() {
             match add {
                 ThreatDeltaGeneral::ThreatDelta(add) => {
                     let i = self.threat_feature_lookup_index_from_threat(king_sq, side, add);
                     if i >= 0 {
-                        adds.push(i as usize);
+                        adds.push(&self.threat_weights[i as usize]);
                     }
                 }
                 ThreatDeltaGeneral::PinnedDelta(add) => {
-                    adds.push(self.threat_pinned_index_from_threat(king_sq, side, add) as usize);
+                    adds.push(
+                        &self.threat_weights
+                            [self.threat_pinned_index_from_threat(king_sq, side, add)],
+                    );
                 }
             }
         }
@@ -893,11 +897,14 @@ impl Network {
                 ThreatDeltaGeneral::ThreatDelta(sub) => {
                     let i = self.threat_feature_lookup_index_from_threat(king_sq, side, sub);
                     if i >= 0 {
-                        subs.push(i as usize);
+                        subs.push(&self.threat_weights[i as usize]);
                     }
                 }
                 ThreatDeltaGeneral::PinnedDelta(sub) => {
-                    subs.push(self.threat_pinned_index_from_threat(king_sq, side, sub) as usize);
+                    subs.push(
+                        &self.threat_weights
+                            [self.threat_pinned_index_from_threat(king_sq, side, sub)],
+                    );
                 }
             }
         }
@@ -912,8 +919,8 @@ impl Network {
                 let mut add_idx = 0;
                 let mut sub_idx = 0;
                 while add_idx < adds.len() && sub_idx < subs.len() {
-                    let add = self.threat_weights[adds[add_idx]].as_ptr().add(i);
-                    let sub = self.threat_weights[subs[sub_idx]].as_ptr().add(i);
+                    let add = adds[add_idx].as_ptr().add(i);
+                    let sub = subs[sub_idx].as_ptr().add(i);
                     for k in 0..8 {
                         acc[k] = _mm512_add_epi16(
                             acc[k],
@@ -929,7 +936,7 @@ impl Network {
                 }
 
                 while add_idx < adds.len() {
-                    let add = self.threat_weights[adds[add_idx]].as_ptr().add(i);
+                    let add = adds[add_idx].as_ptr().add(i);
                     for k in 0..8 {
                         acc[k] = _mm512_add_epi16(
                             acc[k],
@@ -940,7 +947,7 @@ impl Network {
                 }
 
                 while sub_idx < subs.len() {
-                    let sub = self.threat_weights[subs[sub_idx]].as_ptr().add(i);
+                    let sub = subs[sub_idx].as_ptr().add(i);
                     for k in 0..8 {
                         acc[k] = _mm512_sub_epi16(
                             acc[k],
