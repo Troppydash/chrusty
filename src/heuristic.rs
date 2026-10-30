@@ -509,10 +509,10 @@ impl Heuristic {
         pawn_key: u64,
         ss: usize,
     ) {
-        // debug_assert!(pos.is_quiet(tt_move));
+        debug_assert!(!pos.is_quiet(tt_move));
 
-        // let bonus = (i32::min(8 * depth as i32, 512)) as i16;
-
+        let bonus = (i32::min(32 * depth as i32, 512)) as i16;
+        self.get_capture_history_mut(pos, tt_move).add(bonus);
         // if ply < LOW_PLY as i8 {
         //     self.get_low_ply_mut(pos, tt_move, ply).add(bonus);
         // }

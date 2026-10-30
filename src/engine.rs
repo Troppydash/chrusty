@@ -339,7 +339,8 @@ impl Engine {
                 alpha = best_score;
             }
 
-            futility_base = (best_score as i32 + 300).min(VALUE_EVAL as i32) as i16;
+            futility_base =
+                (best_score as i32 + 300 + (10 * depth) as i32).min(VALUE_EVAL as i32) as i16;
         }
 
         //- negamax
@@ -350,6 +351,7 @@ impl Engine {
             tt_data.pv,
             ply,
             depth,
+            is_pv,
             &self.stack,
             ss,
             self.pawn_key.get(),
@@ -372,7 +374,7 @@ impl Engine {
                     && !see::see_ge(
                         pos,
                         next_move.inner,
-                        -self.settings.p_qsee_margin,
+                        -self.settings.p_qsee_margin - (depth * 20) as i32,
                         &self.settings,
                     )
                 {
@@ -567,7 +569,7 @@ impl Engine {
             && tt_data.depth >= depth + (tt_data.score >= beta) as i8
         {
             if pos.halfmove_clock() < 90 {
-                if !tt_data.pv.is_null() && pos.is_quiet(tt_data.pv) && tt_data.score >= beta {
+                if !tt_data.pv.is_null() && !pos.is_quiet(tt_data.pv) && tt_data.score >= beta {
                     self.heuristic.update_tt_history(
                         pos,
                         tt_data.pv,
@@ -835,6 +837,7 @@ impl Engine {
                     tt_move,
                     ply,
                     depth,
+                    is_pv,
                     &self.stack,
                     ss,
                     margin,
@@ -903,9 +906,10 @@ impl Engine {
                 }
             }
 
-            // tt based probcut
             let margin = self.settings.p_tt_probcut_margin;
             if tt_data.hit
+                && (tt_data.flag == FLAG_BETA || tt_data.flag == FLAG_EXACT)
+                && !is_decisive(beta)
                 && tt_data.depth >= depth - 4
                 && is_valid(tt_data.score)
                 && !is_decisive(tt_data.score)
@@ -928,6 +932,7 @@ impl Engine {
             tt_data.pv,
             ply,
             depth,
+            is_pv,
             &self.stack,
             ss,
             self.pawn_key.get(),
