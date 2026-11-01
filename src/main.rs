@@ -10,6 +10,7 @@ mod movepick;
 mod nnue;
 mod param;
 mod rep;
+mod rl;
 mod see;
 mod sort;
 mod spsa;

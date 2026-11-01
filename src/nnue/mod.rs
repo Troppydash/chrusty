@@ -6,8 +6,8 @@ use crate::{
     nnue::{
         halfka::HalfKA,
         network::{
-            Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L2, Network, Permute, QA, QB, QPST,
-            RawNetwork, SCALE, SimdOps,
+            Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L1_OUT, L2, L2_OUT, Network, Permute, QA, QB,
+            QPST, RawNetwork, SCALE, SimdOps,
         },
         pst::Pst,
         threats::Threats,
@@ -27,14 +27,14 @@ pub fn init() {
 }
 
 #[derive(Clone)]
-struct Stack {
+struct Cache {
     valid: bool,
     ft: Aligned<u8, HL>,
     idx_n: usize,
     idx: Aligned<u16, { HL / 4 }>,
 }
 
-impl Stack {
+impl Cache {
     pub fn new() -> Self {
         Self {
             valid: false,
@@ -45,86 +45,20 @@ impl Stack {
     }
 }
 
-#[derive(Clone)]
-struct CMCacheBucket {
-    key: u64,
-    policy_from: [f32; CM],
-    policy_to: [f32; CM],
-}
-
-impl CMCacheBucket {
-    fn new() -> Self {
-        Self {
-            key: 0,
-            policy_from: [0.; CM],
-            policy_to: [0.; CM],
-        }
-    }
-}
-
-const CM_SIZE: usize = 1 << 12;
-
-struct CMCache {
-    buckets: Box<[CMCacheBucket]>,
-    size: usize,
-}
-
-impl CMCache {
-    pub fn new() -> Self {
-        let size = CM_SIZE;
-        let buckets = vec![CMCacheBucket::new(); size].into_boxed_slice();
-        Self { buckets, size }
-    }
-
-    fn index(&self, key: u64) -> usize {
-        key as usize % CM_SIZE
-    }
-
-    pub fn set(&mut self, key: u64, policy_from: &[f32; CM], policy_to: &[f32; CM]) {
-        let entry = &mut self.buckets[self.index(key)];
-        entry.key = key;
-        entry.policy_from = *policy_from;
-        entry.policy_to = *policy_to;
-    }
-
-    pub fn get(&self, key: u64) -> Option<([f32; CM], [f32; CM])> {
-        let entry = &self.buckets[self.index(key)];
-
-        if entry.key != key {
-            return None;
-        }
-
-        Some((entry.policy_from, entry.policy_to))
-    }
-
-    fn clear(&mut self) {
-        for i in 0..self.size {
-            self.buckets[i].key = 0;
-        }
-    }
-}
-
 pub struct NNUE {
     network: Box<Network>,
     pst: Pst,
     halfka: HalfKA,
     threats: Threats,
     nnz_table: [Aligned16; 256],
-    // this is just a temp cache
     head: usize,
-    stack: Box<[Stack]>,
-    // cache: CMCache,
+    cache: Cache,
 }
 
 impl NNUE {
     // const FT_SHIFT_SCALE: f32 = QA as f32 / (1 << FT_SHIFT) as f32;
     const FT_TUNE: f32 = 1.0;
     const DIVISOR: f32 = Self::FT_TUNE / ((1 << FT_SHIFT) as f32 * (QB as f32));
-
-    pub fn head(&self) -> (usize, usize, usize) {
-        debug_assert_eq!(self.pst.head, self.halfka.head);
-        (self.head, self.halfka.head, self.threats.head)
-    }
 
     pub fn build(permute: &Permute) -> Self {
         let mut raw = RawNetwork::load();
@@ -150,8 +84,7 @@ impl NNUE {
             threats: Threats::new(),
             nnz_table,
             head: 0,
-            stack: vec![Stack::new(); MAX_DEPTH_USIZE].into_boxed_slice(),
-            // cache: CMCache::new(),
+            cache: Cache::new(),
         };
         net.clear();
         net
@@ -166,13 +99,11 @@ impl NNUE {
         self.halfka.init(board, &self.network);
         self.threats.init(board, &self.network);
         self.head = 0;
-        self.stack[self.head].valid = false;
     }
 
     pub fn clear(&mut self) {
         self.pst.clear(&self.network);
         self.halfka.clear(&self.network);
-        // self.cache.clear();
     }
 
     pub fn catchup(&mut self, board: &Board) {
@@ -182,24 +113,14 @@ impl NNUE {
             .catchup(self.threats.head, board, &self.network);
     }
 
-    pub fn catchup_at(&mut self, head: (usize, usize, usize), board: &Board) {
-        self.pst.catchup(head.1, board, &self.network);
-        self.halfka.catchup(head.1, board, &self.network);
-        self.threats.catchup(head.2, board, &self.network);
-    }
-
     pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) {
         let update = self.halfka.make_move(board, m);
         self.pst.make_move(update);
         self.threats.make_move(board, new_board, m);
         self.head += 1;
-        self.stack[self.head].valid = false;
     }
 
-    pub fn make_null_move(&mut self) {
-        self.head += 1;
-        self.stack[self.head].valid = false;
-    }
+    pub fn make_null_move(&mut self) {}
 
     fn make_move_slow(&mut self, board: &Board, m: Move) {
         let mut new_board = board.clone();
@@ -211,38 +132,42 @@ impl NNUE {
         self.pst.unmake_move();
         self.halfka.unmake_move();
         self.threats.unmake_move();
+
+        assert!(self.head > 0);
         self.head -= 1;
     }
 
-    pub fn unmake_null_move(&mut self) {
-        self.head -= 1;
-    }
+    pub fn unmake_null_move(&mut self) {}
 
     pub fn evaluate(&mut self, board: &Board) -> i32 {
         self.catchup(board);
-        unsafe { self.evaluate_value(self.head(), board).0 }
+        self.evaluate_value(board).0
     }
 
     pub fn evaluate2(&mut self, board: &Board) -> (i32, i32) {
         self.catchup(board);
-        unsafe { self.evaluate_value(self.head(), board) }
+        self.evaluate_value(board)
     }
 
-    unsafe fn evaluate_head(&mut self, head: (usize, usize, usize), board: &Board) {
+    fn evaluate_value(&mut self, board: &Board) -> (i32, i32) {
+        let bucket = Network::get_output_bucket(board);
         let stm = board.side_to_move() as usize;
-        self.stack[head.0].valid = true;
 
         unsafe {
             const ZERO: i16 = 0i16;
             const ONE: i16 = QA as i16;
-            let ft = &mut self.stack[head.0].ft;
-            let idx_n = &mut self.stack[head.0].idx_n;
-            let idx = &mut self.stack[head.0].idx;
+            const STEP: usize = 16;
 
-            //- ft cleanup
+            let divisor = _mm512_set1_ps(Self::DIVISOR);
+
+            let ft = &mut self.cache.ft;
+            let idx_n = &mut self.cache.idx_n;
+            let idx = &mut self.cache.idx;
+
+            // ft combine and pairwise multiplication
             for side in 0..=1 {
-                let acc = &self.halfka.side[head.1].vals[stm ^ side];
-                let acc_threats = &self.threats.side[head.2].vals[stm ^ side];
+                let acc = &self.halfka.side[self.head].vals[stm ^ side];
+                let acc_threats = &self.threats.side[self.head].vals[stm ^ side];
 
                 for i in 0..HL / 2 {
                     let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
@@ -251,6 +176,7 @@ impl NNUE {
                 }
             }
 
+            // active feature extraction
             let mut base = _mm_setzero_si128();
             let lookup_inc = _mm_set1_epi16(8);
             *idx_n = 0;
@@ -272,80 +198,82 @@ impl NNUE {
                     base = _mm_add_epi16(base, lookup_inc);
                 }
             }
-        }
-    }
 
-    unsafe fn evaluate_value(&mut self, head: (usize, usize, usize), board: &Board) -> (i32, i32) {
-        let bucket = Network::get_output_bucket(board);
-
-        unsafe {
-            self.evaluate_head(head, board);
-
-            let ft = &self.stack[head.0].ft;
-            let idx_n = &self.stack[head.0].idx_n;
-            let idx = &self.stack[head.0].idx;
-
-            const STEP: usize = 16;
-            let mut l1_sum_acc = [_mm512_setzero_epi32(); L1 / STEP];
+            // l1
+            let mut l1_partial = [_mm512_setzero_epi32(); L1 / STEP];
             let l1_weights = &self.network.l1_weights[bucket];
             for t in 0..*idx_n {
                 let c = idx[t] as usize;
                 let f = _mm512_set1_epi32(*(ft.as_ptr() as *const i32).add(c));
-                let w = l1_weights[c].as_ptr() as *const __m512i;
-                for q in (0..L1).step_by(STEP) {
-                    l1_sum_acc[q / STEP] =
-                        _mm512_dpbusd_epi32(l1_sum_acc[q / STEP], f, *(w.add(q / STEP)));
-                }
-            }
-
-            let mut l1 = Aligned::<f32, { L1 }>::zeroed();
-            for i in (0..L1).step_by(16) {
-                let bias = self.network.l1_bias[bucket].as_ptr() as *const __m512;
-                let s = _mm512_fmadd_ps(
-                    _mm512_cvtepi32_ps(l1_sum_acc[i / 16]),
-                    _mm512_set1_ps(Self::DIVISOR),
-                    *(bias.add(i / 16)),
-                );
-
-                *((l1.as_mut_ptr() as *mut __m512).add(i / 16)) = SimdOps::silu(s);
-            }
-
-            //- l1 -> l2
-            let mut l2_partial = [[_mm512_setzero_ps(); L2 / 16]; 4];
-            for i in 0..L1 {
-                let activation = _mm512_set1_ps(l1[i]);
-                let weights = self.network.l2_weights[bucket][i].as_ptr();
-                for j in (0..L2).step_by(16) {
-                    l2_partial[i % 4][j / 16] = _mm512_fmadd_ps(
-                        activation,
-                        _mm512_load_ps(weights.add(j)),
-                        l2_partial[i % 4][j / 16],
+                let weights = l1_weights[c].as_ptr();
+                for (i, q) in (0..L1).step_by(STEP).enumerate() {
+                    l1_partial[i] = _mm512_dpbusd_epi32(
+                        l1_partial[i],
+                        f,
+                        _mm512_load_si512(weights.add(q * 4) as *const __m512i),
                     );
                 }
             }
 
+            // [SiLU(l1), l1]
+            let mut l1 = Aligned::<f32, L1_OUT>::zeroed();
+            let l1_bias = self.network.l1_bias[bucket].as_ptr();
+            for (i, q) in (0..L1).step_by(STEP).enumerate() {
+                let s = _mm512_fmadd_ps(
+                    _mm512_cvtepi32_ps(l1_partial[i]),
+                    divisor,
+                    _mm512_load_ps(l1_bias.add(q)),
+                );
+
+                _mm512_store_ps(l1.as_mut_ptr().add(q), SimdOps::silu(s));
+                _mm512_store_ps(l1.as_mut_ptr().add(L1 + q), s);
+            }
+
+            //- l1 -> l2
+            let mut l2_partial = [[_mm512_setzero_ps(); L2 / STEP]; 4];
+            for i in 0..L1_OUT {
+                let activation = _mm512_set1_ps(l1[i]);
+                let weights = self.network.l2_weights[bucket][i].as_ptr();
+                for (j, q) in (0..L2).step_by(STEP).enumerate() {
+                    l2_partial[i % 4][j] = _mm512_fmadd_ps(
+                        activation,
+                        _mm512_load_ps(weights.add(q)),
+                        l2_partial[i % 4][j],
+                    );
+                }
+            }
+
+            // [SiLU(l2), l2, SiLU(l1), l1]
+            let mut l2 = Aligned::<f32, L2_OUT>::zeroed();
+            let l2_bias = self.network.l2_bias[bucket].as_ptr();
+            for (i, q) in (0..L2).step_by(STEP).enumerate() {
+                let l2_sum = _mm512_add_ps(
+                    _mm512_add_ps(l2_partial[0][i], l2_partial[1][i]),
+                    _mm512_add_ps(l2_partial[2][i], l2_partial[3][i]),
+                );
+                let s = _mm512_add_ps(l2_sum, _mm512_load_ps(l2_bias.add(q)));
+
+                _mm512_store_ps(l2.as_mut_ptr().add(q), SimdOps::silu(s));
+                _mm512_store_ps(l2.as_mut_ptr().add(L2 + q), s);
+            }
+            l2[L2 * 2..].copy_from_slice(&l1[..]);
+
             //- l2 -> output
             let mut out = _mm512_setzero_ps();
             let out_weights = self.network.output_weights[bucket].as_ptr();
-            for i in (0..L2).step_by(16) {
-                let l2_sum = _mm512_add_ps(
-                    _mm512_add_ps(l2_partial[0][i / 16], l2_partial[1][i / 16]),
-                    _mm512_add_ps(l2_partial[2][i / 16], l2_partial[3][i / 16]),
+            for i in (0..L2_OUT).step_by(STEP) {
+                out = _mm512_fmadd_ps(
+                    _mm512_load_ps(l2.as_ptr().add(i)),
+                    _mm512_load_ps(out_weights.add(i)),
+                    out,
                 );
-                let s = _mm512_add_ps(
-                    l2_sum,
-                    *((self.network.l2_bias[bucket].as_ptr() as *const __m512).add(i / 16)),
-                );
-                let l2_vec = SimdOps::silu(s);
-                let w_vec = *(out_weights.add(i) as *const __m512);
-                out = _mm512_fmadd_ps(l2_vec, w_vec, out);
             }
             let output = _mm512_reduce_add_ps(out) + self.network.output_bias[bucket];
 
             // pst
             let stm = board.side_to_move() as usize;
-            let pst = (self.pst.side[head.1].vals[stm][bucket]
-                - self.pst.side[head.1].vals[stm ^ 1][bucket]) as f32
+            let pst = (self.pst.side[self.head].vals[stm][bucket]
+                - self.pst.side[self.head].vals[stm ^ 1][bucket]) as f32
                 / (2 * QPST) as f32;
 
             let combined = output + pst;
@@ -368,14 +296,13 @@ impl NNUE {
             for i in 0..HL / 2 {
                 let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
                 let x1 = (acc[i + HL / 2] + acc_threats[i + HL / 2]).clamp(ZERO, ONE);
-                self.stack[self.head].ft[side * HL / 2 + i] =
-                    ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
+                self.cache.ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
             }
         }
     }
 
     pub fn sort_ft(&self) -> &Aligned<u8, HL> {
-        &self.stack[self.head].ft
+        &self.cache.ft
     }
 }
 

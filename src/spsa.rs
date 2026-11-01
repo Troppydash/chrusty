@@ -1,6 +1,6 @@
 macro_rules! define {
     ($($name:ident: $type:ty = $default:expr, $min:expr, $max:expr, $step:expr),* $(,)?) => {
-        #[derive(Clone)]
+        #[derive(Clone, Debug)]
         pub struct Parameters {
             $(pub $name: $type,)*
         }
@@ -30,6 +30,13 @@ macro_rules! define {
         }
 
         impl Parameters {
+            pub fn option_range(name: &str) -> Option<(i32, i32, i32)> {
+                match name {
+                    $(stringify!($name) => Some(($default, $min, $max)),)*
+                    _ => None,
+                }
+            }
+
             pub fn uci_apply(&mut self, name: &str, value: &str) {
                 match name {
                     $(stringify!($name) => {
@@ -141,7 +148,7 @@ define! {
     p_lmp_base: i32 = 2800, 1400, 4200, 150,
     p_lmp_improving: i32 = 1000, 0, 2000, 100,
     p_lmp_depth: i32 = 1300, 650, 2000, 80,
-    p_qsee_margin: i32 = 50, 0, 150, 5,
+    p_qsee_margin: i32 = 50, 0, 200, 5,
     p_qhistory_bonus: i32 = 200, 100, 400, 10,
     p_qhistory_check: i32 = 100, 0, 100, 5,
     p_asp_window: i32 = 10, 6, 40, 2,

@@ -49,28 +49,17 @@ pub struct Threats {
 }
 
 impl Threats {
-    fn get_attacks(occ: BitBoard, square: Square, piece: Piece, color: Color) -> BitBoard {
-        match piece {
-            Piece::Pawn => cozy_chess::get_pawn_attacks(square, color),
-            Piece::Knight => cozy_chess::get_knight_moves(square),
-            Piece::Bishop => cozy_chess::get_bishop_moves(square, occ),
-            Piece::Rook => cozy_chess::get_rook_moves(square, occ),
-            Piece::Queen => {
-                cozy_chess::get_bishop_moves(square, occ) | cozy_chess::get_rook_moves(square, occ)
-            }
-            Piece::King => cozy_chess::get_king_moves(square),
-        }
-    }
-
-    pub fn build(pos: &Board) -> Self {
+    pub fn build_for_quiets(pos: &Board) -> Self {
         let occ = pos.occupied();
         let ntm = !pos.side_to_move();
-        let mut by_opp = [BitBoard::EMPTY; 6];
-        by_opp[0] = setwise_pawn(pos.colored_pieces(ntm, Piece::Pawn), ntm);
-        for square in pos.colors(ntm) & !pos.pieces(Piece::Pawn) {
-            let piece = pos.piece_on(square).unwrap();
-            by_opp[piece as usize] |= Self::get_attacks(occ, square, piece, ntm);
-        }
+        let by_opp = [
+            setwise_pawn(pos.colored_pieces(ntm, Piece::Pawn), ntm),
+            setwise_knight(pos.colored_pieces(ntm, Piece::Knight)),
+            setwise_bishop(pos.colored_pieces(ntm, Piece::Bishop), occ),
+            setwise_rook(pos.colored_pieces(ntm, Piece::Rook), occ),
+            BitBoard::EMPTY,
+            BitBoard::EMPTY,
+        ];
 
         let king = pos.king(!pos.side_to_move());
         let checks = [

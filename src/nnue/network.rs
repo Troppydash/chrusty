@@ -24,6 +24,8 @@ use std::ptr;
 pub const HL: usize = 1024;
 pub const L1: usize = 32;
 pub const L2: usize = 32;
+pub const L1_OUT: usize = L1 * 2;
+pub const L2_OUT: usize = L2 * 2 + L1_OUT;
 pub const OUTPUTS: usize = 8;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
@@ -363,11 +365,11 @@ pub struct RawNetwork {
     l1_bias: [[f32; L1]; OUTPUTS],
 
     // transposed
-    l2_weights: [[[f32; L1]; L2]; OUTPUTS],
+    l2_weights: [[[f32; L1_OUT]; L2]; OUTPUTS],
     l2_bias: [[f32; L2]; OUTPUTS],
 
     // transposed
-    output_weights: [[f32; L2]; OUTPUTS],
+    output_weights: [[f32; L2_OUT]; OUTPUTS],
     output_bias: [f32; OUTPUTS],
 }
 
@@ -456,10 +458,10 @@ pub struct Network {
     pub l1_bias: [Aligned<f32, L1>; OUTPUTS],
 
     // [l2_weights] has inner component flipped
-    pub l2_weights: [[Aligned<f32, L2>; L1]; OUTPUTS],
+    pub l2_weights: [[Aligned<f32, L2>; L1_OUT]; OUTPUTS],
     pub l2_bias: [Aligned<f32, L2>; OUTPUTS],
 
-    pub output_weights: [Aligned<f32, L2>; OUTPUTS],
+    pub output_weights: [Aligned<f32, L2_OUT>; OUTPUTS],
     pub output_bias: [f32; OUTPUTS],
 }
 
@@ -516,7 +518,7 @@ impl Network {
         // also transpose weights
         for i in 0..OUTPUTS {
             for j in 0..L2 {
-                for k in 0..L1 {
+                for k in 0..L1_OUT {
                     net.l2_weights[i][k][j] = raw.l2_weights[i][j][k];
                 }
             }
@@ -529,7 +531,7 @@ impl Network {
         }
 
         for a in 0..OUTPUTS {
-            for b in 0..L2 {
+            for b in 0..L2_OUT {
                 net.output_weights[a][b] = raw.output_weights[a][b];
             }
         }

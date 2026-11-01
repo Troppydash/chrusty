@@ -1,6 +1,8 @@
 use crate::ext::ExtMove;
 use crate::nnue::NNUE;
 use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
+use crate::rl::Policy;
+use crate::spsa::Parameters;
 use crate::tb::TableBase;
 use crate::timer::Timer;
 use crate::tt::{Table, TablePtr};
@@ -121,6 +123,12 @@ impl AsyncEngine {
         self.engine.lock().unwrap().set_settings(&self.parameter);
     }
 
+    fn set_parameters(&mut self, parameters: Parameters) {
+        self.stop();
+        self.parameter = parameters;
+        self.engine.lock().unwrap().set_settings(&self.parameter);
+    }
+
     fn set_tb(&mut self, path: &str) {
         // force drop tb
         self.engine.lock().unwrap().set_tb(None);
@@ -144,6 +152,9 @@ pub fn start(args: Vec<String>) {
     let mut pos = Board::startpos();
     let mut moves = vec![];
 
+    let mut saved_net: Option<NNUE> = None;
+    let mut policy: Option<Policy> = None;
+
     let mut process_line = |line: &String| -> () {
         let parts = line.split_whitespace().collect::<Vec<&str>>();
         if parts.len() == 0 {
@@ -165,6 +176,7 @@ pub fn start(args: Vec<String>) {
                 );
                 println!("option name SyzygyPath type string default <empty>");
                 println!("option name ClearHash type button");
+                println!("option name Policy type string");
 
                 println!("{}", spsa::Parameters::uci_text());
                 println!("uciok");
@@ -278,6 +290,13 @@ pub fn start(args: Vec<String>) {
                     search_limits.opt_time = opt_time;
                     search_limits.max_time = max_time;
                     search_limits.ponder = ponder;
+
+                    if let Some(policy) = &policy && let Some(net) = &mut saved_net {
+                        net.init(&pos);
+                        let nnue_eval = net.evaluate(&pos);
+                        let settings = policy.infer(&startpos, nnue_eval, &moves).unwrap();
+                        async_engine.set_parameters(settings);
+                    }
                 }
 
                 async_engine.stop();
@@ -298,10 +317,10 @@ pub fn start(args: Vec<String>) {
                     "{} {} {} {} {} {}",
                     parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
                 );
-                let mut net = NNUE::new();
                 let board = Board::from_fen(&fen, false).unwrap();
+                let net = saved_net.get_or_insert_with(NNUE::new);
                 net.init(&board);
-                println!("{}", net.evaluate(&board));
+                println!("info score {}", net.evaluate(&board));
             }
             "setoption" => {
                 // setoption name <name> value <value>
@@ -319,6 +338,10 @@ pub fn start(args: Vec<String>) {
                     "ClearHash" => {
                         async_engine.wait();
                         async_engine.newgame();
+                    }
+                    "Policy" => {
+                        policy = Some(Policy::load(parts[4]).unwrap());
+                        saved_net = Some(NNUE::new());
                     }
                     _ => {
                         if parts[2].starts_with("p_") {

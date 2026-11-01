@@ -374,7 +374,7 @@ impl Engine {
                     && !see::see_ge(
                         pos,
                         next_move.inner,
-                        -self.settings.p_qsee_margin - (depth * 20) as i32,
+                        -self.settings.p_qsee_margin - (depth as i32 * 30) as i32,
                         &self.settings,
                     )
                 {

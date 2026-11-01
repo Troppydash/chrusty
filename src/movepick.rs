@@ -159,9 +159,7 @@ pub struct Movepick {
     ss: usize,
     pawn_key: u64,
 
-    // nnue cm
     nnue: Option<*mut NNUE>,
-    nnue_head: (usize, usize, usize),
 
     // internal //
     moves: DynamicScoredMoveList,
@@ -189,7 +187,6 @@ impl Movepick {
         heuristic: &Heuristic,
         nnue: Option<&mut NNUE>,
     ) -> Self {
-        let nnue_head = nnue.as_ref().map_or_default(|nnue| nnue.head());
         Self {
             pos,
             pv,
@@ -202,7 +199,6 @@ impl Movepick {
             ss,
             pawn_key,
             nnue: nnue.map(|nnue| nnue as *mut NNUE),
-            nnue_head,
             moves: DynamicScoredMoveList::new(),
             stage: Stage::Pv,
             skip_quiets: false,
@@ -225,8 +221,6 @@ impl Movepick {
         in_check: bool,
         nnue: Option<&mut NNUE>,
     ) -> Self {
-        let nnue_head = nnue.as_ref().map_or_default(|nnue| nnue.head());
-
         Self {
             pos,
             pv,
@@ -239,7 +233,6 @@ impl Movepick {
             ss,
             pawn_key,
             nnue: nnue.map(|nnue| nnue as *mut NNUE),
-            nnue_head,
             moves: DynamicScoredMoveList::new(),
             stage: if in_check { Stage::EPv } else { Stage::QPv },
             skip_quiets: false,
@@ -272,7 +265,6 @@ impl Movepick {
             ss,
             pawn_key: 0,
             nnue: None,
-            nnue_head: (0, 0, 0),
             moves: DynamicScoredMoveList::new(),
             stage: Stage::ProbcutPv,
             skip_quiets: false,
@@ -561,7 +553,11 @@ impl Movepick {
     }
 
     fn score_quiets(&mut self, skip_killers: bool) {
-        let threats = Threats::build(&self.pos);
+        if self.moves.ptr == self.moves.len() {
+            return;
+        }
+
+        let threats = Threats::build_for_quiets(&self.pos);
         let threatened = [
             BitBoard::EMPTY,                      // P
             threats.by_opp[Piece::Pawn as usize], // N
