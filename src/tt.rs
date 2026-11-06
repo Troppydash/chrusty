@@ -89,6 +89,7 @@ impl Entry {
         self.mask = age | (flag << AGE_SIZE) | (pv as u8) << (AGE_SIZE + 2);
     }
 
+    #[inline(always)]
     pub fn get(&self, key: u64, ply: i8, depth: i8, alpha: i16, beta: i16) -> EntryValue {
         if key_matches(key, self.hash) && self.depth != UNINIT_DEPTH {
             let mut adjusted_score = VALUE_NONE;
@@ -133,6 +134,7 @@ impl Entry {
         };
     }
 
+    #[inline(always)]
     pub fn set(
         &mut self,
         key: u64,
@@ -306,6 +308,7 @@ impl Table {
         self.age = (self.age + 1) % MAX_AGE;
     }
 
+    #[inline(always)]
     pub fn get(&mut self, key: u64) -> (Entry, *mut Entry) {
         let index = ((key as u128 * self.size as u128) >> 64) as usize;
         unsafe {

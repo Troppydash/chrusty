@@ -406,7 +406,7 @@ impl Heuristic {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn get_cont_hist(&self, prev: ContHist, pos: &Board, m: Move) -> &ContHistory {
         debug_assert!(!m.is_null());
 

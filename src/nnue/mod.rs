@@ -154,8 +154,6 @@ impl NNUE {
         let stm = board.side_to_move() as usize;
 
         unsafe {
-            const ZERO: i16 = 0i16;
-            const ONE: i16 = QA as i16;
             const STEP: usize = 16;
 
             let divisor = _mm512_set1_ps(Self::DIVISOR);
@@ -164,55 +162,105 @@ impl NNUE {
             let idx_n = &mut self.cache.idx_n;
             let idx = &mut self.cache.idx;
 
-            // ft combine and pairwise multiplication
+            *idx_n = 0;
             for side in 0..=1 {
                 let acc = &self.halfka.side[self.head].vals[stm ^ side];
-                let acc_threats = &self.threats.side[self.head].vals[stm ^ side];
+                let threats = &self.threats.side[self.head].vals[stm ^ side];
+                for i in (0..HL / 2).step_by(64) {
+                    let zero = _mm512_setzero_si512();
+                    let one = _mm512_set1_epi16(QA as i16);
 
-                for i in 0..HL / 2 {
-                    let x0 = (acc[i] + acc_threats[i]).clamp(ZERO, ONE);
-                    let x1 = (acc[i + HL / 2] + acc_threats[i + HL / 2]).clamp(ZERO, ONE);
-                    ft[side * HL / 2 + i] = ((x0 as u16 * x1 as u16) >> FT_SHIFT) as u8;
-                }
-            }
+                    let clip = |x| _mm512_min_epi16(_mm512_max_epi16(x, zero), one);
 
-            // active feature extraction
-            let mut base = _mm_setzero_si128();
-            let lookup_inc = _mm_set1_epi16(8);
-            *idx_n = 0;
-            for b in (0..HL).step_by(64) {
-                let v = *(ft.as_ptr().add(b) as *const __m512i);
+                    let mut scaled = [_mm512_setzero_si512(); 2];
+                    for part in 0..2 {
+                        let j = i + part * 32;
+                        let x0 = clip(_mm512_add_epi16(
+                            _mm512_load_si512(acc.as_ptr().add(j).cast()),
+                            _mm512_load_si512(threats.as_ptr().add(j).cast()),
+                        ));
+                        let x1 = clip(_mm512_add_epi16(
+                            _mm512_load_si512(acc.as_ptr().add(j + HL / 2).cast()),
+                            _mm512_load_si512(threats.as_ptr().add(j + HL / 2).cast()),
+                        ));
+                        scaled[part] =
+                            _mm512_srli_epi16::<{ FT_SHIFT as u32 }>(_mm512_mullo_epi16(x0, x1));
+                    }
 
-                // 1 if non zero
-                let mask = _mm512_test_epi32_mask(v, v);
-                for lookup in (0..16).step_by(8) {
-                    debug_assert!(*idx_n + 8 <= HL / 4);
-                    let slice = ((mask >> lookup) & 0xff) as u8;
-                    let indices =
-                        _mm_load_si128(self.nnz_table[slice as usize].as_ptr() as *const __m128i);
-                    _mm_storeu_si128(
-                        idx.as_mut_ptr().add(*idx_n) as *mut __m128i,
-                        _mm_add_epi16(base, indices),
-                    );
-                    *idx_n += slice.count_ones() as usize;
-                    base = _mm_add_epi16(base, lookup_inc);
+                    // packus interleaves 128-bit lanes; restore consecutive features.
+                    let order = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
+                    let bytes =
+                        _mm512_permutexvar_epi64(order, _mm512_packus_epi16(scaled[0], scaled[1]));
+
+                    let offset = side * HL / 2 + i;
+                    _mm512_store_si512(ft.as_mut_ptr().add(offset).cast(), bytes);
+
+                    let mask = _mm512_test_epi32_mask(bytes, bytes);
+                    #[cfg(all(target_feature = "avx512vbmi2", target_feature = "avx512vl"))]
+                    {
+                        debug_assert!(*idx_n + 16 <= HL / 4);
+                        let lanes =
+                            _mm256_setr_epi16(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+                        let indices = _mm256_maskz_compress_epi16(
+                            mask,
+                            _mm256_add_epi16(lanes, _mm256_set1_epi16((offset / 4) as i16)),
+                        );
+                        _mm256_storeu_si256(idx.as_mut_ptr().add(*idx_n).cast(), indices);
+                        *idx_n += mask.count_ones() as usize;
+                    }
+
+                    #[cfg(not(all(target_feature = "avx512vbmi2", target_feature = "avx512vl")))]
+                    for lookup in (0..16).step_by(8) {
+                        debug_assert!(*idx_n + 8 <= HL / 4);
+                        let slice = ((mask >> lookup) & 0xff) as u8;
+                        let indices =
+                            _mm_load_si128(self.nnz_table[slice as usize].as_ptr().cast());
+                        _mm_storeu_si128(
+                            idx.as_mut_ptr().add(*idx_n).cast(),
+                            _mm_add_epi16(_mm_set1_epi16((offset / 4 + lookup) as i16), indices),
+                        );
+                        *idx_n += slice.count_ones() as usize;
+                    }
                 }
             }
 
             // l1
-            let mut l1_partial = [_mm512_setzero_epi32(); L1 / STEP];
+            let mut partial = [[_mm512_setzero_epi32(); L1 / STEP]; 4];
             let l1_weights = &self.network.l1_weights[bucket];
-            for t in 0..*idx_n {
+            let mut t = 0;
+            while t + 4 <= *idx_n {
+                for lane in 0..4 {
+                    let c = idx[t + lane] as usize;
+                    let f = _mm512_set1_epi32(*(ft.as_ptr() as *const i32).add(c));
+                    let weights = l1_weights[c].as_ptr();
+                    for (i, q) in (0..L1).step_by(STEP).enumerate() {
+                        partial[lane][i] = _mm512_dpbusd_epi32(
+                            partial[lane][i],
+                            f,
+                            _mm512_load_si512(weights.add(q * 4).cast()),
+                        );
+                    }
+                }
+                t += 4;
+            }
+            for t in t..*idx_n {
                 let c = idx[t] as usize;
                 let f = _mm512_set1_epi32(*(ft.as_ptr() as *const i32).add(c));
                 let weights = l1_weights[c].as_ptr();
                 for (i, q) in (0..L1).step_by(STEP).enumerate() {
-                    l1_partial[i] = _mm512_dpbusd_epi32(
-                        l1_partial[i],
+                    partial[0][i] = _mm512_dpbusd_epi32(
+                        partial[0][i],
                         f,
-                        _mm512_load_si512(weights.add(q * 4) as *const __m512i),
+                        _mm512_load_si512(weights.add(q * 4).cast()),
                     );
                 }
+            }
+            let mut l1_partial = [_mm512_setzero_epi32(); L1 / STEP];
+            for i in 0..L1 / STEP {
+                l1_partial[i] = _mm512_add_epi32(
+                    _mm512_add_epi32(partial[0][i], partial[1][i]),
+                    _mm512_add_epi32(partial[2][i], partial[3][i]),
+                );
             }
 
             // [SiLU(l1), l1]

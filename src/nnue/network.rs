@@ -579,20 +579,25 @@ impl Network {
         OUTPUT_BUCKETS[board.occupied().len() as usize]
     }
 
+    #[inline(always)]
+    fn flip_mask(king_sq: Square, side: Color) -> usize {
+        let file_flip = if king_sq as usize & 0b100 != 0 { 7 } else { 0 };
+        file_flip ^ (side as usize * 56)
+    }
+
     pub fn feature_lookup(
         &self,
         king_sq: Square,
         side: Color,
         piece: ColoredPiece,
-        mut square: Square,
+        square: Square,
     ) -> &Aligned<i16, HL> {
-        if (king_sq as u16 & 0b100) != 0 {
-            square = square.flip_file();
-        }
+        let flip = Self::flip_mask(king_sq, side);
+        let square = square as usize ^ flip;
 
-        let index768 = ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64
-            + square.relative_to(side) as usize;
-        &self.feature_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
+        let index768 =
+            ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
+        &self.feature_weights[KING_BUCKET[king_sq as usize ^ (side as usize * 56)]][index768]
     }
 
     pub fn pst_feature_lookup(
@@ -600,15 +605,14 @@ impl Network {
         king_sq: Square,
         side: Color,
         piece: ColoredPiece,
-        mut square: Square,
+        square: Square,
     ) -> &[i16; OUTPUTS] {
-        if (king_sq as u16 & 0b100) != 0 {
-            square = square.flip_file();
-        }
+        let flip = Self::flip_mask(king_sq, side);
+        let square = square as usize ^ flip;
 
-        let index768 = ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64
-            + square.relative_to(side) as usize;
-        &self.pst_weights[Self::get_king_bucket(king_sq.relative_to(side))][index768]
+        let index768 =
+            ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
+        &self.pst_weights[KING_BUCKET[king_sq as usize ^ (side as usize * 56)]][index768]
     }
 
     fn threat_feature_lookup_index_from_threat(
@@ -636,9 +640,9 @@ impl Network {
         attacker_color: Color,
         target_color: Color,
         attacker: Piece,
-        mut attacker_square: Square,
+        attacker_square: Square,
         target: Piece,
-        mut target_square: Square,
+        target_square: Square,
     ) -> i32 {
         if !ti::is_feature(attacker, target) {
             return -1;
@@ -646,17 +650,14 @@ impl Network {
 
         debug_assert!(attacker != Piece::King);
         debug_assert!(target != Piece::King);
-        if (king_sq as u16 & 0b100) != 0 {
-            attacker_square = attacker_square.flip_file();
-            target_square = target_square.flip_file();
-        }
+        let flip = Self::flip_mask(king_sq, side);
 
         ti::threat_feature_index(
             side == attacker_color,
             attacker_color != target_color,
             attacker as usize,
-            attacker_square.relative_to(side) as usize,
-            target_square.relative_to(side) as usize,
+            attacker_square as usize ^ flip,
+            target_square as usize ^ flip,
             target as usize,
         ) as i32
     }
@@ -667,14 +668,13 @@ impl Network {
         side: Color,
         side_pinned: bool,
         piece: ColoredPiece,
-        mut square: Square,
+        square: Square,
     ) -> usize {
-        if (king_sq as u16 & 0b100) != 0 {
-            square = square.flip_file();
-        }
+        let flip = Self::flip_mask(king_sq, side);
+        let square = square as usize ^ flip;
 
-        let index768 = ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64
-            + square.relative_to(side) as usize;
+        let index768 =
+            ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
 
         FULL_THREATS
             + (if side_pinned {
