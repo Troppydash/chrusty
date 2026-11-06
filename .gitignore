@@ -11,3 +11,7 @@ nets/
 
 scripts/test.sh
 scripts/sort.sh
+
+misc/
+
+docs/

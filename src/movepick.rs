@@ -785,7 +785,7 @@ impl Movepick {
                         return next_move;
                     }
 
-                    if self.depth <= -4 {
+                    if self.depth <= -3 {
                         return ScoredMove::NULL_MOVE;
                     }
                     self.stage = Stage::QQuietCheckInit;

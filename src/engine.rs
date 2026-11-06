@@ -598,6 +598,19 @@ impl Engine {
             unadjusted_static = self.stack[ss].adjusted_static;
             tt_static = self.stack[ss].adjusted_static;
             self.nnue.catchup(pos);
+
+            if tt_data.hit && is_valid(tt_data.score) {
+                //- use tt score to improve static score
+                let can_improve_static = get_can_use(
+                    tt_data.score,
+                    tt_data.flag,
+                    self.stack[ss].adjusted_static,
+                    self.stack[ss].adjusted_static,
+                );
+                if !is_decisive(tt_data.score) && can_improve_static {
+                    tt_static = tt_data.score;
+                }
+            }
         } else if tt_data.hit {
             unadjusted_static = tt_data.static_score;
             if !is_valid(unadjusted_static) {
@@ -609,15 +622,17 @@ impl Engine {
             tt_static = self.stack[ss].adjusted_static;
             complexity = (unadjusted_static as i32 - self.stack[ss].adjusted_static as i32).abs();
 
-            //- use tt score to improve static score
-            let can_improve_static = get_can_use(
-                tt_data.score,
-                tt_data.flag,
-                self.stack[ss].adjusted_static,
-                self.stack[ss].adjusted_static,
-            );
-            if is_valid(tt_data.score) && !is_decisive(tt_data.score) && can_improve_static {
-                tt_static = tt_data.score;
+            if tt_data.hit && is_valid(tt_data.score) {
+                //- use tt score to improve static score
+                let can_improve_static = get_can_use(
+                    tt_data.score,
+                    tt_data.flag,
+                    self.stack[ss].adjusted_static,
+                    self.stack[ss].adjusted_static,
+                );
+                if !is_decisive(tt_data.score) && can_improve_static {
+                    tt_static = tt_data.score;
+                }
             }
         } else {
             (unadjusted_static, tempo) = self.evaluate(pos);
@@ -638,7 +653,7 @@ impl Engine {
             );
         }
 
-        let static_complexity = (tt_static - self.stack[ss].adjusted_static).abs() as i32;
+        let static_complexity = (tt_static as i32 - self.stack[ss].adjusted_static as i32).abs();
 
         //- syzygy
         let mut max_score = VALUE_INF;
@@ -1128,10 +1143,7 @@ impl Engine {
 
                 reduction -= (complexity * self.settings.p_lmr_complexity / 200).min(3 * 1024);
 
-                reduction -= (static_complexity * 200 / 200).min(3 * 1024);
-
-                reduction -= (tempo.abs() * 600 / 200).min(3 * 1024);
-                // reduction -= (improvement as i32 * 1200 / 200).clamp(-2 * 1024, 0);
+                reduction -= (static_complexity * 400 / 200).min(3 * 1024);
 
                 // pv extension
                 reduction -= (self.stack[ss].tt_pv as i32 + is_pv as i32) * self.settings.p_lmr_pv;
