@@ -699,6 +699,18 @@ impl Engine {
             }
         }
 
+        if is_valid(self.stack[ss - 1].adjusted_static) && is_valid(self.stack[ss].adjusted_static)
+        {
+            let eval_change =
+                self.stack[ss].adjusted_static as i32 + self.stack[ss - 1].adjusted_static as i32;
+            let reduction = self.stack[ss - 1].reduction;
+
+            if reduction >= 2 && eval_change <= -50 {
+                depth += 1;
+            }
+        }
+
+        // TODO: consider tt_static
         let mut improving = false;
         let mut improvement = 0;
         if in_check {
@@ -1170,6 +1182,8 @@ impl Engine {
                 let reduced_depth =
                     (new_depth as i32 - reduction).clamp(1, new_depth as i32 + 1) as i8;
 
+                self.stack[ss].reduction = new_depth - reduced_depth;
+
                 //- pv search
                 score = -self.negamax(
                     &new_pos,
@@ -1180,6 +1194,7 @@ impl Engine {
                     false,
                     true,
                 );
+                self.stack[ss].reduction = 0;
 
                 if score > alpha && reduced_depth < new_depth {
                     if !is_root {
