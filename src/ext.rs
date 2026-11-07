@@ -7,7 +7,10 @@ use cozy_chess::{
     Rank, Square,
 };
 
-use crate::{ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL, PROMOTION}, spsa::Parameters};
+use crate::{
+    ext::MoveType::{CASTLE, ENPASSENT, NONE, NORMAL, PROMOTION},
+    spsa::Parameters,
+};
 
 // these are stack allocated
 
@@ -402,9 +405,13 @@ impl ExtBoard for Board {
     }
 
     fn color_piece_on(&self, square: Square) -> Option<ColoredPiece> {
-        self.color_on(square)
-            .zip(self.piece_on(square))
-            .map(|(color, piece)| ColoredPiece::new(color, piece))
+        if !self.occupied().has(square) {
+            None
+        } else {
+            let color = self.color_on(square).unwrap();
+            let piece = self.piece_on(square).unwrap();
+            Some(ColoredPiece::new(color, piece))
+        }
     }
 
     /// (king, rook)

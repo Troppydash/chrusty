@@ -1403,8 +1403,8 @@ impl Engine {
     }
 
     fn static_correction(&mut self, pos: &Board, static_score: i16, ss: usize) -> i16 {
-        let mut static_score = static_score as i32;
-        static_score += self.settings.p_corr_pawn_weight
+        let mut correction = 0;
+        correction += self.settings.p_corr_pawn_weight
             * self
                 .heuristic
                 .get_pawn_corrhist(pos, self.pawn_key.get())
@@ -1412,19 +1412,19 @@ impl Engine {
             / 512;
 
         let [white, black] = self.pawn_key.get_colored();
-        static_score += self.settings.p_corr_nonpawn_weight
+        correction += self.settings.p_corr_nonpawn_weight
             * self.heuristic.get_white_corrhist(pos, white).get() as i32
             / 512;
-        static_score += self.settings.p_corr_nonpawn_weight
+        correction += self.settings.p_corr_nonpawn_weight
             * self.heuristic.get_black_corrhist(pos, black).get() as i32
             / 512;
-        static_score += self.settings.p_corr_major_weight
+        correction += self.settings.p_corr_major_weight
             * self
                 .heuristic
                 .get_major_corrhist(pos, self.pawn_key.get_major())
                 .get() as i32
             / 512;
-        static_score += self.settings.p_corr_minor_weight
+        correction += self.settings.p_corr_minor_weight
             * self
                 .heuristic
                 .get_minor_corrhist(pos, self.pawn_key.get_minor())
@@ -1433,7 +1433,7 @@ impl Engine {
 
         let prev = self.stack[ss - 1].m;
         if !prev.is_null() {
-            static_score += self.settings.p_corr_cont1_weight
+            correction += self.settings.p_corr_cont1_weight
                 * self
                     .heuristic
                     .get_cont_corrhist(self.stack[ss - 2].cont_corrhist)
@@ -1444,7 +1444,7 @@ impl Engine {
 
         let prev = self.stack[ss - 3].m;
         if !prev.is_null() {
-            static_score += self.settings.p_corr_cont3_weight
+            correction += self.settings.p_corr_cont3_weight
                 * self
                     .heuristic
                     .get_cont_corrhist(self.stack[ss - 4].cont_corrhist)
@@ -1453,7 +1453,15 @@ impl Engine {
                 / 512;
         }
 
-        static_score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16
+        // max 100
+        let stage = 10 * pos.pieces(Piece::Queen).len()
+            + 5 * pos.pieces(Piece::Rook).len()
+            + 3 * pos.pieces(Piece::Bishop).len()
+            + 3 * pos.pieces(Piece::Knight).len()
+            + 2 * pos.pieces(Piece::Pawn).len();
+
+        let correction = (correction as f32 * (stage as f32 + 100.0) / 100.0) as i32;
+        (static_score as i32 + correction).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16
     }
 
     pub fn search(&mut self, startpos: Board, moves: Vec<Move>) -> SearchResult {

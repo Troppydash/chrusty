@@ -17,7 +17,7 @@ use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
 use arrayvec::ArrayVec;
-use cozy_chess::{Board, Color, File, Piece, Square};
+use cozy_chess::{Board, Color, Piece, Square};
 use std::mem;
 use std::ptr;
 
@@ -389,18 +389,10 @@ impl RawNetwork {
         }
     }
 
-    fn get_boxed(&self) -> Box<Self> {
-        unsafe {
-            let mut uninit_box: Box<MaybeUninit<Self>> = Box::new_uninit();
-            uninit_box
-                .as_mut_ptr()
-                .copy_from(self as *const RawNetwork, 1);
-            uninit_box.assume_init()
-        }
-    }
-
     pub fn permute(&mut self, permute: &Permute) {
-        let old = self.get_boxed();
+        if permute.mapping.iter().enumerate().all(|(i, &j)| i == j) {
+            return;
+        }
 
         /*
            This part is a bit confusing but it actually ends up working.
@@ -422,23 +414,32 @@ impl RawNetwork {
            get mapped to mapping[HL/2+i] = HL/2+j = j + HL/2 which is exactly correct.
         */
 
-        for i in 0..HL {
-            let j = permute.mapping[i];
-            self.feature_bias[i] = old.feature_bias[j];
+        let bias = self.feature_bias;
+        for (i, &j) in permute.mapping.iter().enumerate() {
+            self.feature_bias[i] = bias[j];
+        }
 
-            for k in 0..KINGS {
-                for p in 0..768 {
-                    self.feature_weights[k][p][i] = old.feature_weights[k][p][j];
+        for bucket in &mut self.feature_weights {
+            for row in bucket {
+                let old = *row;
+                for (i, &j) in permute.mapping.iter().enumerate() {
+                    row[i] = old[j];
                 }
             }
+        }
 
-            for k in 0..TI_INPUTS {
-                self.threat_weights[k][i] = old.threat_weights[k][j];
+        for row in &mut self.threat_weights {
+            let old = *row;
+            for (i, &j) in permute.mapping.iter().enumerate() {
+                row[i] = old[j];
             }
+        }
 
-            for output in 0..OUTPUTS {
-                for l1_idx in 0..L1 {
-                    self.l1_weights[output][l1_idx][i] = old.l1_weights[output][l1_idx][j];
+        for output in &mut self.l1_weights {
+            for row in output {
+                let old = *row;
+                for (i, &j) in permute.mapping.iter().enumerate() {
+                    row[i] = old[j];
                 }
             }
         }
@@ -544,12 +545,12 @@ impl Network {
     }
 
     #[inline(always)]
-    pub fn get_king_bucket(square: Square) -> usize {
-        KING_BUCKET[square as usize]
+    pub fn get_king_bucket(square: Square, side: Color) -> usize {
+        KING_BUCKET[square as usize ^ (side as usize * 56)]
     }
 
     pub fn is_mirrored(square: Square) -> bool {
-        square.file() >= File::E
+        square as usize & 0b100 != 0
     }
 
     pub fn needs_refresh(side: Color, old_king: Square, new_king: Square) -> bool {
@@ -562,8 +563,7 @@ impl Network {
             return true;
         }
 
-        return Self::get_king_bucket(old_king.relative_to(side))
-            != Self::get_king_bucket(new_king.relative_to(side));
+        return Self::get_king_bucket(old_king, side) != Self::get_king_bucket(new_king, side);
     }
 
     pub fn needs_refresh_threat(old_king: Square, new_king: Square) -> bool {

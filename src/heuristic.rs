@@ -41,7 +41,6 @@ pub const NUM_KILLERS: usize = 2;
 pub const LOW_PLY: usize = 6;
 pub const PAWN_HASH: usize = 1 << 10;
 pub const CORR_HASH: usize = 1 << 15;
-pub const POS_CONT_HIST_HASH: usize = 1 << 12;
 // (is_cap, piece, to)
 pub type ContHist = (usize, usize, usize);
 
@@ -73,8 +72,6 @@ pub struct Heuristic {
     cont_corrhist: Box<[[[[PawnCorr; 64]; 12]; 64]; 13]>,
     // [is_cap][colored_piece][from][colored_piece][to]
     cont_hist: Box<[[[[[ContHistory; 64]; 12]; 64]; 13]; 2]>,
-    // [hash ordering][current position ^ position two plies ago][colored_piece][to]
-    pos_cont_hist: Box<[[[[ContHistory; 64]; 12]; POS_CONT_HIST_HASH]; 2]>,
     // lowply for captures
     low_ply_capture_history: Box<[[[[CaptureHistory; 6]; 64]; 12]; LOW_PLY]>,
 }
@@ -135,14 +132,6 @@ impl Heuristic {
             Box::from_raw(raw_ptr as *mut [[[[[ContHistory; 64]; 12]; 64]; 13]; 2])
         };
 
-        let pos_cont_hist = unsafe {
-            let total_elements = 2 * POS_CONT_HIST_HASH * 12 * 64;
-            let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
-                .take(total_elements)
-                .collect();
-            let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
-            Box::from_raw(raw_ptr as *mut [[[[ContHistory; 64]; 12]; POS_CONT_HIST_HASH]; 2])
-        };
         let low_ply_capture_history = Box::new([[[[CaptureHistory::new(); 6]; 64]; 12]; LOW_PLY]);
 
         let mut heuristic = Self {
@@ -161,7 +150,6 @@ impl Heuristic {
             minor_corrhist,
             cont_corrhist,
             cont_hist,
-            pos_cont_hist,
             low_ply_capture_history,
         };
         heuristic.rebuild_lmr();
@@ -199,61 +187,46 @@ impl Heuristic {
     }
 
     pub fn clear(&mut self) {
-        self.main_history = Box::new([[[MainHistory::new(); 64]; 64]; 2]);
-        self.capture_history = Box::new([[[CaptureHistory::new(); 6]; 64]; 12]);
-        self.killer_moves = Box::new([[Move::NULL_MOVE; NUM_KILLERS]; MAX_DEPTH as usize]);
-        self.counter = Box::new([[Move::NULL_MOVE; 64]; 12]);
-        self.low_ply = vec![[[[MainHistory::new(); 64]; 64]; 2]; LOW_PLY]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.pawn = vec![[[PawnHistory::new(); 64]; 12]; PAWN_HASH]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.pawn_corrhist = vec![[PawnCorr::new(); 2]; CORR_HASH]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.white_corrhist = vec![[PawnCorr::new(); 2]; CORR_HASH]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.black_corrhist = vec![[PawnCorr::new(); 2]; CORR_HASH]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.major_corrhist = vec![[PawnCorr::new(); 2]; CORR_HASH]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.minor_corrhist = vec![[PawnCorr::new(); 2]; CORR_HASH]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-        self.cont_corrhist = vec![[[[PawnCorr::new(); 64]; 12]; 64]; 13]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap();
-
-        self.cont_hist = unsafe {
-            let total_elements = 2 * 13 * 64 * 12 * 64;
-            let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
-                .take(total_elements)
-                .collect();
-            let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
-            Box::from_raw(raw_ptr as *mut [[[[[ContHistory; 64]; 12]; 64]; 13]; 2])
-        };
-
-        self.pos_cont_hist = unsafe {
-            let total_elements = 2 * POS_CONT_HIST_HASH * 12 * 64;
-            let flat_vec: Vec<ContHistory> = std::iter::repeat_with(ContHistory::new)
-                .take(total_elements)
-                .collect();
-            let raw_ptr = Box::into_raw(flat_vec.into_boxed_slice());
-            Box::from_raw(raw_ptr as *mut [[[[ContHistory; 64]; 12]; POS_CONT_HIST_HASH]; 2])
-        };
-        self.low_ply_capture_history = Box::new([[[[CaptureHistory::new(); 6]; 64]; 12]; LOW_PLY]);
+        self.main_history
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(MainHistory::new());
+        self.capture_history
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(CaptureHistory::new());
+        self.killer_moves.as_flattened_mut().fill(Move::NULL_MOVE);
+        self.counter.as_flattened_mut().fill(Move::NULL_MOVE);
+        self.low_ply
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(MainHistory::new());
+        self.pawn
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(PawnHistory::new());
+        self.pawn_corrhist.as_flattened_mut().fill(PawnCorr::new());
+        self.white_corrhist.as_flattened_mut().fill(PawnCorr::new());
+        self.black_corrhist.as_flattened_mut().fill(PawnCorr::new());
+        self.major_corrhist.as_flattened_mut().fill(PawnCorr::new());
+        self.minor_corrhist.as_flattened_mut().fill(PawnCorr::new());
+        self.cont_corrhist
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(PawnCorr::new());
+        self.cont_hist
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(ContHistory::new());
+        self.low_ply_capture_history
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(CaptureHistory::new());
     }
 
     #[inline]
@@ -469,36 +442,6 @@ impl Heuristic {
             [m.to as usize][pos.get_captured(m) as usize]
     }
 
-    #[inline]
-    pub fn get_pos_cont_hist(&self, prev: u64, pos: &Board, m: Move) -> &ContHistory {
-        debug_assert!(!m.is_null());
-        let key = pos.correct_hash();
-        &self.pos_cont_hist[(key > prev) as usize][(key ^ prev) as usize % POS_CONT_HIST_HASH]
-            [pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
-    }
-
-    #[inline]
-    fn get_pos_cont_hist_mut(&mut self, prev: u64, pos: &Board, m: Move) -> &mut ContHistory {
-        debug_assert!(!m.is_null());
-        let key = pos.correct_hash();
-        &mut self.pos_cont_hist[(key > prev) as usize][(key ^ prev) as usize % POS_CONT_HIST_HASH]
-            [pos.color_piece_on(m.from).unwrap().index()][m.to as usize]
-    }
-
-    fn add_pos_cont_history(
-        &mut self,
-        pos: &Board,
-        m: Move,
-        stack: &[SearchStack],
-        ss: usize,
-        bonus: i16,
-    ) {
-        let prev = stack[ss - 2].key;
-        if prev != 0 && !stack[ss - 1].m.is_null() && !stack[ss - 2].m.is_null() {
-            self.get_pos_cont_hist_mut(prev, pos, m).add(bonus);
-        }
-    }
-
     pub fn update_tt_history(
         &mut self,
         pos: &Board,
@@ -583,7 +526,6 @@ impl Heuristic {
             }
             self.get_pawn_mut(pos, best_move, pawn_key).add(bonus);
             self.add_cont_history(pos, best_move, stack, ss, bonus);
-            // self.add_pos_cont_history(pos, best_move, stack, ss, bonus);
 
             for m in quiets.iter() {
                 debug_assert!(!m.is_null());
@@ -595,7 +537,6 @@ impl Heuristic {
 
                 self.get_pawn_mut(pos, *m, pawn_key).add(-malus);
                 self.add_cont_history(pos, *m, stack, ss, -malus);
-                // self.add_pos_cont_history(pos, *m, stack, ss, -malus);
             }
 
             let killers = self.get_killers_mut(ply);

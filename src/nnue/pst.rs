@@ -88,7 +88,10 @@ impl FinnyTable {
     }
 
     fn clear(&mut self) {
-        self.entries = unsafe { *Box::new_zeroed().assume_init() };
+        for entry in self.entries.iter_mut().flatten() {
+            entry.bycolor = [[BitBoard::EMPTY; 2]; 2];
+            entry.bypiece = [[BitBoard::EMPTY; 6]; 2];
+        }
     }
 }
 
@@ -146,7 +149,7 @@ impl Pst {
     fn refresh(&mut self, board: &Board, head: usize, side: Color, network: &Box<Network>) {
         // finny table refresh
         let king_sq = board.king(side);
-        let bucket = Network::get_king_bucket(king_sq.relative_to(side));
+        let bucket = Network::get_king_bucket(king_sq, side);
         let mirrored = Network::is_mirrored(king_sq);
 
         let entry = &mut self.finny.entries[mirrored as usize][bucket];

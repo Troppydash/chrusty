@@ -512,12 +512,6 @@ impl Movepick {
                     .get() as i32)
             / 1024;
 
-        // let (prev, last) =
-        //     unsafe { (&*self.stack.add(self.ss - 2), &*self.stack.add(self.ss - 1)) };
-        // if prev.key != 0 && !prev.m.is_null() && !last.m.is_null() {
-        //     score += heuristic.get_pos_cont_hist(prev.key, &self.pos, m).get() as i32 / 2;
-        // }
-
         score
     }
 

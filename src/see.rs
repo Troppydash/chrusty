@@ -5,7 +5,7 @@ use cozy_chess::{
 };
 
 use crate::{
-    ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType::NORMAL},
+    ext::{ColoredPiece, ExtBoard, MoveType::NORMAL},
     spsa::Parameters,
 };
 
@@ -110,7 +110,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
 
         result ^= 1;
 
-        if let mut bb = stm_attackers & pawns
+        if let bb = stm_attackers & pawns
             && !bb.is_empty()
         {
             // TODO: we can also do occ masking
@@ -119,9 +119,10 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
                 break;
             }
 
-            occ ^= bb.pop().bitboard();
+            // TODO: port this to ext
+            occ.0 ^= bb.0 & bb.0.wrapping_neg();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
-        } else if let mut bb = stm_attackers & knights
+        } else if let bb = stm_attackers & knights
             && !bb.is_empty()
         {
             swap = piece_value(Piece::Knight, settings) - swap;
@@ -129,8 +130,8 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
                 break;
             }
 
-            occ ^= bb.pop().bitboard();
-        } else if let mut bb = stm_attackers & bishops
+            occ.0 ^= bb.0 & bb.0.wrapping_neg();
+        } else if let bb = stm_attackers & bishops
             && !bb.is_empty()
         {
             swap = piece_value(Piece::Bishop, settings) - swap;
@@ -138,9 +139,9 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
                 break;
             }
 
-            occ ^= bb.pop().bitboard();
+            occ.0 ^= bb.0 & bb.0.wrapping_neg();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
-        } else if let mut bb = stm_attackers & rooks
+        } else if let bb = stm_attackers & rooks
             && !bb.is_empty()
         {
             swap = piece_value(Piece::Rook, settings) - swap;
@@ -148,7 +149,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
                 break;
             }
 
-            occ ^= bb.pop().bitboard();
+            occ.0 ^= bb.0 & bb.0.wrapping_neg();
             attackers |= get_rook_moves(m.to, occ) & (rooks | queens);
         } else if let bb = stm_attackers & queens
             && !bb.is_empty()
@@ -158,7 +159,7 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
                 break;
             }
 
-            occ ^= bb.next_square().unwrap().bitboard();
+            occ.0 ^= bb.0 & bb.0.wrapping_neg();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
             attackers |= get_rook_moves(m.to, occ) & (rooks | queens);
         } else {
