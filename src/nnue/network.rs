@@ -7,7 +7,7 @@ use std::ops::DerefMut;
 use crate::ext::ColoredPiece;
 use crate::nnue::ti;
 use crate::nnue::ti::FULL_THREATS;
-use crate::nnue::ti::MAX_TI_INPUTS;
+use crate::nnue::ti::MAX_TI_INPUTS_DELTA;
 use crate::nnue::ti::PINNED;
 use crate::nnue::ti::TI_INPUTS;
 use crate::nnue::ti::pawn_pair_index;
@@ -901,8 +901,8 @@ impl Network {
         king_sq: Square,
     ) {
         // Resolve each weight row once, outside the accumulator block loop.
-        let mut adds: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS> = ArrayVec::new();
-        let mut subs: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS> = ArrayVec::new();
+        let mut adds: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS_DELTA> = ArrayVec::new();
+        let mut subs: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS_DELTA> = ArrayVec::new();
         for add in update.adds.iter() {
             match add {
                 ThreatDeltaGeneral::ThreatDelta(add) => {

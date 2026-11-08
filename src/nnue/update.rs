@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use arrayvec::ArrayVec;
 use cozy_chess::{Color, Square};
 
-use crate::{ext::ColoredPiece, nnue::ti::MAX_TI_INPUTS};
+use crate::{ext::ColoredPiece, nnue::ti::MAX_TI_INPUTS_DELTA};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum UpdateType {
@@ -66,7 +66,7 @@ pub enum ThreatDeltaGeneral {
     PPDelta(PPDelta),
 }
 
-pub type ThreatDeltaUpdates = ArrayVec<ThreatDeltaGeneral, MAX_TI_INPUTS>;
+pub type ThreatDeltaUpdates = ArrayVec<ThreatDeltaGeneral, MAX_TI_INPUTS_DELTA>;
 
 #[derive(Clone, Default, Debug)]
 pub struct ThreatUpdate {

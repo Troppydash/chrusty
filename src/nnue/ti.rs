@@ -66,8 +66,9 @@ pub const PINNED: usize = 2 * 12 * 64;
 pub const PP_3WIDE: usize = 96 * 95 / 2;
 pub const TI_INPUTS: usize = FULL_THREATS + PINNED + PP_3WIDE;
 
-// max ti update inputs
-pub const MAX_TI_INPUTS: usize = 96 + 16;
+// conservative bounds
+pub const MAX_TI_INPUTS: usize = 256;
+pub const MAX_TI_INPUTS_DELTA: usize = 96;
 
 fn geometric_attacks(piece: Piece, sq: Square, attacker_is_us: bool) -> BitBoard {
     match piece {
