@@ -10,6 +10,8 @@ use crate::nnue::ti::FULL_THREATS;
 use crate::nnue::ti::MAX_TI_INPUTS;
 use crate::nnue::ti::PINNED;
 use crate::nnue::ti::TI_INPUTS;
+use crate::nnue::ti::pawn_pair_index;
+use crate::nnue::update::PPDelta;
 use crate::nnue::update::PinnedDelta;
 use crate::nnue::update::ThreatDelta;
 use crate::nnue::update::ThreatDeltaGeneral;
@@ -615,13 +617,8 @@ impl Network {
         &self.pst_weights[KING_BUCKET[king_sq as usize ^ (side as usize * 56)]][index768]
     }
 
-    fn threat_feature_lookup_index_from_threat(
-        &self,
-        king_sq: Square,
-        side: Color,
-        delta: &ThreatDelta,
-    ) -> i32 {
-        self.threat_feature_lookup_index(
+    fn threat_index_from_delta(&self, king_sq: Square, side: Color, delta: &ThreatDelta) -> i32 {
+        self.threat_index(
             king_sq,
             side,
             delta.attacker.color,
@@ -633,7 +630,7 @@ impl Network {
         )
     }
 
-    pub fn threat_feature_lookup_index(
+    pub fn threat_index(
         &self,
         king_sq: Square,
         side: Color,
@@ -684,7 +681,7 @@ impl Network {
             })
     }
 
-    pub fn threat_pinned_index_from_threat(
+    pub fn threat_pinned_index_from_delta(
         &self,
         king_sq: Square,
         side: Color,
@@ -697,6 +694,34 @@ impl Network {
             delta.piece,
             delta.square,
         )
+    }
+
+    pub fn threat_pp_index(
+        &self,
+        king_sq: Square,
+        side: Color,
+        pawn1: (Color, Square),
+        pawn2: (Color, Square),
+    ) -> usize {
+        let flip = Self::flip_mask(king_sq, side);
+
+        let index = pawn_pair_index(
+            (pawn1.0 != side) as usize,
+            pawn1.1 as usize ^ flip,
+            (pawn2.0 != side) as usize,
+            pawn2.1 as usize ^ flip,
+        );
+
+        FULL_THREATS + PINNED + index
+    }
+
+    pub fn threat_pp_index_from_delta(
+        &self,
+        king_sq: Square,
+        side: Color,
+        delta: &PPDelta,
+    ) -> usize {
+        self.threat_pp_index(king_sq, side, delta.pawn1, delta.pawn2)
     }
 
     pub fn apply_update(
@@ -881,7 +906,7 @@ impl Network {
         for add in update.adds.iter() {
             match add {
                 ThreatDeltaGeneral::ThreatDelta(add) => {
-                    let i = self.threat_feature_lookup_index_from_threat(king_sq, side, add);
+                    let i = self.threat_index_from_delta(king_sq, side, add);
                     if i >= 0 {
                         adds.push(&self.threat_weights[i as usize]);
                     }
@@ -889,7 +914,12 @@ impl Network {
                 ThreatDeltaGeneral::PinnedDelta(add) => {
                     adds.push(
                         &self.threat_weights
-                            [self.threat_pinned_index_from_threat(king_sq, side, add)],
+                            [self.threat_pinned_index_from_delta(king_sq, side, add)],
+                    );
+                }
+                ThreatDeltaGeneral::PPDelta(add) => {
+                    adds.push(
+                        &self.threat_weights[self.threat_pp_index_from_delta(king_sq, side, add)],
                     );
                 }
             }
@@ -897,7 +927,7 @@ impl Network {
         for sub in update.subs.iter() {
             match sub {
                 ThreatDeltaGeneral::ThreatDelta(sub) => {
-                    let i = self.threat_feature_lookup_index_from_threat(king_sq, side, sub);
+                    let i = self.threat_index_from_delta(king_sq, side, sub);
                     if i >= 0 {
                         subs.push(&self.threat_weights[i as usize]);
                     }
@@ -905,7 +935,12 @@ impl Network {
                 ThreatDeltaGeneral::PinnedDelta(sub) => {
                     subs.push(
                         &self.threat_weights
-                            [self.threat_pinned_index_from_threat(king_sq, side, sub)],
+                            [self.threat_pinned_index_from_delta(king_sq, side, sub)],
+                    );
+                }
+                ThreatDeltaGeneral::PPDelta(sub) => {
+                    subs.push(
+                        &self.threat_weights[self.threat_pp_index_from_delta(king_sq, side, sub)],
                     );
                 }
             }

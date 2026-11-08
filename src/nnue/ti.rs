@@ -63,8 +63,11 @@ const HALF_THREATS: usize = half_size();
 const THREATS: usize = 2 * HALF_THREATS;
 pub const FULL_THREATS: usize = 2 * THREATS;
 pub const PINNED: usize = 2 * 12 * 64;
-pub const TI_INPUTS: usize = FULL_THREATS + PINNED;
-pub const MAX_TI_INPUTS: usize = 96;
+pub const PP_3WIDE: usize = 96 * 95 / 2;
+pub const TI_INPUTS: usize = FULL_THREATS + PINNED + PP_3WIDE;
+
+// max ti update inputs
+pub const MAX_TI_INPUTS: usize = 96 + 16;
 
 fn geometric_attacks(piece: Piece, sq: Square, attacker_is_us: bool) -> BitBoard {
     match piece {
@@ -195,4 +198,41 @@ pub fn threat_feature_index(
 #[inline]
 pub const fn is_feature(attacker: Piece, target: Piece) -> bool {
     TARGET_MAP[attacker as usize][target as usize] >= 0
+}
+
+pub const fn pawn_mask3(square: Square) -> BitBoard {
+    const LINE: u64 = 0x101010101010101;
+    const PER_FILE: [u64; 8] = {
+        let mut files = [0; 8];
+
+        let mut file = 0;
+        while file < 8 {
+            let mut mask = 0;
+            mask |= LINE << file;
+
+            if file > 0 {
+                mask |= LINE << (file - 1);
+            }
+
+            if file < 7 {
+                mask |= LINE << (file + 1);
+            }
+
+            files[file] = mask;
+            file += 1;
+        }
+
+        files
+    };
+
+    BitBoard(PER_FILE[square.file() as usize])
+}
+
+// note that this is not a dense index, colors are relative to acc
+#[inline(always)]
+pub fn pawn_pair_index(color1: usize, sq1: usize, color2: usize, sq2: usize) -> usize {
+    let a = color1 * 48 + sq1 - 8;
+    let b = color2 * 48 + sq2 - 8;
+    let (lo, hi) = (a.min(b), a.max(b));
+    hi * (hi - 1) / 2 + lo
 }

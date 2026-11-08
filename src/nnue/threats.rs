@@ -1,4 +1,4 @@
-use std::arch::x86_64::*;
+use std::{arch::x86_64::*, ops::Sub};
 
 use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
@@ -7,8 +7,10 @@ use crate::{
     ext::{BitBoardExt, ColoredPiece, ExtBoard, MoveType},
     nnue::{
         network::{Aligned, HL, Network},
-        ti::{self, MAX_TI_INPUTS},
-        update::{PinnedDelta, ThreatDelta, ThreatDeltaGeneral, ThreatDeltaUpdates, ThreatUpdate},
+        ti::{self, MAX_TI_INPUTS, pawn_mask3},
+        update::{
+            PPDelta, PinnedDelta, ThreatDelta, ThreatDeltaGeneral, ThreatDeltaUpdates, ThreatUpdate,
+        },
     },
     param::MAX_DEPTH_USIZE,
 };
@@ -224,6 +226,35 @@ impl Threats {
         }
     }
 
+    fn record_pp3wide(
+        board: &Board,
+        c: Color,
+        sq: Square,
+        exclude: BitBoard,
+        out: &mut ThreatDeltaUpdates,
+    ) {
+        let pawns = [
+            board
+                .colored_pieces(Color::White, Piece::Pawn)
+                .sub(exclude)
+                .sub(sq.bitboard()),
+            board
+                .colored_pieces(Color::Black, Piece::Pawn)
+                .sub(exclude)
+                .sub(sq.bitboard()),
+        ];
+
+        let mask = pawn_mask3(sq);
+        for (color, pawns) in Color::ALL.into_iter().zip(pawns.into_iter()) {
+            for pawn in pawns & mask {
+                out.push(ThreatDeltaGeneral::PPDelta(PPDelta {
+                    pawn1: (c, sq),
+                    pawn2: (color, pawn),
+                }));
+            }
+        }
+    }
+
     fn get_threat_update(board: &Board, new_board: &Board, m: Move, threats: &mut ThreatUpdate) {
         match board.move_type(m) {
             MoveType::NORMAL | MoveType::PROMOTION => {
@@ -374,6 +405,76 @@ impl Threats {
                     }))
             }
         }
+
+        // pp 3wide updates
+        match board.move_type(m) {
+            MoveType::CASTLE => {}
+            MoveType::NORMAL => {
+                // if pawn moved
+                if matches!(board.piece_on(m.from), Some(Piece::Pawn)) {
+                    Self::record_pp3wide(
+                        board,
+                        board.side_to_move(),
+                        m.from,
+                        BitBoard::EMPTY,
+                        &mut threats.subs,
+                    );
+                    Self::record_pp3wide(
+                        new_board,
+                        board.side_to_move(),
+                        m.to,
+                        BitBoard::EMPTY,
+                        &mut threats.adds,
+                    );
+                }
+
+                // if captured pawn. I think the from exclude works even if captured by a pawn
+                if matches!(board.piece_on(m.to), Some(Piece::Pawn)) {
+                    Self::record_pp3wide(
+                        board,
+                        !board.side_to_move(),
+                        m.to,
+                        m.from.bitboard(),
+                        &mut threats.subs,
+                    );
+                }
+            }
+            MoveType::PROMOTION => {
+                Self::record_pp3wide(
+                    board,
+                    board.side_to_move(),
+                    m.from,
+                    BitBoard::EMPTY,
+                    &mut threats.subs,
+                );
+            }
+            MoveType::ENPASSENT => {
+                Self::record_pp3wide(
+                    board,
+                    board.side_to_move(),
+                    m.from,
+                    BitBoard::EMPTY,
+                    &mut threats.subs,
+                );
+                Self::record_pp3wide(
+                    new_board,
+                    board.side_to_move(),
+                    m.to,
+                    BitBoard::EMPTY,
+                    &mut threats.adds,
+                );
+
+                let ep_square = board.ep_capture_square().unwrap();
+                Self::record_pp3wide(
+                    board,
+                    !board.side_to_move(),
+                    ep_square,
+                    m.from.bitboard(),
+                    &mut threats.subs,
+                );
+            }
+            MoveType::NONE => panic!(),
+        }
     }
 
     pub fn unmake_move(&mut self) {
@@ -399,7 +500,7 @@ impl Threats {
 
             for sq2 in occ & !board.pieces(Piece::King) & attacks {
                 let piece2 = board.color_piece_on(sq2).unwrap();
-                let i = network.threat_feature_lookup_index(
+                let i = network.threat_index(
                     board.king(side),
                     side,
                     piece1.color,
@@ -436,6 +537,22 @@ impl Threats {
                 board.color_piece_on(square).unwrap(),
                 square,
             ));
+        }
+
+        // pp3wide features
+        let mut pawns = board.pieces(Piece::Pawn);
+        while let Some(square1) = pawns.next_square() {
+            pawns ^= square1.bitboard();
+            
+            let mask = pawn_mask3(square1);
+            for square2 in mask & pawns & !square1.bitboard() {
+                adds.push(network.threat_pp_index(
+                    board.king(side),
+                    side,
+                    (board.color_on(square1).unwrap(), square1),
+                    (board.color_on(square2).unwrap(), square2),
+                ));
+            }
         }
 
         unsafe {

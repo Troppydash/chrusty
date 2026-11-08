@@ -54,9 +54,16 @@ pub struct PinnedDelta {
 }
 
 #[derive(Debug, Clone)]
+pub struct PPDelta {
+    pub pawn1: (Color, Square),
+    pub pawn2: (Color, Square),
+}
+
+#[derive(Debug, Clone)]
 pub enum ThreatDeltaGeneral {
     ThreatDelta(ThreatDelta),
     PinnedDelta(PinnedDelta),
+    PPDelta(PPDelta),
 }
 
 pub type ThreatDeltaUpdates = ArrayVec<ThreatDeltaGeneral, MAX_TI_INPUTS>;
