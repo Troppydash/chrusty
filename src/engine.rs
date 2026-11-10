@@ -82,6 +82,7 @@ pub struct Engine {
     prev_score: Option<i16>,
     tb_hits: i64,
     startpos: Board,
+    root_depth: i8,
     // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
     // TODO: accesing the entire timer via RwLock is expensive
@@ -103,6 +104,7 @@ impl Engine {
             prev_score: None,
             tb_hits: 0,
             startpos: Board::startpos(),
+            root_depth: 0,
             root_moves: vec![].into_boxed_slice(),
             timer,
             table,
@@ -775,14 +777,14 @@ impl Engine {
                 && ply as i32 >= self.stack[0].nmp_min_ply
                 && !has_excluded
                 && material >= self.settings.p_nmp_material
+                && pos.has_non_pawns(pos.side_to_move())
                 && !self.stack[ss - 1].m.is_null()
                 && is_valid(tt_static)
                 && !is_loss(beta)
                 && tt_static as i32
                     >= beta as i32
                         + (self.settings.p_nmp_margin
-                            - self.settings.p_nmp_margin_depth * depth as i32
-                            + self.settings.p_nmp_margin_pv * is_pv as i32)
+                            - self.settings.p_nmp_margin_depth * depth as i32)
                             .max(1)
                 && self.stack[ss].adjusted_static >= beta
             {
@@ -1291,7 +1293,7 @@ impl Engine {
                             best_move,
                             ply,
                             depth,
-                            FLAG_ALPHA,
+                            FLAG_BETA,
                             best_score,
                             unadjusted_static,
                             self.stack[ss].tt_pv,
@@ -1475,7 +1477,7 @@ impl Engine {
             + 3 * pos.pieces(Piece::Knight).len()
             + 2 * pos.pieces(Piece::Pawn).len();
 
-        let correction = (correction as f32 * (stage as f32 + 100.0) / 100.0) as i32;
+        let correction = correction * (stage as i32 + 100) / 100;
         (static_score as i32 + correction).clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16
     }
 
@@ -1576,6 +1578,7 @@ impl Engine {
             loop {
                 assert!(alpha < beta, "alpha beta invariance {} {}", alpha, beta);
                 let reduced_depth = (depth - fail_highs).max(1);
+                self.root_depth = reduced_depth;
                 let score =
                     self.negamax(&pos, alpha, beta, reduced_depth, SS_SIZE_PRE, true, false);
                 self.sort_root_moves();

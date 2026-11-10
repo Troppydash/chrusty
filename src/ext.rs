@@ -200,6 +200,8 @@ pub trait ExtBoard {
     fn opp_pinned(&self) -> BitBoard;
     fn pinners(&self) -> BitBoard;
     fn new_hash(&self, m: Move) -> u64;
+
+    fn piece_select(&self, pred: impl Fn(Piece) -> bool) -> BitBoard;
 }
 
 impl ExtBoard for Board {
@@ -361,10 +363,12 @@ impl ExtBoard for Board {
         return false;
     }
 
+    #[inline]
     fn has_non_pawns(&self, side: Color) -> bool {
         self.colors(side) != (self.colored_pieces(side, King) | self.colored_pieces(side, Pawn))
     }
 
+    #[inline]
     fn material(&self, settings: &Parameters) -> i32 {
         settings.piece_value(Piece::Pawn) * self.pieces(Piece::Pawn).len() as i32
             + settings.piece_value(Piece::Knight) * self.pieces(Piece::Knight).len() as i32
@@ -389,10 +393,12 @@ impl ExtBoard for Board {
         }
     }
 
+    #[inline]
     fn by_color(&self) -> [BitBoard; 2] {
         [self.colors(Color::White), self.colors(Color::Black)]
     }
 
+    #[inline]
     fn by_piece(&self) -> [BitBoard; 6] {
         [
             self.pieces(Piece::Pawn),
@@ -404,13 +410,23 @@ impl ExtBoard for Board {
         ]
     }
 
+    #[inline]
     fn color_piece_on(&self, square: Square) -> Option<ColoredPiece> {
         if !self.occupied().has(square) {
             None
         } else {
-            let color = self.color_on(square).unwrap();
-            let piece = self.piece_on(square).unwrap();
-            Some(ColoredPiece::new(color, piece))
+            // branchless
+            let s = square as u32;
+            let bit = |bb: BitBoard| ((bb.0 >> s) & 1) as usize;
+            let p = bit(self.pieces(Piece::Knight))
+                + 2 * bit(self.pieces(Piece::Bishop))
+                + 3 * bit(self.pieces(Piece::Rook))
+                + 4 * bit(self.pieces(Piece::Queen))
+                + 5 * bit(self.pieces(Piece::King));
+            Some(ColoredPiece::new(
+                Color::index(bit(self.colors(Color::Black))),
+                Piece::index(p),
+            ))
         }
     }
 
@@ -539,6 +555,23 @@ impl ExtBoard for Board {
         }
 
         hash ^ ZOBRIST.black_to_move
+    }
+
+    #[inline(always)]
+    fn piece_select(&self, pred: impl Fn(Piece) -> bool) -> BitBoard {
+        let mut out = BitBoard::EMPTY;
+        for t in [
+            Piece::Pawn,
+            Piece::Knight,
+            Piece::Bishop,
+            Piece::Rook,
+            Piece::Queen,
+        ] {
+            if pred(t) {
+                out |= self.pieces(t);
+            }
+        }
+        out
     }
 }
 

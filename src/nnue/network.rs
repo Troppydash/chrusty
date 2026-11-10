@@ -892,33 +892,35 @@ impl Network {
         }
     }
 
-    pub fn threat_apply_update(
-        &self,
+    pub fn threat_apply_update<'a>(
+        &'a self,
         next: &mut Aligned<i16, HL>,
         base: &Aligned<i16, HL>,
         update: &ThreatUpdate,
         side: Color,
         king_sq: Square,
+        adds_weights: &mut ArrayVec<&'a Aligned<i8, HL>, MAX_TI_INPUTS_DELTA>,
+        subs_weights: &mut ArrayVec<&'a Aligned<i8, HL>, MAX_TI_INPUTS_DELTA>,
     ) {
         // Resolve each weight row once, outside the accumulator block loop.
-        let mut adds: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS_DELTA> = ArrayVec::new();
-        let mut subs: ArrayVec<&Aligned<i8, HL>, MAX_TI_INPUTS_DELTA> = ArrayVec::new();
+        adds_weights.clear();
+        subs_weights.clear();
         for add in update.adds.iter() {
             match add {
                 ThreatDeltaGeneral::ThreatDelta(add) => {
                     let i = self.threat_index_from_delta(king_sq, side, add);
                     if i >= 0 {
-                        adds.push(&self.threat_weights[i as usize]);
+                        adds_weights.push(&self.threat_weights[i as usize]);
                     }
                 }
                 ThreatDeltaGeneral::PinnedDelta(add) => {
-                    adds.push(
+                    adds_weights.push(
                         &self.threat_weights
                             [self.threat_pinned_index_from_delta(king_sq, side, add)],
                     );
                 }
                 ThreatDeltaGeneral::PPDelta(add) => {
-                    adds.push(
+                    adds_weights.push(
                         &self.threat_weights[self.threat_pp_index_from_delta(king_sq, side, add)],
                     );
                 }
@@ -929,17 +931,17 @@ impl Network {
                 ThreatDeltaGeneral::ThreatDelta(sub) => {
                     let i = self.threat_index_from_delta(king_sq, side, sub);
                     if i >= 0 {
-                        subs.push(&self.threat_weights[i as usize]);
+                        subs_weights.push(&self.threat_weights[i as usize]);
                     }
                 }
                 ThreatDeltaGeneral::PinnedDelta(sub) => {
-                    subs.push(
+                    subs_weights.push(
                         &self.threat_weights
                             [self.threat_pinned_index_from_delta(king_sq, side, sub)],
                     );
                 }
                 ThreatDeltaGeneral::PPDelta(sub) => {
-                    subs.push(
+                    subs_weights.push(
                         &self.threat_weights[self.threat_pp_index_from_delta(king_sq, side, sub)],
                     );
                 }
@@ -955,9 +957,9 @@ impl Network {
 
                 let mut add_idx = 0;
                 let mut sub_idx = 0;
-                while add_idx < adds.len() && sub_idx < subs.len() {
-                    let add = adds[add_idx].as_ptr().add(i);
-                    let sub = subs[sub_idx].as_ptr().add(i);
+                while add_idx < adds_weights.len() && sub_idx < subs_weights.len() {
+                    let add = adds_weights[add_idx].as_ptr().add(i);
+                    let sub = subs_weights[sub_idx].as_ptr().add(i);
                     for k in 0..8 {
                         acc[k] = _mm512_add_epi16(
                             acc[k],
@@ -972,8 +974,8 @@ impl Network {
                     sub_idx += 1;
                 }
 
-                while add_idx < adds.len() {
-                    let add = adds[add_idx].as_ptr().add(i);
+                while add_idx < adds_weights.len() {
+                    let add = adds_weights[add_idx].as_ptr().add(i);
                     for k in 0..8 {
                         acc[k] = _mm512_add_epi16(
                             acc[k],
@@ -983,8 +985,8 @@ impl Network {
                     add_idx += 1;
                 }
 
-                while sub_idx < subs.len() {
-                    let sub = subs[sub_idx].as_ptr().add(i);
+                while sub_idx < subs_weights.len() {
+                    let sub = subs_weights[sub_idx].as_ptr().add(i);
                     for k in 0..8 {
                         acc[k] = _mm512_sub_epi16(
                             acc[k],

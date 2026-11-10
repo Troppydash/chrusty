@@ -79,7 +79,7 @@ impl Timer {
         let moves_left = 40;
         let time_left = (time + inc * (moves_left - 1) - overhead * (2 * moves_left)).max(10);
         let opt_scale = f64::min(
-            1.0 / (moves_left as f64),
+            1.0 / 30.0,
             0.21 * time as f64 / time_left as f64,
         );
         let opt_time = i64::max(10, (opt_scale * time_left as f64) as i64);

@@ -129,7 +129,6 @@ impl Threats {
 
         let occ = board.occupied();
 
-        let pawn = cozy_chess::get_pawn_attacks(sq, piece.color);
         let knight = cozy_chess::get_knight_moves(sq);
         let bishop = cozy_chess::get_bishop_moves(sq, occ);
         let rook = cozy_chess::get_rook_moves(sq, occ);
@@ -137,39 +136,44 @@ impl Threats {
 
         // remove outgoing
         let attacks = match piece.piece {
-            Piece::Pawn => pawn,
+            Piece::Pawn => cozy_chess::get_pawn_attacks(sq, piece.color),
             Piece::Knight => knight,
             Piece::Bishop => bishop,
             Piece::Rook => rook,
             Piece::Queen => queen,
             Piece::King => unreachable!(),
         };
-        for target_sq in attacks & occ & mask & !(board.pieces(Piece::King)) {
-            let piece2: ColoredPiece = board.color_piece_on(target_sq).unwrap();
-            if !ti::is_feature(piece.piece, piece2.piece) {
-                continue;
-            }
+
+        let targets = board.piece_select(|t| ti::is_feature(piece.piece, t));
+        for target_sq in attacks & targets & mask {
+            let piece2 = board.color_piece_on(target_sq).unwrap();
             out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
                 piece, sq, piece2, target_sq,
             )));
         }
 
-        // remove incoming
-        let incoming_pawns = (cozy_chess::get_pawn_attacks(sq, Color::Black)
-            & board.colored_pieces(Color::White, Piece::Pawn))
-            | (cozy_chess::get_pawn_attacks(sq, Color::White)
-                & board.colored_pieces(Color::Black, Piece::Pawn));
-        let incoming = incoming_pawns
-            | (knight & board.pieces(Piece::Knight))
-            | (bishop & board.pieces(Piece::Bishop))
-            | (rook & board.pieces(Piece::Rook))
-            | (queen & board.pieces(Piece::Queen));
-
-        for in_sq in incoming & occ & mask {
-            let in_piece = board.color_piece_on(in_sq).unwrap();
-            if !ti::is_feature(in_piece.piece, piece.piece) {
-                continue;
+        // remove incoming, prefiltered to attacker types that form a feature with [piece]
+        let ok = |a: Piece| -> BitBoard {
+            if ti::is_feature(a, piece.piece) {
+                board.pieces(a)
+            } else {
+                BitBoard::EMPTY
             }
+        };
+        let pawn_ok = ok(Piece::Pawn);
+        let incoming_pawns =
+            (cozy_chess::get_pawn_attacks(sq, Color::Black) & board.colors(Color::White) & pawn_ok)
+                | (cozy_chess::get_pawn_attacks(sq, Color::White)
+                    & board.colors(Color::Black)
+                    & pawn_ok);
+        let incoming = incoming_pawns
+            | (knight & ok(Piece::Knight))
+            | (bishop & ok(Piece::Bishop))
+            | (rook & ok(Piece::Rook))
+            | (queen & ok(Piece::Queen));
+
+        for in_sq in incoming & mask {
+            let in_piece = board.color_piece_on(in_sq).unwrap();
             out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
                 in_piece, in_sq, piece, sq,
             )));
@@ -185,31 +189,32 @@ impl Threats {
         ignored_dir: usize,
     ) {
         let occ = new_board.occupied();
-
-        let types = [
-            new_board.pieces(Piece::Rook) | new_board.pieces(Piece::Queen),
-            new_board.pieces(Piece::Bishop) | new_board.pieces(Piece::Queen),
-            new_board.pieces(Piece::Rook) | new_board.pieces(Piece::Queen),
-            new_board.pieces(Piece::Bishop) | new_board.pieces(Piece::Queen),
-        ];
+        let queens = new_board.pieces(Piece::Queen);
+        let rq = new_board.pieces(Piece::Rook) | queens;
+        let bq = new_board.pieces(Piece::Bishop) | queens;
+        let skip = new_board.pieces(Piece::King) | ignore_sq;
 
         for dir in 0..4 {
             if dir == ignored_dir {
                 continue;
             }
-            let line = get_line(vacated_sq, dir) & occ;
-            let ty = types[dir];
-            if let Some((a, b)) = line.pop2(vacated_sq as usize) {
-                let pa = new_board.color_piece_on(a).unwrap();
-                let pb = new_board.color_piece_on(b).unwrap();
 
-                if pa.piece == Piece::King
-                    || pb.piece == Piece::King
-                    || ignore_sq.has(a)
-                    || ignore_sq.has(b)
-                {
+            let ty = if dir & 1 == 0 { rq } else { bq };
+            let line = get_line(vacated_sq, dir) & occ;
+
+            // no slider of the right kind anywhere on the line: nothing to discover
+            if (line & ty).is_empty() {
+                continue;
+            }
+
+            if let Some((a, b)) = line.pop2(vacated_sq as usize) {
+                let ends = a.bitboard() | b.bitboard();
+                if !(ends & skip).is_empty() || (ends & ty).is_empty() {
                     continue;
                 }
+
+                let pa = new_board.color_piece_on(a).unwrap();
+                let pb = new_board.color_piece_on(b).unwrap();
 
                 if ty.has(a) && ti::is_feature(pa.piece, pb.piece) {
                     out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
@@ -543,7 +548,7 @@ impl Threats {
         let mut pawns = board.pieces(Piece::Pawn);
         while let Some(square1) = pawns.next_square() {
             pawns ^= square1.bitboard();
-            
+
             let mask = pawn_mask3(square1);
             for square2 in mask & pawns & !square1.bitboard() {
                 adds.push(network.threat_pp_index(
@@ -613,6 +618,9 @@ impl Threats {
                 }
 
                 if self.side[base].is_clean[side as usize] {
+                    let mut adds = ArrayVec::new();
+                    let mut subs = ArrayVec::new();
+
                     for i in base + 1..=head {
                         let (base, next) = self.side.split_at_mut(i);
                         // materialized threat update
@@ -626,6 +634,8 @@ impl Threats {
                             &next[0].update,
                             side,
                             board.king(side),
+                            &mut adds,
+                            &mut subs,
                         );
                         next[0].is_clean[side as usize] = true;
                     }
