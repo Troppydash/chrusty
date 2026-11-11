@@ -15,3 +15,7 @@ scripts/sort.sh
 misc/
 
 docs/
+
+*.md
+
+target-pgo/

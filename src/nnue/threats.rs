@@ -1,4 +1,4 @@
-use std::{arch::x86_64::*, ops::Sub};
+use std::ops::Sub;
 
 use arrayvec::ArrayVec;
 use cozy_chess::{BitBoard, Board, Color, Move, Piece, Square};
@@ -8,9 +8,7 @@ use crate::{
     nnue::{
         network::{Aligned, HL, Network},
         ti::{self, MAX_TI_INPUTS, pawn_mask3},
-        update::{
-            PPDelta, PinnedDelta, ThreatDelta, ThreatDeltaGeneral, ThreatDeltaUpdates, ThreatUpdate,
-        },
+        update::{ThreatRows, ThreatUpdate},
     },
     param::MAX_DEPTH_USIZE,
 };
@@ -121,7 +119,7 @@ impl Threats {
         acc.pending = Some((board.clone(), new_board.clone(), m));
     }
 
-    fn record_sq_inout(board: &Board, sq: Square, mask: BitBoard, out: &mut ThreatDeltaUpdates) {
+    fn record_sq_inout(board: &Board, sq: Square, mask: BitBoard, out: &mut ThreatRows) {
         let piece = board.color_piece_on(sq).unwrap();
         if piece.piece == Piece::King {
             return;
@@ -147,9 +145,7 @@ impl Threats {
         let targets = board.piece_select(|t| ti::is_feature(piece.piece, t));
         for target_sq in attacks & targets & mask {
             let piece2 = board.color_piece_on(target_sq).unwrap();
-            out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
-                piece, sq, piece2, target_sq,
-            )));
+            out.push_threat(piece, sq, piece2, target_sq);
         }
 
         // remove incoming, prefiltered to attacker types that form a feature with [piece]
@@ -174,9 +170,7 @@ impl Threats {
 
         for in_sq in incoming & mask {
             let in_piece = board.color_piece_on(in_sq).unwrap();
-            out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
-                in_piece, in_sq, piece, sq,
-            )));
+            out.push_threat(in_piece, in_sq, piece, sq);
         }
     }
 
@@ -185,7 +179,7 @@ impl Threats {
         new_board: &Board,
         vacated_sq: Square,
         ignore_sq: BitBoard,
-        out: &mut ThreatDeltaUpdates,
+        out: &mut ThreatRows,
         ignored_dir: usize,
     ) {
         let occ = new_board.occupied();
@@ -217,15 +211,11 @@ impl Threats {
                 let pb = new_board.color_piece_on(b).unwrap();
 
                 if ty.has(a) && ti::is_feature(pa.piece, pb.piece) {
-                    out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
-                        pa, a, pb, b,
-                    )));
+                    out.push_threat(pa, a, pb, b);
                 }
 
                 if ty.has(b) && ti::is_feature(pb.piece, pa.piece) {
-                    out.push(ThreatDeltaGeneral::ThreatDelta(ThreatDelta::new(
-                        pb, b, pa, a,
-                    )));
+                    out.push_threat(pb, b, pa, a);
                 }
             }
         }
@@ -236,7 +226,7 @@ impl Threats {
         c: Color,
         sq: Square,
         exclude: BitBoard,
-        out: &mut ThreatDeltaUpdates,
+        out: &mut ThreatRows,
     ) {
         let pawns = [
             board
@@ -252,10 +242,7 @@ impl Threats {
         let mask = pawn_mask3(sq);
         for (color, pawns) in Color::ALL.into_iter().zip(pawns.into_iter()) {
             for pawn in pawns & mask {
-                out.push(ThreatDeltaGeneral::PPDelta(PPDelta {
-                    pawn1: (c, sq),
-                    pawn2: (color, pawn),
-                }));
+                out.push_pp((c, sq), (color, pawn));
             }
         }
     }
@@ -357,23 +344,19 @@ impl Threats {
             }
 
             for square in removed {
-                threats
-                    .subs
-                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
-                        piece: board.color_piece_on(square).unwrap(),
-                        square,
-                        pinned_king_color: board.side_to_move(),
-                    }))
+                threats.subs.push_pinned(
+                    board.color_piece_on(square).unwrap(),
+                    square,
+                    board.side_to_move(),
+                );
             }
 
             for square in added {
-                threats
-                    .adds
-                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
-                        piece: new_board.color_piece_on(square).unwrap(),
-                        square,
-                        pinned_king_color: board.side_to_move(),
-                    }))
+                threats.adds.push_pinned(
+                    new_board.color_piece_on(square).unwrap(),
+                    square,
+                    board.side_to_move(),
+                );
             }
         }
 
@@ -391,23 +374,19 @@ impl Threats {
             }
 
             for square in removed {
-                threats
-                    .subs
-                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
-                        piece: board.color_piece_on(square).unwrap(),
-                        square,
-                        pinned_king_color: !board.side_to_move(),
-                    }))
+                threats.subs.push_pinned(
+                    board.color_piece_on(square).unwrap(),
+                    square,
+                    !board.side_to_move(),
+                );
             }
 
             for square in added {
-                threats
-                    .adds
-                    .push(ThreatDeltaGeneral::PinnedDelta(PinnedDelta {
-                        piece: new_board.color_piece_on(square).unwrap(),
-                        square,
-                        pinned_king_color: !board.side_to_move(),
-                    }))
+                threats.adds.push_pinned(
+                    new_board.color_piece_on(square).unwrap(),
+                    square,
+                    !board.side_to_move(),
+                );
             }
         }
 
@@ -487,7 +466,7 @@ impl Threats {
     }
 
     fn refresh(&mut self, side: Color, head: usize, board: &Board, network: &Box<Network>) {
-        let mut adds: ArrayVec<usize, MAX_TI_INPUTS> = ArrayVec::new();
+        let mut adds: ArrayVec<u32, MAX_TI_INPUTS> = ArrayVec::new();
         let occ = board.occupied();
         for sq1 in occ & !board.pieces(Piece::King) {
             let piece1 = board.color_piece_on(sq1).unwrap();
@@ -516,7 +495,7 @@ impl Threats {
                     sq2,
                 );
                 if i >= 0 {
-                    adds.push(i as usize);
+                    adds.push(i as u32);
                 }
             }
         }
@@ -530,7 +509,7 @@ impl Threats {
                 side == board.side_to_move(),
                 board.color_piece_on(square).unwrap(),
                 square,
-            ));
+            ) as u32);
         }
 
         // board ntm
@@ -541,7 +520,7 @@ impl Threats {
                 side != board.side_to_move(),
                 board.color_piece_on(square).unwrap(),
                 square,
-            ));
+            ) as u32);
         }
 
         // pp3wide features
@@ -556,46 +535,17 @@ impl Threats {
                     side,
                     (board.color_on(square1).unwrap(), square1),
                     (board.color_on(square2).unwrap(), square2),
-                ));
+                ) as u32);
             }
         }
 
         unsafe {
-            let out = self.side[head].vals[side as usize].as_mut_ptr();
-            for i in (0..HL).step_by(32 * 8) {
-                let mut acc = [_mm512_setzero_si512(); 8];
-                let mut add_idx = 0;
-
-                while add_idx + 1 < adds.len() {
-                    let add1 = network.threat_weights[adds[add_idx]].as_ptr().add(i);
-                    let add2 = network.threat_weights[adds[add_idx + 1]].as_ptr().add(i);
-                    for k in 0..8 {
-                        acc[k] = _mm512_add_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(add1.add(k * 32) as *const __m256i)),
-                        );
-                        acc[k] = _mm512_add_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(add2.add(k * 32) as *const __m256i)),
-                        );
-                    }
-                    add_idx += 2;
-                }
-
-                while add_idx < adds.len() {
-                    let add = network.threat_weights[adds[add_idx]].as_ptr().add(i);
-                    for k in 0..8 {
-                        acc[k] = _mm512_add_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(add.add(k * 32) as *const __m256i)),
-                        );
-                    }
-                    add_idx += 1;
-                }
-                for k in 0..8 {
-                    *(out.add(i + k * 32) as *mut __m512i) = acc[k];
-                }
-            }
+            network.threat_accumulate(
+                self.side[head].vals[side as usize].as_mut_ptr(),
+                std::ptr::null(),
+                &adds,
+                &[],
+            );
         }
 
         self.side[head].is_clean[side as usize] = true;
@@ -618,29 +568,28 @@ impl Threats {
                 }
 
                 if self.side[base].is_clean[side as usize] {
-                    let mut adds = ArrayVec::new();
-                    let mut subs = ArrayVec::new();
+                    // lazy update first to prefetch
+                    for acc in &mut self.side[base + 1..=head] {
+                        // note that acc.pending is shared for both sides
+                        if let Some((old_board, new_board, m)) = acc.pending.take() {
+                            acc.update.reset(acc.king_sq, network);
+                            Self::get_threat_update(&old_board, &new_board, m, &mut acc.update);
+                        }
+                    }
 
                     for i in base + 1..=head {
                         let (base, next) = self.side.split_at_mut(i);
-                        // materialized threat update
-                        if let Some((old_board, new_board, m)) = next[0].pending.take() {
-                            next[0].update.clear();
-                            Self::get_threat_update(&old_board, &new_board, m, &mut next[0].update);
+                        let next = &mut next[0];
+                        unsafe {
+                            network.threat_accumulate(
+                                next.vals[side as usize].as_mut_ptr(),
+                                base[i - 1].vals[side as usize].as_ptr(),
+                                &next.update.adds.rows[side as usize],
+                                &next.update.subs.rows[side as usize],
+                            );
                         }
-                        network.threat_apply_update(
-                            &mut next[0].vals[side as usize],
-                            &base[i - 1].vals[side as usize],
-                            &next[0].update,
-                            side,
-                            board.king(side),
-                            &mut adds,
-                            &mut subs,
-                        );
-                        next[0].is_clean[side as usize] = true;
+                        next.is_clean[side as usize] = true;
                     }
-
-                    self.side[head].is_clean[side as usize] = true;
                     break;
                 }
 

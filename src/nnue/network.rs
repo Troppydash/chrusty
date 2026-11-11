@@ -6,19 +6,9 @@ use std::ops::DerefMut;
 
 use crate::ext::ColoredPiece;
 use crate::nnue::ti;
-use crate::nnue::ti::FULL_THREATS;
-use crate::nnue::ti::MAX_TI_INPUTS_DELTA;
-use crate::nnue::ti::PINNED;
 use crate::nnue::ti::TI_INPUTS;
-use crate::nnue::ti::pawn_pair_index;
-use crate::nnue::update::PPDelta;
-use crate::nnue::update::PinnedDelta;
-use crate::nnue::update::ThreatDelta;
-use crate::nnue::update::ThreatDeltaGeneral;
-use crate::nnue::update::ThreatUpdate;
 use crate::nnue::update::Update;
 use crate::nnue::update::UpdateType;
-use arrayvec::ArrayVec;
 use cozy_chess::{Board, Color, Piece, Square};
 use std::mem;
 use std::ptr;
@@ -472,6 +462,18 @@ impl Network {
     pub fn load(raw: Box<RawNetwork>) -> Box<Self> {
         let mut net = unsafe { Box::<Self>::new_uninit().assume_init() };
 
+        #[cfg(target_os = "linux")]
+        unsafe {
+            const HUGE: usize = 2 * 1024 * 1024;
+            let start = net.as_mut() as *mut Self as usize;
+            let end = start + mem::size_of::<Self>();
+            let lo = (start + HUGE - 1) & !(HUGE - 1);
+            let hi = end & !(HUGE - 1);
+            if hi > lo {
+                libc::madvise(lo as *mut libc::c_void, hi - lo, libc::MADV_HUGEPAGE);
+            }
+        }
+
         for a in 0..KINGS {
             for b in 0..768 {
                 for c in 0..OUTPUTS {
@@ -582,7 +584,7 @@ impl Network {
     }
 
     #[inline(always)]
-    fn flip_mask(king_sq: Square, side: Color) -> usize {
+    pub fn flip_mask(king_sq: Square, side: Color) -> usize {
         let file_flip = if king_sq as usize & 0b100 != 0 { 7 } else { 0 };
         file_flip ^ (side as usize * 56)
     }
@@ -615,19 +617,6 @@ impl Network {
         let index768 =
             ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
         &self.pst_weights[KING_BUCKET[king_sq as usize ^ (side as usize * 56)]][index768]
-    }
-
-    fn threat_index_from_delta(&self, king_sq: Square, side: Color, delta: &ThreatDelta) -> i32 {
-        self.threat_index(
-            king_sq,
-            side,
-            delta.attacker.color,
-            delta.target.color,
-            delta.attacker.piece,
-            delta.attacker_sq,
-            delta.target.piece,
-            delta.target_sq,
-        )
     }
 
     pub fn threat_index(
@@ -667,32 +656,12 @@ impl Network {
         piece: ColoredPiece,
         square: Square,
     ) -> usize {
-        let flip = Self::flip_mask(king_sq, side);
-        let square = square as usize ^ flip;
-
-        let index768 =
-            ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
-
-        FULL_THREATS
-            + (if side_pinned {
-                index768
-            } else {
-                index768 + PINNED / 2
-            })
-    }
-
-    pub fn threat_pinned_index_from_delta(
-        &self,
-        king_sq: Square,
-        side: Color,
-        delta: &PinnedDelta,
-    ) -> usize {
-        self.threat_pinned_index(
-            king_sq,
-            side,
-            side == delta.pinned_king_color,
-            delta.piece,
-            delta.square,
+        ti::pinned_feature_index(
+            Self::flip_mask(king_sq, side),
+            side_pinned,
+            piece.color == side,
+            piece.piece as usize,
+            square as usize,
         )
     }
 
@@ -703,25 +672,13 @@ impl Network {
         pawn1: (Color, Square),
         pawn2: (Color, Square),
     ) -> usize {
-        let flip = Self::flip_mask(king_sq, side);
-
-        let index = pawn_pair_index(
-            (pawn1.0 != side) as usize,
-            pawn1.1 as usize ^ flip,
-            (pawn2.0 != side) as usize,
-            pawn2.1 as usize ^ flip,
-        );
-
-        FULL_THREATS + PINNED + index
-    }
-
-    pub fn threat_pp_index_from_delta(
-        &self,
-        king_sq: Square,
-        side: Color,
-        delta: &PPDelta,
-    ) -> usize {
-        self.threat_pp_index(king_sq, side, delta.pawn1, delta.pawn2)
+        ti::pp_feature_index(
+            Self::flip_mask(king_sq, side),
+            pawn1.0 != side,
+            pawn1.1 as usize,
+            pawn2.0 != side,
+            pawn2.1 as usize,
+        )
     }
 
     pub fn apply_update(
@@ -892,112 +849,44 @@ impl Network {
         }
     }
 
-    pub fn threat_apply_update<'a>(
-        &'a self,
-        next: &mut Aligned<i16, HL>,
-        base: &Aligned<i16, HL>,
-        update: &ThreatUpdate,
-        side: Color,
-        king_sq: Square,
-        adds_weights: &mut ArrayVec<&'a Aligned<i8, HL>, MAX_TI_INPUTS_DELTA>,
-        subs_weights: &mut ArrayVec<&'a Aligned<i8, HL>, MAX_TI_INPUTS_DELTA>,
+    /// `next = base + sum(rows[adds]) - sum(rows[subs])`; `base` may be null for zero.
+    #[inline(always)]
+    pub unsafe fn threat_accumulate(
+        &self,
+        next: *mut i16,
+        base: *const i16,
+        adds: &[u32],
+        subs: &[u32],
     ) {
-        // Resolve each weight row once, outside the accumulator block loop.
-        adds_weights.clear();
-        subs_weights.clear();
-        for add in update.adds.iter() {
-            match add {
-                ThreatDeltaGeneral::ThreatDelta(add) => {
-                    let i = self.threat_index_from_delta(king_sq, side, add);
-                    if i >= 0 {
-                        adds_weights.push(&self.threat_weights[i as usize]);
-                    }
-                }
-                ThreatDeltaGeneral::PinnedDelta(add) => {
-                    adds_weights.push(
-                        &self.threat_weights
-                            [self.threat_pinned_index_from_delta(king_sq, side, add)],
-                    );
-                }
-                ThreatDeltaGeneral::PPDelta(add) => {
-                    adds_weights.push(
-                        &self.threat_weights[self.threat_pp_index_from_delta(king_sq, side, add)],
-                    );
-                }
-            }
-        }
-        for sub in update.subs.iter() {
-            match sub {
-                ThreatDeltaGeneral::ThreatDelta(sub) => {
-                    let i = self.threat_index_from_delta(king_sq, side, sub);
-                    if i >= 0 {
-                        subs_weights.push(&self.threat_weights[i as usize]);
-                    }
-                }
-                ThreatDeltaGeneral::PinnedDelta(sub) => {
-                    subs_weights.push(
-                        &self.threat_weights
-                            [self.threat_pinned_index_from_delta(king_sq, side, sub)],
-                    );
-                }
-                ThreatDeltaGeneral::PPDelta(sub) => {
-                    subs_weights.push(
-                        &self.threat_weights[self.threat_pp_index_from_delta(king_sq, side, sub)],
-                    );
-                }
-            }
-        }
-
         unsafe {
+            let rows = self.threat_weights.as_ptr() as *const i8;
+            let widen = |row: u32, at: usize| {
+                _mm512_cvtepi8_epi16(*(rows.add(row as usize * HL + at) as *const __m256i))
+            };
+
             let mut acc = [_mm512_setzero_si512(); 8];
             for i in (0..HL).step_by(32 * 8) {
-                for k in 0..8 {
-                    acc[k] = *(base.as_ptr().add(i + k * 32) as *const __m512i);
+                if !base.is_null() {
+                    for k in 0..8 {
+                        acc[k] = *(base.add(i + k * 32) as *const __m512i);
+                    }
+                } else {
+                    acc = [_mm512_setzero_si512(); 8];
                 }
 
-                let mut add_idx = 0;
-                let mut sub_idx = 0;
-                while add_idx < adds_weights.len() && sub_idx < subs_weights.len() {
-                    let add = adds_weights[add_idx].as_ptr().add(i);
-                    let sub = subs_weights[sub_idx].as_ptr().add(i);
+                for &add in adds {
                     for k in 0..8 {
-                        acc[k] = _mm512_add_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(add.add(k * 32) as *const __m256i)),
-                        );
-                        acc[k] = _mm512_sub_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(sub.add(k * 32) as *const __m256i)),
-                        );
+                        acc[k] = _mm512_add_epi16(acc[k], widen(add, i + k * 32));
                     }
-                    add_idx += 1;
-                    sub_idx += 1;
                 }
-
-                while add_idx < adds_weights.len() {
-                    let add = adds_weights[add_idx].as_ptr().add(i);
+                for &sub in subs {
                     for k in 0..8 {
-                        acc[k] = _mm512_add_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(add.add(k * 32) as *const __m256i)),
-                        );
+                        acc[k] = _mm512_sub_epi16(acc[k], widen(sub, i + k * 32));
                     }
-                    add_idx += 1;
-                }
-
-                while sub_idx < subs_weights.len() {
-                    let sub = subs_weights[sub_idx].as_ptr().add(i);
-                    for k in 0..8 {
-                        acc[k] = _mm512_sub_epi16(
-                            acc[k],
-                            _mm512_cvtepi8_epi16(*(sub.add(k * 32) as *const __m256i)),
-                        );
-                    }
-                    sub_idx += 1;
                 }
 
                 for k in 0..8 {
-                    *(next.as_mut_ptr().add(i + k * 32) as *mut __m512i) = acc[k];
+                    *(next.add(i + k * 32) as *mut __m512i) = acc[k];
                 }
             }
         }

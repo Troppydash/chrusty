@@ -201,6 +201,38 @@ pub const fn is_feature(attacker: Piece, target: Piece) -> bool {
     TARGET_MAP[attacker as usize][target as usize] >= 0
 }
 
+// outputs [FULL_THREATS..FULL_THREATS + PINNED)
+#[inline(always)]
+pub fn pinned_feature_index(
+    flip: usize,
+    king_is_us: bool,
+    piece_is_us: bool,
+    piece: usize,
+    square: usize,
+) -> usize {
+    let index768 = (if piece_is_us { 0 } else { 6 } + piece) * 64 + (square ^ flip);
+    FULL_THREATS + index768 + if king_is_us { 0 } else { PINNED / 2 }
+}
+
+// outputs [FULL_THREATS + PINNED..TI_INPUTS)
+#[inline(always)]
+pub fn pp_feature_index(
+    flip: usize,
+    pawn1_is_them: bool,
+    sq1: usize,
+    pawn2_is_them: bool,
+    sq2: usize,
+) -> usize {
+    FULL_THREATS
+        + PINNED
+        + pawn_pair_index(
+            pawn1_is_them as usize,
+            sq1 ^ flip,
+            pawn2_is_them as usize,
+            sq2 ^ flip,
+        )
+}
+
 pub const fn pawn_mask3(square: Square) -> BitBoard {
     const LINE: u64 = 0x101010101010101;
     const PER_FILE: [u64; 8] = {

@@ -1024,7 +1024,8 @@ impl Engine {
                 }
 
                 //- late move pruning
-                if is_quiet
+                if !is_pv
+                    && is_quiet
                     && !is_win(beta)
                     && self.stack[ss].move_count as i32
                         >= (self.settings.p_lmp_base
