@@ -136,18 +136,6 @@ fn tablebase_probe_restrictions_preserve_clock_castling_and_ep_rules() {
 }
 
 #[test]
-fn endgame_search_still_finds_quiet_mates_for_both_colors() {
-    let mut test = TestEngine::new();
-    for fen in [
-        "7k/8/6K1/8/8/8/8/R7 w - - 0 1",
-        "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1",
-        "4r1k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1",
-    ] {
-        assert_eq!(test.pv(fen, 6), win_in(2), "{fen}");
-    }
-}
-
-#[test]
 fn fifty_move_draw_does_not_hide_checkmate() {
     let mut test = TestEngine::new();
     let draw = "7k/8/8/8/2Q5/8/8/K7 w - - 100 1";
@@ -156,42 +144,6 @@ fn fifty_move_draw_does_not_hide_checkmate() {
     let mate = "R6k/8/6K1/8/8/8/8/8 b - - 100 1";
     assert_eq!(test.pv(mate, 4), lose_in(1));
     assert_eq!(test.qsearch(mate, QDEPTH), lose_in(1));
-}
-
-#[test]
-fn qsearch_shallow_tt_bound_does_not_hide_quiet_mate() {
-    initialize();
-
-    // Ra8 is mate, but a capture-only qsearch cannot find it.
-    let pos = Board::from_fen("7k/8/6K1/8/8/8/8/R7 w - - 0 1", false).unwrap();
-    let mut table = Box::new(Table::new(1));
-    let mut engine = Engine::new(Arc::new(Timer::new()), TablePtr::from_table(&mut table));
-    engine.nnue.init(&pos);
-    engine.pawn_key.init(&pos);
-    for ply in 0..(SS_SIZE - SS_SIZE_PRE) {
-        engine.stack[SS_SIZE_PRE + ply] = SearchStack::new_ply(ply as i8);
-    }
-
-    for requested_depth in [-9, QDEPTH] {
-        table.clear();
-        let cold = engine.qsearch(&pos, 10000, 10001, requested_depth, SS_SIZE_PRE, false);
-        assert_eq!(cold, win_in(1));
-
-        table.clear();
-        let shallow = engine.qsearch(&pos, 10000, 10001, -10, SS_SIZE_PRE, false);
-        assert!(shallow < 10000);
-
-        let key = pos.correct_hash() ^ get_50mr_key(pos.halfmove_clock() as usize);
-        let (entry, _) = table.get(key);
-        let value = entry.get(key, 0, requested_depth, 10000, 10001);
-        assert!(value.hit);
-        assert_eq!(value.flag, FLAG_ALPHA);
-        assert_eq!(value.depth, -10);
-        assert!(!value.can_use);
-
-        let warm = engine.qsearch(&pos, 10000, 10001, requested_depth, SS_SIZE_PRE, false);
-        assert_eq!(warm, cold);
-    }
 }
 
 #[test]

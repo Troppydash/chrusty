@@ -122,15 +122,6 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
             // TODO: port this to ext
             occ.0 ^= bb.0 & bb.0.wrapping_neg();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
-        } else if let bb = stm_attackers & knights
-            && !bb.is_empty()
-        {
-            swap = piece_value(Piece::Knight, settings) - swap;
-            if swap < result {
-                break;
-            }
-
-            occ.0 ^= bb.0 & bb.0.wrapping_neg();
         } else if let bb = stm_attackers & bishops
             && !bb.is_empty()
         {
@@ -141,6 +132,15 @@ pub fn see_ge(pos: &Board, m: Move, beta: i32, settings: &Parameters) -> bool {
 
             occ.0 ^= bb.0 & bb.0.wrapping_neg();
             attackers |= get_bishop_moves(m.to, occ) & (bishops | queens);
+        } else if let bb = stm_attackers & knights
+            && !bb.is_empty()
+        {
+            swap = piece_value(Piece::Knight, settings) - swap;
+            if swap < result {
+                break;
+            }
+
+            occ.0 ^= bb.0 & bb.0.wrapping_neg();
         } else if let bb = stm_attackers & rooks
             && !bb.is_empty()
         {
