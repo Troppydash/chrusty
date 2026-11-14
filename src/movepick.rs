@@ -5,7 +5,7 @@ use cozy_chess::{
 };
 
 use crate::{
-    ext::{ColoredPiece, ExtBoard, ExtMove, MoveType, ScoredMove, ScoredMoveList},
+    ext::{ColoredPiece, ExtBoard, ExtMove, MAX_MOVES, MoveType, ScoredMove, ScoredMoveList},
     heuristic::{Heuristic, LOW_PLY},
     nnue::{NNUE, network::CM},
     param::BAD_QUIET_SCORE,
@@ -52,22 +52,26 @@ enum Pick {
     Break,
 }
 
+/// +3 for the extra killer moves etc
+const PICK_CAPACITY: usize = MAX_MOVES + 3;
+type PickList = arrayvec::ArrayVec<ScoredMove, PICK_CAPACITY>;
+
 struct DynamicScoredMoveList {
-    moves: ScoredMoveList,
+    moves: PickList,
     ptr: usize,
 }
 
 impl DynamicScoredMoveList {
     fn new() -> Self {
         Self {
-            moves: ScoredMoveList::new(),
+            moves: PickList::new(),
             ptr: 0,
         }
     }
 
     fn pick<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
     where
-        F: FnMut(&mut ScoredMoveList, usize) -> Pick,
+        F: FnMut(&mut PickList, usize) -> Pick,
     {
         debug_assert!(end <= self.moves.len());
         while self.ptr < end {
@@ -101,7 +105,7 @@ impl DynamicScoredMoveList {
 
     fn pick_no_shuffle<F>(&mut self, end: usize, mut filter: F) -> ScoredMove
     where
-        F: FnMut(&mut ScoredMoveList, usize) -> Pick,
+        F: FnMut(&mut PickList, usize) -> Pick,
     {
         debug_assert!(end <= self.moves.len());
         while self.ptr < end {
@@ -122,8 +126,10 @@ impl DynamicScoredMoveList {
         ScoredMove::NULL_MOVE
     }
 
+    #[inline(always)]
     fn push(&mut self, m: ScoredMove) {
-        self.moves.push(m);
+        debug_assert!(self.moves.len() < PICK_CAPACITY);
+        unsafe { self.moves.push_unchecked(m) };
     }
 
     fn len(&self) -> usize {
@@ -577,29 +583,34 @@ impl Movepick {
             0,
         ];
 
+        let killers = heuristic.get_killers(self.ply);
+        let (k0, k1) = (killers[0].to_bits(), killers[1].to_bits());
+        let reply_bits = reply.to_bits();
+        let pv_bits = self.pv.to_bits();
+
         let mut i = self.moves.ptr;
         while i < self.moves.len() {
             debug_assert!(self.pos.is_quiet(self.moves.get(i).inner));
 
-            if self.pv == self.moves.get(i).inner {
+            let m = self.moves.get(i).inner;
+            let mb = m.to_bits();
+
+            if mb == pv_bits {
                 self.moves.swap_remove(i);
                 continue;
             }
 
-            let m = self.moves.get(i).inner;
-
-            let killers = heuristic.get_killers(self.ply);
-            if skip_killers && (m == killers[0] || m == killers[1] || m == reply) {
+            if skip_killers && (mb == k0 || mb == k1 || mb == reply_bits) {
                 self.moves.swap_remove(i);
                 continue;
             }
 
             let mut score = self.score_quiet(m);
-            if m == killers[0] {
+            if mb == k0 {
                 score += 30000;
-            } else if m == killers[1] {
+            } else if mb == k1 {
                 score += 25000;
-            } else if m == reply {
+            } else if mb == reply_bits {
                 score += 10000;
             }
 

@@ -66,6 +66,7 @@ pub struct SearchStack {
     pub move_count: usize,
     pub key: u64,
     pub reduction: i8,
+    pub cutoff_count: u8,
 }
 
 impl SearchStack {
@@ -85,6 +86,7 @@ impl SearchStack {
             move_count: 0,
             key: 0,
             reduction: 0,
+            cutoff_count: 0,
         }
     }
 
@@ -104,6 +106,7 @@ impl SearchStack {
             move_count: 0,
             key: 0,
             reduction: 0,
+            cutoff_count: 0,
         }
     }
 }

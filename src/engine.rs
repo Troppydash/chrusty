@@ -489,6 +489,7 @@ impl Engine {
             return self.qsearch(pos, alpha, beta, 0, ss, is_pv);
         }
 
+        self.stack[ss + 2].cutoff_count = 0;
         let key = pos.correct_hash();
         let tt_key = key ^ get_50mr_key(pos.halfmove_clock() as usize);
 
@@ -1143,6 +1144,11 @@ impl Engine {
                     reduction += (2 - self.stack[ss].tt_pv as i32) * self.settings.p_lmr_cutnode;
                 }
 
+                // child cutoff-count reduction
+                if !is_root && self.stack[ss + 1].cutoff_count > 6 {
+                    reduction += 1024;
+                }
+
                 // capture reduction
                 if is_tt_capture && is_quiet {
                     reduction += self.settings.p_lmr_capture;
@@ -1283,6 +1289,7 @@ impl Engine {
                     }
 
                     if score >= beta {
+                        self.stack[ss].cutoff_count = self.stack[ss].cutoff_count.saturating_add(1);
                         break;
                     }
 

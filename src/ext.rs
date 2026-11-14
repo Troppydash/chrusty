@@ -123,8 +123,9 @@ impl ExtMove for Move {
     };
     const NULL_MOVE_BITS: u16 = 6 << 12;
 
+    #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == Self::NULL_MOVE
+        self.from == self.to
     }
 
     fn to_uci(&self, board: &Board) -> String {
@@ -236,18 +237,12 @@ impl ExtBoard for Board {
         ml
     }
 
+    #[inline]
     fn is_quiet(&self, m: Move) -> bool {
-        // special moves are CASTLE, PROMOTION, ENPASSENT
-        if self.is_ep(m) {
-            return false;
-        }
-
-        if self.is_castle(m) {
-            return true;
-        }
-
-        // a quiet move is not a capture and not a queen promotion
-        self.piece_on(m.to).is_none() && m.promotion != Some(Piece::Queen)
+        // a quiet move is not a capture, not a queen promotion, and not en passant
+        !self.colors(!self.side_to_move()).has(m.to)
+            && m.promotion != Some(Piece::Queen)
+            && !self.is_ep(m)
     }
 
     /// This is not the [ep_capture_square]
@@ -280,14 +275,15 @@ impl ExtBoard for Board {
 
     #[inline]
     fn is_ep(&self, m: Move) -> bool {
-        self.piece_on(m.from) == Some(Piece::Pawn) && self.ep_square() == Some(m.to)
+        self.ep_square() == Some(m.to) && self.pieces(Piece::Pawn).has(m.from)
     }
 
     #[inline]
     fn is_castle(&self, m: Move) -> bool {
-        self.piece_on(m.to) == Some(Piece::Rook) && self.color_on(m.to) == Some(self.side_to_move())
+        self.colors(self.side_to_move()).has(m.to)
     }
 
+    #[inline]
     fn move_type(&self, m: Move) -> MoveType {
         if m.is_null() {
             return NONE;

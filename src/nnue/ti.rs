@@ -168,9 +168,7 @@ pub fn init() {
 }
 
 fn threat_lut() -> &'static ThreatLut {
-    THREAT_LUT
-        .get()
-        .expect("threat LUT must be initialized in main")
+    unsafe { THREAT_LUT.get().unwrap_unchecked() }
 }
 
 // outputs [0..FULL_THREATS)

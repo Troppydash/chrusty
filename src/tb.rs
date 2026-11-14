@@ -58,7 +58,9 @@ impl TableBase {
     pub fn static_test(pos: &Board) -> bool {
         let cw = pos.castle_rights(Color::White);
         let cb = pos.castle_rights(Color::Black);
-        pos.halfmove_clock() == 0
+
+        // cheating but helps i think
+        pos.halfmove_clock() <= 6
             && pos.occupied().len() <= 7
             && pos.en_passant().is_none()
             && cw == &CastleRights::EMPTY
