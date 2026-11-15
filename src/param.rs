@@ -56,4 +56,4 @@ pub const SS_SIZE_PRE: usize = 10 as usize;
 pub const SS_SIZE: usize = MAX_DEPTH as usize + SS_SIZE_PRE;
 
 pub const ASP_WINDOW_MIN_DEPTH: i8 = 4;
-pub const CONTEMPT: i16 = 0;
+pub const CONTEMPT: i16 = 20;

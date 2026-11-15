@@ -176,21 +176,36 @@ impl Engine {
     }
 
     fn evaluate(&mut self, pos: &Board) -> (i16, i32) {
-        let (mut score, tempo) = self.nnue.evaluate2(pos);
+        let stage = (10 * pos.pieces(Piece::Queen).len()
+            + 5 * pos.pieces(Piece::Rook).len()
+            + 3 * pos.pieces(Piece::Bishop).len()
+            + 3 * pos.pieces(Piece::Knight).len()
+            + 2 * pos.pieces(Piece::Pawn).len()) as i32;
+
+        let c = if let Some(prev_score) = self.prev_score {
+            let prev_score = prev_score as i32;
+            (CONTEMPT as i32 + 88 * prev_score / (prev_score.abs() + 200)) * stage / 100
+        } else {
+            CONTEMPT as i32 * stage / 100
+        };
+        let contempt = if pos.side_to_move() == self.startpos.side_to_move() {
+            c
+        } else {
+            -c
+        };
+
+        let (mut score, _tempo) = self.nnue.evaluate2(pos);
+        score += contempt;
         score -= (score - self.contempt(pos) as i32) * pos.halfmove_clock() as i32 / 300;
         return (
             score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16,
-            tempo,
+            0,
         );
     }
 
-    fn contempt(&self, pos: &Board) -> i16 {
+    #[inline(always)]
+    fn contempt(&self, _pos: &Board) -> i16 {
         return 0;
-        // if self.startpos.side_to_move() == pos.side_to_move() {
-        //     -CONTEMPT
-        // } else {
-        //     CONTEMPT
-        // }
     }
 
     #[inline]
@@ -1604,6 +1619,7 @@ impl Engine {
                 } else if score >= beta {
                     beta = (VALUE_INF as i32).min(score as i32 + window as i32) as i16;
                     window += (window / self.settings.p_asp_fail_high_div).max(1);
+                    fail_highs = (fail_highs + 1).min(3);
                 } else {
                     break;
                 }
