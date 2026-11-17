@@ -1650,13 +1650,13 @@ impl Engine {
                     0.0
                 };
 
-                let nodes_factor = ((0.8 - self.root_moves[0].nodes as f64 / self.nodes as f64)
-                    * 1.2)
-                    .clamp(-0.4, 0.8);
+                let best_node_fraction =
+                    self.root_moves[0].nodes as f64 / (self.nodes as f64).max(1.0);
+                let nodes_factor = (1.5 - best_node_fraction) * 1.35;
                 factors *= (1.0 + instability_factor)
                     * (1.0 + score_factor)
                     * (1.0 + prev_score_factor)
-                    * (1.0 + nodes_factor);
+                    * nodes_factor;
             }
             last_best_move = best;
             last_best_score = best_score;

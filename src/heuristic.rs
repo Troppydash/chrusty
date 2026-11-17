@@ -180,10 +180,6 @@ impl Heuristic {
         for i in 2..MAX_DEPTH_USIZE {
             self.killer_moves[i - 2] = self.killer_moves[i];
         }
-        // shift by 2
-        for i in 2..LOW_PLY {
-            self.low_ply[i - 2] = self.low_ply[i];
-        }
     }
 
     pub fn clear(&mut self) {
