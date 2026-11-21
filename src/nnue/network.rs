@@ -18,7 +18,7 @@ pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const L1_OUT: usize = L1 * 2;
 pub const L2_OUT: usize = L2 * 2 + L1_OUT;
-pub const OUTPUTS: usize = 8;
+pub const OUTPUTS: usize = 8 * 4;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
 pub const QPST: i32 = 128 * 128;
@@ -66,7 +66,7 @@ pub const KINGS: usize = {
         i += 1;
     }
     m + 1
-};
+} * 3;
 
 const OUTPUT_BUCKETS: [usize; 33] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, //
@@ -553,11 +553,35 @@ impl Network {
         KING_BUCKET[square as usize ^ (side as usize * 56)]
     }
 
+    #[inline(always)]
+    pub fn get_pst_material(side: Color, board: &Board) -> usize {
+        if (board.pieces(Piece::Rook) | board.pieces(Piece::Queen)).is_empty() {
+            2
+        } else {
+            !board.colored_pieces(!side, Piece::Queen).is_empty() as usize
+        }
+    }
+
+    #[inline]
+    pub fn get_pst_index(king_bucket: usize, material: usize) -> usize {
+        king_bucket * 3 + material
+    }
+
     pub fn is_mirrored(square: Square) -> bool {
         square as usize & 0b100 != 0
     }
 
-    pub fn needs_refresh(side: Color, old_king: Square, new_king: Square) -> bool {
+    pub fn needs_refresh(
+        side: Color,
+        old_king: Square,
+        old_material: usize,
+        new_king: Square,
+        new_material: usize,
+    ) -> bool {
+        if old_material != new_material {
+            return true;
+        }
+
         if old_king == new_king {
             return false;
         }
@@ -580,7 +604,12 @@ impl Network {
     }
 
     pub fn get_output_bucket(board: &Board) -> usize {
-        OUTPUT_BUCKETS[board.occupied().len() as usize]
+        let stm_queen = !(board.colored_pieces(board.side_to_move(), Piece::Queen)).is_empty();
+        let ntm_queen = !(board.colored_pieces(!board.side_to_move(), Piece::Queen)).is_empty();
+
+        OUTPUT_BUCKETS[board.occupied().len() as usize] * 4
+            + 2 * stm_queen as usize
+            + ntm_queen as usize
     }
 
     #[inline(always)]
@@ -593,6 +622,7 @@ impl Network {
         &self,
         king_sq: Square,
         side: Color,
+        material: usize,
         piece: ColoredPiece,
         square: Square,
     ) -> &Aligned<i16, HL> {
@@ -601,13 +631,17 @@ impl Network {
 
         let index768 =
             ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
-        &self.feature_weights[KING_BUCKET[king_sq as usize ^ (side as usize * 56)]][index768]
+        &self.feature_weights[Self::get_pst_index(
+            KING_BUCKET[king_sq as usize ^ (side as usize * 56)],
+            material,
+        )][index768]
     }
 
     pub fn pst_feature_lookup(
         &self,
         king_sq: Square,
         side: Color,
+        material: usize,
         piece: ColoredPiece,
         square: Square,
     ) -> &[i16; OUTPUTS] {
@@ -616,7 +650,10 @@ impl Network {
 
         let index768 =
             ((if piece.color == side { 0 } else { 6 }) + piece.piece as usize) * 64 + square;
-        &self.pst_weights[KING_BUCKET[king_sq as usize ^ (side as usize * 56)]][index768]
+        &self.pst_weights[Self::get_pst_index(
+            KING_BUCKET[king_sq as usize ^ (side as usize * 56)],
+            material,
+        )][index768]
     }
 
     pub fn threat_index(
@@ -696,12 +733,14 @@ impl Network {
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add1.1,
                         update.add1.0,
                     ),
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub1.1,
                         update.sub1.0,
                     ),
@@ -715,18 +754,21 @@ impl Network {
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add1.1,
                         update.add1.0,
                     ),
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub1.1,
                         update.sub1.0,
                     ),
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub2.1,
                         update.sub2.0,
                     ),
@@ -739,24 +781,28 @@ impl Network {
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add1.1,
                         update.add1.0,
                     ),
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add2.1,
                         update.add2.0,
                     ),
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub1.1,
                         update.sub1.0,
                     ),
                     self.feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub2.1,
                         update.sub2.0,
                     ),
@@ -780,12 +826,14 @@ impl Network {
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add1.1,
                         update.add1.0,
                     ),
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub1.1,
                         update.sub1.0,
                     ),
@@ -799,18 +847,21 @@ impl Network {
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add1.1,
                         update.add1.0,
                     ),
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub1.1,
                         update.sub1.0,
                     ),
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub2.1,
                         update.sub2.0,
                     ),
@@ -823,24 +874,28 @@ impl Network {
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add1.1,
                         update.add1.0,
                     ),
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.add2.1,
                         update.add2.0,
                     ),
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub1.1,
                         update.sub1.0,
                     ),
                     self.pst_feature_lookup(
                         update.king_sq[side as usize],
                         side,
+                        update.material[side as usize],
                         update.sub2.1,
                         update.sub2.0,
                     ),

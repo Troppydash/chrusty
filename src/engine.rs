@@ -34,6 +34,16 @@ fn can_probe_tablebase(pos: &Board, root: bool) -> bool {
         }
 }
 
+const NORMALIZE_TO_PAWN_VALUE: i32 = 285;
+
+fn to_uci_cp(score: i16) -> i32 {
+    if score.abs() <= VALUE_EVAL {
+        score as i32 * 100 / NORMALIZE_TO_PAWN_VALUE
+    } else {
+        score as i32
+    }
+}
+
 fn format_uci_score(score: i16) -> String {
     if score > VALUE_CHECKMATE {
         let ply = VALUE_INF - score;
@@ -42,7 +52,7 @@ fn format_uci_score(score: i16) -> String {
         let ply = -VALUE_INF - score;
         format!("mate {}", ply / 2 + ply % 2)
     } else {
-        format!("cp {}", score)
+        format!("cp {}", to_uci_cp(score))
     }
 }
 
@@ -165,6 +175,13 @@ impl Engine {
         }
     }
 
+    #[inline(always)]
+    fn prefetch(&self, pos: &Board, m: Move) {
+        let halfmove_clock = (pos.halfmove_clock() as usize + 1).min(100);
+        let child_key = pos.new_hash(m) ^ get_50mr_key(halfmove_clock);
+        self.table.get().prefetch(child_key);
+    }
+
     fn unmake_move(&mut self, pos: &Board, key: u64, ss: usize) {
         if !self.stack[ss].m.is_null() {
             self.nnue.unmake_move();
@@ -197,10 +214,7 @@ impl Engine {
         let (mut score, _tempo) = self.nnue.evaluate2(pos);
         score += contempt;
         score -= (score - self.contempt(pos) as i32) * pos.halfmove_clock() as i32 / 300;
-        return (
-            score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16,
-            0,
-        );
+        return (score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16, 0);
     }
 
     #[inline(always)]
@@ -383,7 +397,7 @@ impl Engine {
             }
 
             move_count += 1;
-            self.table.get().prefetch(pos.new_hash(next_move.inner));
+            self.prefetch(pos, next_move.inner);
 
             if !is_loss(best_score) {
                 //- see pruning
@@ -737,12 +751,14 @@ impl Engine {
         } else if is_valid(self.stack[ss - 2].adjusted_static)
             && is_valid(self.stack[ss].adjusted_static)
         {
-            improvement = self.stack[ss].adjusted_static - self.stack[ss - 2].adjusted_static;
+            improvement =
+                self.stack[ss].adjusted_static as i32 - self.stack[ss - 2].adjusted_static as i32;
             improving = improvement > 0;
         } else if is_valid(self.stack[ss - 4].adjusted_static)
             && is_valid(self.stack[ss].adjusted_static)
         {
-            improvement = self.stack[ss].adjusted_static - self.stack[ss - 4].adjusted_static;
+            improvement =
+                self.stack[ss].adjusted_static as i32 - self.stack[ss - 4].adjusted_static as i32;
             improving = improvement > 0;
         }
 
@@ -810,8 +826,9 @@ impl Engine {
                         / self.settings.p_nmp_eval_div)
                         .clamp(0, self.settings.p_nmp_eval_max)
                     + self.settings.p_nmp_improving * improving as i32;
+
                 let reduced_depth = i32::max(0, depth as i32 - reduction) as i8;
-                self.table.get().prefetch(pos.new_hash(Move::NULL_MOVE));
+                self.prefetch(pos, Move::NULL_MOVE);
                 let new_pos = self.make_move(pos, Move::NULL_MOVE, key, ss);
                 let score = -self.negamax(
                     &new_pos,
@@ -904,7 +921,7 @@ impl Engine {
                     }
 
                     self.stack[ss].move_count += 1;
-                    self.table.get().prefetch(pos.new_hash(next_move.inner));
+                    self.prefetch(pos, next_move.inner);
                     let new_pos = self.make_move(pos, next_move.inner, key, ss);
                     let mut score = -self.qsearch(
                         &new_pos,
@@ -997,7 +1014,7 @@ impl Engine {
             let is_quiet = pos.is_quiet(next_move.inner);
             self.stack[ss].move_count += 1;
             let old_nodes = self.nodes;
-            self.table.get().prefetch(pos.new_hash(next_move.inner));
+            self.prefetch(pos, next_move.inner);
 
             let history = if is_quiet {
                 movepick.score_quiet(next_move.inner)
@@ -1661,14 +1678,6 @@ impl Engine {
             last_best_move = best;
             last_best_score = best_score;
 
-            // opt exit
-            if self
-                .timer
-                .test((self.timer.opt_time.load(Ordering::Relaxed) as f64 * factors) as i64)
-            {
-                break;
-            }
-
             let delta = self.timer.delta();
             let nps = self.nodes * 1000 / delta.max(1) as i64;
             let score = self.root_moves[0].score;
@@ -1690,6 +1699,15 @@ impl Engine {
                 next_pos.play_unchecked(*m);
             }
             println!("");
+
+            // opt exit
+            if self
+                .timer
+                .test((self.timer.opt_time.load(Ordering::Relaxed) as f64 * factors) as i64)
+            {
+                break;
+            }
+
             depth += 1;
         }
 

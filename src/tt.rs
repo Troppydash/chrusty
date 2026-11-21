@@ -154,7 +154,7 @@ impl Entry {
         let age_diff = (MAX_AGE + age - self.get_age()) % MAX_AGE;
         if flag == FLAG_EXACT
             || !key_matches(key, self.hash)
-            || depth + 4 + 2 * (is_pv as i8) > self.depth
+            || depth as i16 + 4 + 2 * (is_pv as i16) > self.depth as i16
             || age_diff >= 1
         {
             self.hash = key as u16;

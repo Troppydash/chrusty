@@ -93,7 +93,12 @@ fn tablebase_scores_are_not_reported_as_mate_distances() {
         assert_eq!(format_uci_score(score), format!("cp {score}"));
         assert_eq!(format_uci_score(-score), format!("cp {}", -score));
     }
-    assert_eq!(format_uci_score(50), "cp 50");
+    assert_eq!(format_uci_score(285), "cp 100");
+    assert_eq!(format_uci_score(-570), "cp -200");
+    assert_eq!(
+        format_uci_score(VALUE_EVAL),
+        format!("cp {}", VALUE_EVAL as i32 * 100 / 285)
+    );
     assert_eq!(format_uci_score(0), "cp 0");
     assert_eq!(format_uci_score(win_in(1)), "mate 1");
     assert_eq!(format_uci_score(win_in(3)), "mate 2");

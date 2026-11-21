@@ -114,7 +114,7 @@ impl NNUE {
     }
 
     pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) {
-        let update = self.halfka.make_move(board, m);
+        let update = self.halfka.make_move(board, new_board, m);
         self.pst.make_move(update);
         self.threats.make_move(board, new_board, m);
         self.head += 1;

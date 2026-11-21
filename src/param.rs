@@ -40,9 +40,9 @@ pub fn is_valid(value: i16) -> bool {
 }
 
 pub const QDEPTH: i8 = 0;
-pub const MIN_QDEPTH: i8 = -20;
+pub const MIN_QDEPTH: i8 = -40;
 pub const UNSEARCH_DEPTH: i8 = MIN_QDEPTH - 10;
-pub const UNINIT_DEPTH: i8 = UNSEARCH_DEPTH - 1;
+pub const UNINIT_DEPTH: i8 = UNSEARCH_DEPTH - 10;
 
 pub const BAD_QUIET_SCORE: i32 = -50000;
 

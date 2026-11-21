@@ -37,13 +37,14 @@ impl FinnyEntry {
         &mut self,
         side: Color,
         king_sq: Square,
+        material: usize,
         piece: ColoredPiece,
         square: Square,
         network: &Network,
     ) {
         SimdOps::fused_add32(
             &mut self.acc.vals[side as usize],
-            network.pst_feature_lookup(king_sq, side, piece, square),
+            network.pst_feature_lookup(king_sq, side, material, piece, square),
         );
     }
 
@@ -51,13 +52,14 @@ impl FinnyEntry {
         &mut self,
         side: Color,
         king_sq: Square,
+        material: usize,
         piece: ColoredPiece,
         square: Square,
         network: &Network,
     ) {
         SimdOps::fused_sub32(
             &mut self.acc.vals[side as usize],
-            network.pst_feature_lookup(king_sq, side, piece, square),
+            network.pst_feature_lookup(king_sq, side, material, piece, square),
         );
     }
 
@@ -65,6 +67,7 @@ impl FinnyEntry {
         &mut self,
         side: Color,
         king_sq: Square,
+        material: usize,
         piece: ColoredPiece,
         square_from: Square,
         square_to: Square,
@@ -72,8 +75,8 @@ impl FinnyEntry {
     ) {
         SimdOps::fused_add_sub32(
             &mut self.acc.vals[side as usize],
-            network.pst_feature_lookup(king_sq, side, piece, square_to),
-            network.pst_feature_lookup(king_sq, side, piece, square_from),
+            network.pst_feature_lookup(king_sq, side, material, piece, square_to),
+            network.pst_feature_lookup(king_sq, side, material, piece, square_from),
         );
     }
 }
@@ -120,6 +123,9 @@ impl Pst {
         self.head = 0;
         self.side[self.head].up.king_sq[0] = board.king(Color::White);
         self.side[self.head].up.king_sq[1] = board.king(Color::Black);
+        self.side[self.head].up.material[0] = Network::get_pst_material(Color::White, board);
+        self.side[self.head].up.material[1] = Network::get_pst_material(Color::Black, board);
+
         self.refresh(board, self.head, Color::White, network);
         self.refresh(board, self.head, Color::Black, network);
     }
@@ -149,7 +155,8 @@ impl Pst {
     fn refresh(&mut self, board: &Board, head: usize, side: Color, network: &Box<Network>) {
         // finny table refresh
         let king_sq = board.king(side);
-        let bucket = Network::get_king_bucket(king_sq, side);
+        let material = Network::get_pst_material(side, board);
+        let bucket = Network::get_pst_index(Network::get_king_bucket(king_sq, side), material);
         let mirrored = Network::is_mirrored(king_sq);
 
         let entry = &mut self.finny.entries[mirrored as usize][bucket];
@@ -170,6 +177,7 @@ impl Pst {
                     entry.acc_move_piece(
                         side,
                         king_sq,
+                        material,
                         ColoredPiece::new(Color::ALL[color], Piece::ALL[piece]),
                         square_from,
                         square_to,
@@ -182,6 +190,7 @@ impl Pst {
                     entry.acc_add_piece(
                         side,
                         king_sq,
+                        material,
                         ColoredPiece::new(Color::ALL[color], Piece::ALL[piece]),
                         square_to,
                         &network,
@@ -193,6 +202,7 @@ impl Pst {
                     entry.acc_sub_piece(
                         side,
                         king_sq,
+                        material,
                         ColoredPiece::new(Color::ALL[color], Piece::ALL[piece]),
                         square_from,
                         &network,
@@ -219,7 +229,9 @@ impl Pst {
                 if Network::needs_refresh(
                     Color::ALL[side],
                     self.side[base].up.king_sq[side],
+                    self.side[base].up.material[side],
                     self.side[head].up.king_sq[side],
+                    self.side[head].up.material[side],
                 ) {
                     self.refresh(board, head, Color::ALL[side], network);
                     break;

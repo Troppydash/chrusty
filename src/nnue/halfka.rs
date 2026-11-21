@@ -37,13 +37,14 @@ impl FinnyEntry {
         &mut self,
         side: Color,
         king_sq: Square,
+        material: usize,
         piece: ColoredPiece,
         square: Square,
         network: &Network,
     ) {
         SimdOps::fused_add(
             &mut self.acc.vals[side as usize],
-            network.feature_lookup(king_sq, side, piece, square),
+            network.feature_lookup(king_sq, side, material, piece, square),
         );
     }
 
@@ -51,13 +52,14 @@ impl FinnyEntry {
         &mut self,
         side: Color,
         king_sq: Square,
+        material: usize,
         piece: ColoredPiece,
         square: Square,
         network: &Network,
     ) {
         SimdOps::fused_sub(
             &mut self.acc.vals[side as usize],
-            network.feature_lookup(king_sq, side, piece, square),
+            network.feature_lookup(king_sq, side, material, piece, square),
         );
     }
 
@@ -65,6 +67,7 @@ impl FinnyEntry {
         &mut self,
         side: Color,
         king_sq: Square,
+        material: usize,
         piece: ColoredPiece,
         square_from: Square,
         square_to: Square,
@@ -72,8 +75,8 @@ impl FinnyEntry {
     ) {
         SimdOps::fused_add_sub(
             &mut self.acc.vals[side as usize],
-            network.feature_lookup(king_sq, side, piece, square_to),
-            network.feature_lookup(king_sq, side, piece, square_from),
+            network.feature_lookup(king_sq, side, material, piece, square_to),
+            network.feature_lookup(king_sq, side, material, piece, square_from),
         );
     }
 }
@@ -120,6 +123,9 @@ impl HalfKA {
         self.head = 0;
         self.side[self.head].up.king_sq[0] = board.king(Color::White);
         self.side[self.head].up.king_sq[1] = board.king(Color::Black);
+        self.side[self.head].up.material[0] = Network::get_pst_material(Color::White, board);
+        self.side[self.head].up.material[1] = Network::get_pst_material(Color::Black, board);
+
         self.refresh(board, self.head, Color::White, network);
         self.refresh(board, self.head, Color::Black, network);
     }
@@ -135,7 +141,7 @@ impl HalfKA {
         }
     }
 
-    pub fn make_move(&mut self, board: &Board, m: Move) -> &Update {
+    pub fn make_move(&mut self, board: &Board, new_board: &Board, m: Move) -> &Update {
         self.head += 1;
         debug_assert!(self.head < MAX_DEPTH_USIZE);
 
@@ -154,6 +160,9 @@ impl HalfKA {
                 update.king_sq[board.side_to_move() as usize] = m.to;
             }
         }
+
+        update.material[0] = Network::get_pst_material(Color::White, new_board);
+        update.material[1] = Network::get_pst_material(Color::Black, new_board);
 
         let piece_from = board.color_piece_on(m.from).unwrap();
         let piece_to = board.color_piece_on(m.to);
@@ -219,7 +228,8 @@ impl HalfKA {
     fn refresh(&mut self, board: &Board, head: usize, side: Color, network: &Box<Network>) {
         // finny table refresh
         let king_sq = board.king(side);
-        let bucket = Network::get_king_bucket(king_sq, side);
+        let material = Network::get_pst_material(side, board);
+        let bucket = Network::get_pst_index(Network::get_king_bucket(king_sq, side), material);
         let mirrored = Network::is_mirrored(king_sq);
 
         let entry = &mut self.finny.entries[mirrored as usize][bucket];
@@ -261,6 +271,7 @@ impl HalfKA {
                     entry.acc_move_piece(
                         side,
                         king_sq,
+                        material,
                         ColoredPiece::new(Color::ALL[color], Piece::ALL[piece]),
                         square_from,
                         square_to,
@@ -273,6 +284,7 @@ impl HalfKA {
                     entry.acc_add_piece(
                         side,
                         king_sq,
+                        material,
                         ColoredPiece::new(Color::ALL[color], Piece::ALL[piece]),
                         square_to,
                         &network,
@@ -284,6 +296,7 @@ impl HalfKA {
                     entry.acc_sub_piece(
                         side,
                         king_sq,
+                        material,
                         ColoredPiece::new(Color::ALL[color], Piece::ALL[piece]),
                         square_from,
                         &network,
@@ -313,7 +326,9 @@ impl HalfKA {
                 if Network::needs_refresh(
                     Color::ALL[side],
                     self.side[base].up.king_sq[side],
+                    self.side[base].up.material[side],
                     self.side[head].up.king_sq[side],
+                    self.side[head].up.material[side],
                 ) {
                     self.refresh(board, head, Color::ALL[side], network);
                     break;

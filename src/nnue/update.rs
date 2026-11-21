@@ -21,6 +21,7 @@ pub enum UpdateType {
 #[derive(Clone)]
 pub struct Update {
     pub king_sq: [Square; 2],
+    pub material: [usize; 2],
     pub add1: (Square, ColoredPiece),
     pub add2: (Square, ColoredPiece),
     pub sub1: (Square, ColoredPiece),
