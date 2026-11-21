@@ -8,7 +8,10 @@ use crate::param::{MAX_DEPTH, MAX_NODES, MAX_TIME};
 #[derive(Debug)]
 pub struct Timer {
     instant: Instant,
+    /// hard-limit origin, follows ponderhit
     start: AtomicI64,
+    /// soft-limit origin
+    soft_start: AtomicI64,
     duration: AtomicI64,
     stopped: AtomicBool,
     pondering: AtomicBool,
@@ -23,6 +26,7 @@ impl Timer {
         Self {
             instant: Instant::now(),
             start: AtomicI64::new(0),
+            soft_start: AtomicI64::new(0),
             duration: AtomicI64::new(MAX_TIME),
             stopped: AtomicBool::new(false),
             pondering: AtomicBool::new(false),
@@ -32,13 +36,30 @@ impl Timer {
         }
     }
 
+    fn now(&self) -> i64 {
+        self.instant.elapsed().as_millis() as i64
+    }
+
     fn elapsed(&self) -> i64 {
-        self.instant.elapsed().as_millis() as i64 - self.start.load(Ordering::Relaxed)
+        self.now() - self.start.load(Ordering::Relaxed)
+    }
+
+    fn soft_elapsed(&self) -> i64 {
+        self.now() - self.soft_start.load(Ordering::Relaxed)
     }
 
     pub fn start(&self, duration: i64, pondering: bool) {
-        self.start
-            .store(self.instant.elapsed().as_millis() as i64, Ordering::Relaxed);
+        let now = self.now();
+        self.soft_start.store(now, Ordering::Relaxed);
+        self.start_hard(now, duration, pondering);
+    }
+
+    pub fn ponderhit(&self, duration: i64) {
+        self.start_hard(self.now(), duration, false);
+    }
+
+    fn start_hard(&self, now: i64, duration: i64, pondering: bool) {
+        self.start.store(now, Ordering::Relaxed);
         self.duration.store(duration, Ordering::Relaxed);
         self.stopped.store(false, Ordering::Relaxed);
         // this is set last because ponderhit sets this from true -> false
@@ -66,11 +87,11 @@ impl Timer {
     }
 
     pub fn test(&self, duration: i64) -> bool {
-        !self.pondering.load(Ordering::Relaxed) && self.elapsed() >= duration
+        !self.pondering.load(Ordering::Relaxed) && self.soft_elapsed() >= duration
     }
 
     pub fn delta(&self) -> i64 {
-        self.elapsed()
+        self.soft_elapsed()
     }
 
     /// Returns (opt_time, max_time)

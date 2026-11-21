@@ -177,9 +177,16 @@ impl Heuristic {
     }
 
     pub fn next_search(&mut self) {
-        for i in 2..MAX_DEPTH_USIZE {
-            self.killer_moves[i - 2] = self.killer_moves[i];
-        }
+        self.low_ply
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(MainHistory::new());
+        self.low_ply_capture_history
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .as_flattened_mut()
+            .fill(CaptureHistory::new());
     }
 
     pub fn clear(&mut self) {

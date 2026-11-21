@@ -111,7 +111,7 @@ impl AsyncEngine {
 
     fn ponderhit(&mut self) {
         // no effect if already stopped somehow
-        self.timer.start(self.max_time, false);
+        self.timer.ponderhit(self.max_time);
     }
 
     fn resize_table(&mut self, size_in_mbytes: usize) {
