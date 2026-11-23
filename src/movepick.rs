@@ -785,7 +785,13 @@ impl Movepick {
                     self.stage = Stage::QCapture;
                 }
                 Stage::QCapture => {
-                    let next_move = self.moves.pick(self.moves.len(), |_moves, _i| Pick::Select);
+                    let next_move = self.moves.pick(self.moves.len(), |moves, i| {
+                        if moves[i].inner.is_under_promotion() {
+                            Pick::Skip
+                        } else {
+                            Pick::Select
+                        }
+                    });
                     if !next_move.is_null() {
                         return next_move;
                     }

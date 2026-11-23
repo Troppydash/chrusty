@@ -398,7 +398,6 @@ impl Engine {
             }
 
             move_count += 1;
-            self.prefetch(pos, next_move.inner);
 
             if !is_loss(best_score) {
                 //- see pruning
@@ -414,6 +413,7 @@ impl Engine {
                 }
             }
 
+            self.prefetch(pos, next_move.inner);
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
             let score = -self.qsearch(&new_pos, -beta, -alpha, depth - 1, ss + 1, is_pv);
             self.unmake_move(pos, key, ss);
@@ -1014,7 +1014,6 @@ impl Engine {
             let is_quiet = pos.is_quiet(next_move.inner);
             self.stack[ss].move_count += 1;
             let old_nodes = self.nodes;
-            self.prefetch(pos, next_move.inner);
 
             let history = if is_quiet {
                 movepick.score_quiet(next_move.inner)
@@ -1157,6 +1156,7 @@ impl Engine {
                 }
             }
 
+            self.prefetch(pos, next_move.inner);
             let new_pos = self.make_move(pos, next_move.inner, key, ss);
             let mut new_depth = (depth + extension - 1).max(0);
             let mut score = 0;
