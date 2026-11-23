@@ -1,20 +1,18 @@
 use std::arch::x86_64::*;
 
-use cozy_chess::{Board, Color::White, File, Move, Square};
+use cozy_chess::{Board, Move};
 
-use crate::{
-    nnue::{
-        halfka::HalfKA,
-        network::{
-            Aligned, Aligned16, CM, FT_SHIFT, HL, L1, L1_OUT, L2, L2_OUT, Network, Permute, QA, QB,
-            QPST, RawNetwork, SCALE, SimdOps,
-        },
-        pst::Pst,
-        threats::Threats,
+use crate::nnue::{
+    halfka::HalfKA,
+    network::{
+        Aligned, Aligned16, FT_SHIFT, HL, L1, L1_OUT, L2, L2_OUT, Network, Permute, QA, QB, QPST,
+        RawNetwork, SCALE, SimdOps,
     },
-    param::MAX_DEPTH_USIZE,
+    pst::Pst,
+    threats::Threats,
 };
 
+mod bucket;
 mod halfka;
 pub mod network;
 mod pst;
@@ -629,7 +627,7 @@ mod tests {
             Board::from_fen("6k1/p7/3q1nr1/3p3R/p3r3/8/7P/3Q1R1K w - - 2 52", false).unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, -1593);
+        assert_eq!(eval, -2038);
     }
 
     #[test]
@@ -643,52 +641,6 @@ mod tests {
         .unwrap();
         net.init(&board);
         let eval = net.evaluate(&board);
-        assert_eq!(eval, 19);
-    }
-
-    fn grid_to_string(grid: &[f32], board: &Board) -> String {
-        let mut out = "".to_string();
-        for i in 0..CM {
-            let i = if board.side_to_move() == Color::White {
-                i ^ 56
-            } else {
-                i
-            };
-            if board.colors(board.side_to_move()).has(Square::ALL[i]) {
-                out += &format!("{:.2}", grid[i]);
-            } else {
-                out += "0.00";
-            }
-            out += " ";
-
-            if i % 8 == 7 {
-                out += "\n";
-            }
-        }
-
-        out
-    }
-
-    fn grid_to_string2(grid: &[f32], board: &Board) -> String {
-        let mut out = "".to_string();
-        for i in 0..CM {
-            let i = if board.side_to_move() == Color::White {
-                i ^ 56
-            } else {
-                i
-            };
-            if !board.occupied().has(Square::ALL[i]) {
-                out += &format!("{:.2}", grid[i]);
-            } else {
-                out += "0.00";
-            }
-            out += " ";
-
-            if i % 8 == 7 {
-                out += "\n";
-            }
-        }
-
-        out
+        assert_eq!(eval, 25);
     }
 }

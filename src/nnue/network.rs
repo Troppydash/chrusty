@@ -5,6 +5,7 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 
 use crate::ext::ColoredPiece;
+use crate::nnue::bucket;
 use crate::nnue::ti;
 use crate::nnue::ti::TI_INPUTS;
 use crate::nnue::update::Update;
@@ -18,13 +19,12 @@ pub const L1: usize = 32;
 pub const L2: usize = 32;
 pub const L1_OUT: usize = L1 * 2;
 pub const L2_OUT: usize = L2 * 2 + L1_OUT;
-pub const OUTPUTS: usize = 8 * 4;
+pub const OUTPUTS: usize = bucket::BUCKET_COUNT;
 pub const QA: i32 = 255;
 pub const QB: i32 = 128;
 pub const QPST: i32 = 128 * 128;
 pub const FT_SHIFT: usize = 8;
 pub const SCALE: i32 = 600;
-pub const CM: usize = 64;
 
 const HALF_KING_BUCKET: [usize; 32] = [
     0, 1, 2, 3, //
@@ -67,17 +67,6 @@ pub const KINGS: usize = {
     }
     m + 1
 } * 3;
-
-const OUTPUT_BUCKETS: [usize; 33] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, //
-    1, 1, 1, 1, //
-    2, 2, 2, 2, //
-    3, 3, 3, //
-    4, 4, 4, //
-    5, 5, 5, //
-    6, 6, 6, //
-    7, 7, 7, 7, //
-];
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -368,6 +357,7 @@ pub struct RawNetwork {
 impl RawNetwork {
     pub fn load() -> Box<Self> {
         const DATA: &[u8] = include_bytes!(env!("EVAL_FILE"));
+
         if DATA.len() != mem::size_of::<RawNetwork>() {
             eprintln!("{} != {}", DATA.len(), mem::size_of::<RawNetwork>());
             eprintln!("failed to load include_bytes raw network");
@@ -604,12 +594,7 @@ impl Network {
     }
 
     pub fn get_output_bucket(board: &Board) -> usize {
-        let stm_queen = !(board.colored_pieces(board.side_to_move(), Piece::Queen)).is_empty();
-        let ntm_queen = !(board.colored_pieces(!board.side_to_move(), Piece::Queen)).is_empty();
-
-        OUTPUT_BUCKETS[board.occupied().len() as usize] * 4
-            + 2 * stm_queen as usize
-            + ntm_queen as usize
+        bucket::get_output_bucket(board)
     }
 
     #[inline(always)]

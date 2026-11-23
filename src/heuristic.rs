@@ -373,7 +373,7 @@ impl Heuristic {
         if m.is_null() {
             (0, 12, m.to as usize)
         } else {
-            let is_cap = pos.piece_on(m.to).is_some();
+            let is_cap = pos.colors(!pos.side_to_move()).has(m.to) || pos.is_ep(m);
             (
                 is_cap as usize,
                 pos.color_piece_on(m.from).unwrap().index(),

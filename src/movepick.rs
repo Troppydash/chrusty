@@ -1,13 +1,13 @@
 use cozy_chess::{
     BitBoard, Board,
-    Color::{self, Black, White},
-    File, Move, Piece, Rank, Square,
+    Color::{Black, White},
+    Move, Piece, Rank,
 };
 
 use crate::{
-    ext::{ColoredPiece, ExtBoard, ExtMove, MAX_MOVES, MoveType, ScoredMove, ScoredMoveList},
+    ext::{ExtBoard, ExtMove, MAX_MOVES, ScoredMove},
     heuristic::{Heuristic, LOW_PLY},
-    nnue::{NNUE, network::CM},
+    nnue::NNUE,
     param::BAD_QUIET_SCORE,
     see::{self, piece_value},
     stack::SearchStack,
@@ -879,6 +879,7 @@ impl Movepick {
 
 #[cfg(test)]
 mod tests {
+    use crate::ext::ColoredPiece;
     use super::*;
 
     fn diff_movegen(fen: &str) {

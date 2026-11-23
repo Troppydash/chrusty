@@ -141,7 +141,7 @@ define! {
     p_nmp_eval_max: i32 = 6, 2, 9, 1,
     p_nmp_improving: i32 = 1, 0, 3, 1,
     p_nmp_material: i32 = 600, 300, 1000, 25,
-    p_tt_probcut_margin: i32 = 478, 250, 750, 25,
+    p_tt_probcut_margin: i32 = 450, 250, 750, 25,
 
     // Late move/history pruning, quiescence, aspiration
     p_history_prune: i32 = 2966, 1500, 5000, 200,

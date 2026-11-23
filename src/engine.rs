@@ -214,6 +214,7 @@ impl Engine {
         let (mut score, _tempo) = self.nnue.evaluate2(pos);
         score += contempt;
         score -= (score - self.contempt(pos) as i32) * pos.halfmove_clock() as i32 / 300;
+
         return (score.clamp(-VALUE_EVAL as i32, VALUE_EVAL as i32) as i16, 0);
     }
 
@@ -968,14 +969,13 @@ impl Engine {
                 }
             }
 
-            let margin = self.settings.p_tt_probcut_margin;
             if tt_data.hit
                 && (tt_data.flag == FLAG_BETA || tt_data.flag == FLAG_EXACT)
                 && !is_decisive(beta)
                 && tt_data.depth >= depth - 4
                 && is_valid(tt_data.score)
                 && !is_decisive(tt_data.score)
-                && tt_data.score as i32 >= beta as i32 + margin
+                && tt_data.score as i32 >= beta as i32 + self.settings.p_tt_probcut_margin
             {
                 return beta;
             }
@@ -1344,7 +1344,7 @@ impl Engine {
             }
 
             if next_move.inner != best_move {
-                if pos.is_quiet(next_move.inner) {
+                if is_quiet {
                     quiets.push(next_move.inner);
                 } else {
                     captures.push(next_move.inner);
