@@ -968,17 +968,18 @@ impl Engine {
                     }
                 }
             }
+        }
 
-            if tt_data.hit
-                && (tt_data.flag == FLAG_BETA || tt_data.flag == FLAG_EXACT)
-                && !is_decisive(beta)
-                && tt_data.depth >= depth - 4
-                && is_valid(tt_data.score)
-                && !is_decisive(tt_data.score)
-                && tt_data.score as i32 >= beta as i32 + self.settings.p_tt_probcut_margin
-            {
-                return beta;
-            }
+        if !is_root
+            && tt_data.hit
+            && (tt_data.flag == FLAG_BETA || tt_data.flag == FLAG_EXACT)
+            && !is_decisive(beta)
+            && tt_data.depth >= depth - 4
+            && is_valid(tt_data.score)
+            && !is_decisive(tt_data.score)
+            && tt_data.score as i32 >= beta as i32 + self.settings.p_tt_probcut_margin
+        {
+            return beta;
         }
 
         self.stack[ss].move_count = 0;
