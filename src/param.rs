@@ -44,7 +44,7 @@ pub const MIN_QDEPTH: i8 = -50;
 pub const UNSEARCH_DEPTH: i8 = MIN_QDEPTH - 10;
 pub const UNINIT_DEPTH: i8 = UNSEARCH_DEPTH - 10;
 
-pub const BAD_QUIET_SCORE: i32 = -20000;
+pub const BAD_QUIET_SCORE: i32 = -1;
 
 pub const PROBCUT_DEPTH_MIN: i8 = 5;
 pub const PROBCUT_DEPTH_REDUCTION: i8 = 4;

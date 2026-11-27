@@ -93,9 +93,7 @@ pub struct Engine {
     tb_hits: i64,
     startpos: Board,
     root_depth: i8,
-    // only allocated once so Vec is ok
     root_moves: Box<[RootMove]>,
-    // TODO: accesing the entire timer via RwLock is expensive
     timer: Arc<Timer>,
     table: TablePtr,
     nnue: NNUE,
@@ -799,6 +797,7 @@ impl Engine {
                 && !is_loss(beta)
                 && !is_win(tt_static)
                 && !has_excluded
+                && depth <= 16
                 && tt_static as i32 >= beta as i32 + margin.max(1)
             {
                 return lerp(tt_static, beta, 0.7);
@@ -906,8 +905,10 @@ impl Engine {
                     margin,
                     &self.heuristic,
                 );
-                let probcut_depth = depth - PROBCUT_DEPTH_REDUCTION;
-                assert!(probcut_depth > 0);
+                let probcut_depth = (depth as i32 - PROBCUT_DEPTH_REDUCTION as i32)
+                    .clamp(1, depth as i32 - 1) as i8;
+
+                debug_assert!(probcut_depth > 0);
 
                 let probcut_beta = probcut_beta as i16;
                 self.stack[ss].move_count = 0;
@@ -932,7 +933,7 @@ impl Engine {
                         ss + 1,
                         false,
                     );
-                    if score >= probcut_beta && !self.timer.stopped() {
+                    if score >= probcut_beta && probcut_depth > 0 && !self.timer.stopped() {
                         score = -self.negamax(
                             &new_pos,
                             -probcut_beta,

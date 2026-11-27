@@ -286,12 +286,14 @@ pub fn start(args: Vec<String>) {
                         cozy_chess::Color::Black => (btime, binc),
                     };
 
-                    let (opt_time, max_time) = Timer::plan(moves.len(), time, inc);
+                    let (opt_time, max_time) = Timer::plan(moves.len(), 0, time, inc);
                     search_limits.opt_time = opt_time;
                     search_limits.max_time = max_time;
                     search_limits.ponder = ponder;
 
-                    if let Some(policy) = &policy && let Some(net) = &mut saved_net {
+                    if let Some(policy) = &policy
+                        && let Some(net) = &mut saved_net
+                    {
                         net.init(&pos);
                         let nnue_eval = net.evaluate(&pos);
                         let settings = policy.infer(&startpos, nnue_eval, &moves).unwrap();

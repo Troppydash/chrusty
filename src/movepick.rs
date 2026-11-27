@@ -885,8 +885,8 @@ impl Movepick {
 
 #[cfg(test)]
 mod tests {
-    use crate::ext::ColoredPiece;
     use super::*;
+    use crate::ext::ColoredPiece;
 
     fn diff_movegen(fen: &str) {
         let pos = Board::from_fen(fen, false).unwrap();
